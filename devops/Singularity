@@ -1,0 +1,33 @@
+Bootstrap: docker
+From: nvidia/cuda:9.0-devel-ubuntu16.04
+
+%environment
+    LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64
+    export LD_LIBRARY_PATH
+    CUDA_HOME=/usr/local/cuda
+    export CUDA_HOME
+    LC_ALL=C
+    export LC_ALL
+
+%post
+    apt update
+    apt -y install git
+    apt -y install curl \
+                   python3-matplotlib \
+                   python3-pip \
+                   vim \
+                   wget
+
+    cd /tmp
+    curl -O https://repo.anaconda.com/archive/Anaconda3-5.2.0-Linux-x86_64.sh
+    bash  Anaconda3-5.2.0-Linux-x86_64.sh
+
+    pip3 install h5py==2.7 \
+                 matplotlib==2.2.3 \
+                 mayavi==4.5 \
+                 numpy==1.12.0 \
+                 scikit-learn==0.18.0 \
+                 tensorflow==1.0
+
+%runscript
+    exec /usr/bin/python3 -u vsl_main.py

@@ -1,3 +1,5 @@
 *.idea
-*parameters
+*.swp
 *dataset
+*parameters
+simgs/
