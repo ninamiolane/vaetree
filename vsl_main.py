@@ -324,7 +324,7 @@ for epoch in range(total_epoch):
     avg_cost = np.zeros(3, dtype=np.float32)
     train_batch = int(train_all.shape[0] / batch_size)
 
-    index = epoch + 2620 # correct the training index, set 0 for training from scratch
+    index = epoch  # + 2620 # correct the training index, set 0 for training from scratch
 
     # iterate for all batches
     np.random.shuffle(train_all)
@@ -341,7 +341,7 @@ for epoch in range(total_epoch):
           .format(index, avg_cost[0], avg_cost[1], avg_cost[2]))
 
     if epoch % print_step == 0:
-        draw_sample(VSL.sess.run(VSL.x_rec[0,:], feed_dict={VSL.x: x_train}), 'plots/rec-%d.png' % index)
+        # draw_sample(VSL.sess.run(VSL.x_rec[0,:], feed_dict={VSL.x: x_train}), 'plots/rec-%d.png' % index)
         mlab.close()
 
         VSL.saver.save(VSL.sess, os.path.abspath('parameters/modelnet40-{:04d}-cost-{:.4f}.ckpt'.format(index, avg_cost[2])))
@@ -406,7 +406,7 @@ x_test = test_all[test_indx[0][0]:test_indx[0][0]+batch_size,1:].reshape([batch_
 z = VSL.sess.run(VSL.latent_feature, feed_dict={VSL.x: x_test})
 z_new = z + np.random.normal(scale=0.02, size=[batch_size, local_latent_dim*local_latent_num+global_latent_dim])
 for i in range(20):
-    draw_sample(VSL.sess.run(VSL.x_rec[i, :], feed_dict={VSL.latent_feature: z_new}), 'plots/rec_{:d}.png'.format(i))
+    # draw_sample(VSL.sess.run(VSL.x_rec[i, :], feed_dict={VSL.latent_feature: z_new}), 'plots/rec_{:d}.png'.format(i))
     mlab.close()
 
 
@@ -419,7 +419,7 @@ id1 = 8
 id2 = 0
 d = z[id1, :] - z[id2, :]
 for i in range(7):
-    draw_sample(VSL.sess.run(VSL.x_rec[id2, :], feed_dict={VSL.latent_feature: z}), 'plots/interpolation_airplane-{:d}.png'.format(i))
+    # draw_sample(VSL.sess.run(VSL.x_rec[id2, :], feed_dict={VSL.latent_feature: z}), 'plots/interpolation_airplane-{:d}.png'.format(i))
     mlab.close()
     z[id2, :] = z[id2, :] + d / 6
 
