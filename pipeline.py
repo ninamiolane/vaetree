@@ -10,10 +10,23 @@ matplotlib.use('Agg')  # NOQA
 import matplotlib.pyplot as plt
 import nibabel as nib
 import numpy as np
+import pickle
 import sklearn.model_selection
+import torch
+import torch.utils.data
 
+import nn
 
 HOME_DIR = '/scratch/users/nmiolane'
+OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
+
+CUDA = True
+SEED = 12345
+DEVICE = torch.device("cuda" if CUDA else "cpu")
+KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
+torch.manual_seed(SEED)
+
+BATCH_SIZE = 2
 
 
 class FetchDataSet(luigi.Task):
@@ -30,7 +43,8 @@ class FetchDataSet(luigi.Task):
 
 
 class MakeDataSet(luigi.Task):
-    path = os.path.join(HOME_DIR, 'output')
+    train_path = os.path.join(OUTPUT_DIR, 'train.pkl')
+    test_path = os.path.join(OUTPUT_DIR, 'test.pkl')
     first_slice = 42
     last_slice = 162
     test_fraction = 0.2
@@ -88,8 +102,45 @@ class MakeDataSet(luigi.Task):
 
         logging.info('-- Split into train and test sets')
         split = sklearn.model_selection.train_test_split(
-            imgs, imgs, test_size=self.test_fraction, random_state=13)
-        train_input, test_input, train_gt, test_gt = split
+            imgs, test_size=self.test_fraction, random_state=13)
+        train, test = split
+
+        with open(self.output()['train'].path, 'wb') as train_pkl:
+            pickle.dump(train, train_pkl)
+
+        with open(self.output()['test'].path, 'wb') as test_pkl:
+            pickle.dump(test, test_pkl)
+
+    def output(self):
+        return {'train': luigi.LocalTarget(self.train_path),
+                'test': luigi.LocalTarget(self.test_path)}
+
+
+class Train(luigi.Task):
+    path = os.path.join(OUTPUT_DIR, 'training')
+
+    def requires(self):
+        return MakeDataSet()
+
+    def run(self):
+        with open(self.input()['train'].path, 'rb') as train_pkl:
+            train = pickle.load(train_pkl)
+
+        train_ngf = train.shape[1]
+        train_ndf = train.shape[2]
+        train_tensor = torch.tensor(train)
+
+        train_dataset = torch.utils.data.TensorDataset(train_tensor)
+
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
+
+        model = nn.VAE(
+            n_channels=1,
+            ngf=train_ngf,
+            ndf=train_ndf,
+            latent_dim=5).to(DEVICE)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     def output(self):
         return luigi.LocalTarget(self.path)
@@ -97,7 +148,7 @@ class MakeDataSet(luigi.Task):
 
 class RunAll(luigi.Task):
     def requires(self):
-        return MakeDataSet()
+        return Train()
 
     def output(self):
         return luigi.LocalTarget('dummy')
