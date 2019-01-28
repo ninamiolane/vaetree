@@ -126,6 +126,8 @@ class Train(luigi.Task):
         with open(self.input()['train'].path, 'rb') as train_pkl:
             train = pickle.load(train_pkl)
 
+        train_ngf = train.shape[1]
+        train_ndf = train.shape[2]
         train_tensor = torch.tensor(train)
 
         train_dataset = torch.utils.data.TensorDataset(train_tensor)
@@ -133,8 +135,12 @@ class Train(luigi.Task):
         train_loader = torch.utils.data.DataLoader(
             train_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
 
-        # model = nn.VAE().to(DEVICE)
-        # optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        model = nn.VAE(
+            n_channels=1,
+            ngf=train_ngf,
+            ndf=train_ndf,
+            latent_dim=5).to(DEVICE)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     def output(self):
         return luigi.LocalTarget(self.path)
