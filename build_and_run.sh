@@ -7,7 +7,7 @@ fi
 
 # Build base image
 img_type=base
-cd devops
+cd devops_"${img_type}"
 singularity_file=Singularity
 img_name="${img_type}.simg"
 if [ ! -f ../$SIMGS_DIR/$img_name ]; then
@@ -15,6 +15,15 @@ if [ ! -f ../$SIMGS_DIR/$img_name ]; then
     sudo -H singularity build ../$SIMGS_DIR/$img_name $singularity_file
 fi
 
+# Build pipeline image
+img_type=pipeline
+cd ../devops_"${img_type}"
+singularity_file=Singularity
+img_name="${img_type}.simg"
+if [ ! -f ../$SIMGS_DIR/$img_name ]; then
+    echo "Building image $img_name from singularity file $singularity_file"
+    sudo -H singularity build ../$SIMGS_DIR/$img_name $singularity_file
+fi
 
 # Run pipeline
 cd ..
