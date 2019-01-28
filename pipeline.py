@@ -12,10 +12,21 @@ import nibabel as nib
 import numpy as np
 import pickle
 import sklearn.model_selection
+import torch
+import torch.utils.data
 
+import nn
 
 HOME_DIR = '/scratch/users/nmiolane'
 OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
+
+CUDA = True
+SEED = 12345
+DEVICE = torch.device("cuda" if CUDA else "cpu")
+KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
+torch.manual_seed(SEED)
+
+BATCH_SIZE = 2
 
 
 class FetchDataSet(luigi.Task):
@@ -91,11 +102,8 @@ class MakeDataSet(luigi.Task):
 
         logging.info('-- Split into train and test sets')
         split = sklearn.model_selection.train_test_split(
-            imgs, imgs, test_size=self.test_fraction, random_state=13)
-        train_input, test_input, train_gt, test_gt = split
-
-        train = {'input': train_input, 'gt': train_gt}
-        test = {'input': test_input, 'gt': test_gt}
+            imgs, test_size=self.test_fraction, random_state=13)
+        train, test = split
 
         with open(self.output()['train'].path, 'wb') as train_pkl:
             pickle.dump(train, train_pkl)
@@ -116,7 +124,17 @@ class Train(luigi.Task):
 
     def run(self):
         with open(self.input()['train'].path, 'rb') as train_pkl:
-            train_inputs = pickle.load(train_pkl['inputs'])
+            train = pickle.load(train_pkl)
+
+        train_tensor = torch.tensor(train)
+
+        train_dataset = torch.utils.data.TensorDataset(train_tensor)
+
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
+
+        # model = nn.VAE().to(DEVICE)
+        # optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     def output(self):
         return luigi.LocalTarget(self.path)
@@ -124,7 +142,7 @@ class Train(luigi.Task):
 
 class RunAll(luigi.Task):
     def requires(self):
-        return MakeDataSet()
+        return Train()
 
     def output(self):
         return luigi.LocalTarget('dummy')

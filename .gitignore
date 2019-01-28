@@ -3,4 +3,5 @@
 *dataset
 *parameters
 plots/
+__pycache__/
 simgs/
