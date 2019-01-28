@@ -17,17 +17,3 @@ From: nvidia/cuda:9.0-devel-ubuntu16.04
                    python3-pip \
                    vim \
                    wget
-
-    cd /tmp
-    curl -O https://repo.anaconda.com/archive/Anaconda3-5.2.0-Linux-x86_64.sh
-    bash  Anaconda3-5.2.0-Linux-x86_64.sh
-
-    pip3 install h5py==2.7 \
-                 matplotlib==2.2.3 \
-                 mayavi==4.5 \
-                 numpy==1.12.0 \
-                 scikit-learn==0.18.0 \
-                 tensorflow==1.0
-
-%runscript
-    exec /usr/bin/python3 -u vsl_main.py

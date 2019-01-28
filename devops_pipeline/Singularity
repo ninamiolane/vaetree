@@ -1,0 +1,22 @@
+Bootstrap: localimage
+From: ../simgs/base.simg
+
+%environment
+    LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64
+    export LD_LIBRARY_PATH
+    CUDA_HOME=/usr/local/cuda
+    export CUDA_HOME
+    LC_ALL=C
+    export LC_ALL
+
+%post
+    pip3 install luigi \
+                 nibabel \
+                 numpy \
+                 scikit-learn \
+                 torch \
+                 torchvision
+
+
+%runscript
+    exec /usr/bin/python3 -u pipeline.py
