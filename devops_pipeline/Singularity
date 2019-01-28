@@ -13,6 +13,7 @@ From: ../simgs/base.simg
     pip3 install luigi \
                  nibabel \
                  numpy \
+                 scikit-learn \
                  torch \
                  torchvision
 

@@ -27,4 +27,4 @@ fi
 
 # Run pipeline
 cd ..
-singularity run --nv $SIMGS_DIR/$img_name
+singularity run --bind /scratch/:/scratch/ --nv $SIMGS_DIR/$img_name
