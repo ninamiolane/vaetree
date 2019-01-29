@@ -13,6 +13,7 @@ import numpy as np
 import pickle
 import sklearn.model_selection
 import torch
+import torch.autograd
 import torch.utils.data
 
 import nn
@@ -20,13 +21,15 @@ import nn
 HOME_DIR = '/scratch/users/nmiolane'
 OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
 
-CUDA = True
+CUDA = torch.cuda.is_available()
 SEED = 12345
 DEVICE = torch.device("cuda" if CUDA else "cpu")
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
 BATCH_SIZE = 2
+PRINT_INTERVAL = 1
+N_EPOCHS = 1
 
 
 class FetchDataSet(luigi.Task):
@@ -77,7 +80,8 @@ class MakeDataSet(luigi.Task):
             for k in range(self.first_slice, self.last_slice):
                 imgs.append(array[:, k, :])
         imgs = np.asarray(imgs)
-        imgs = imgs.reshape(imgs.shape + (1,))
+        new_shape = (imgs.shape[0],) + (1,) + imgs.shape[1:]
+        imgs = imgs.reshape(new_shape)
 
         n_imgs = imgs.shape[0]
         logging.info('----- Number of 2D images: %d' % n_imgs)
@@ -122,13 +126,42 @@ class Train(luigi.Task):
     def requires(self):
         return MakeDataSet()
 
+    def train(self, epoch, train_loader, model, optimizer):
+        model.train()
+        train_loss = 0
+        for batch_idx, data in enumerate(train_loader):
+            data = data[0].to(DEVICE)
+
+            optimizer.zero_grad()
+            recon_batch, mu, logvar = model(data)
+            loss = nn.loss_function(recon_batch, data, mu, logvar)
+            loss.backward()
+
+            train_loss += loss.item()
+
+            optimizer.step()
+
+            if batch_idx % PRINT_INTERVAL == 0:
+                logging.info(
+                    'Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                        epoch,
+                        batch_idx * len(data),
+                        (len(train_loader.dataset),
+                         100. * batch_idx / len(train_loader),
+                         loss.item() / len(data))))
+
+        logging.info('====> Epoch: {} Average loss: {:.4f}'.format(
+            epoch, train_loss / (len(train_loader.dataset))))
+
+        return train_loss / (len(train_loader.dataset))
+
     def run(self):
         with open(self.input()['train'].path, 'rb') as train_pkl:
             train = pickle.load(train_pkl)
 
         train_ngf = train.shape[1]
         train_ndf = train.shape[2]
-        train_tensor = torch.tensor(train)
+        train_tensor = torch.Tensor(train)
 
         train_dataset = torch.utils.data.TensorDataset(train_tensor)
 
@@ -140,7 +173,10 @@ class Train(luigi.Task):
             ngf=train_ngf,
             ndf=train_ndf,
             latent_dim=5).to(DEVICE)
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+
+        for epoch in range(N_EPOCHS):
+            train_loss = self.train(epoch, train_loader, model, optimizer)
 
     def output(self):
         return luigi.LocalTarget(self.path)
