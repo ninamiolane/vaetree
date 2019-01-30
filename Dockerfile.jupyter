@@ -1,4 +1,7 @@
 FROM anibali/pytorch:cuda-9.0
-WORKDIR /scratch/
+WORKDIR /home/johmathe/
 RUN conda install jupyter
-CMD ["/home/user/miniconda/envs/py36/bin/jupyter", "notebook", "--ip=0.0.0.0"]
+RUN conda install -c conda-forge matplotlib
+RUN conda install -c conda-forge ipywidgets
+USER root
+CMD ["/home/user/miniconda/envs/py36/bin/jupyter", "notebook", "--allow-root", "--ip=0.0.0.0"]
