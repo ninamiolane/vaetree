@@ -28,13 +28,13 @@ DEVICE = torch.device("cuda" if CUDA else "cpu")
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
-BATCH_SIZE = 2
-PRINT_INTERVAL = 1
-N_EPOCHS = 1
+BATCH_SIZE = 32
+PRINT_INTERVAL = 10
+N_EPOCHS = 20
 
 LATENT_DIM = 5
 
-LR = 1e-4
+LR = 15e-6
 
 
 class FetchDataSet(luigi.Task):
@@ -53,16 +53,42 @@ class FetchDataSet(luigi.Task):
 class MakeDataSet(luigi.Task):
     train_path = os.path.join(OUTPUT_DIR, 'train.pkl')
     test_path = os.path.join(OUTPUT_DIR, 'test.pkl')
-    first_slice = 42
-    last_slice = 162
+    first_slice = 28
+    last_slice = 228
     test_fraction = 0.2
+    n_intensities = 100000  # For speed-up
+
+    def normalization(self, imgs):
+        logging.info(
+            '-- Normalization of images intensities.')
+        intensities = imgs.reshape((-1))[:self.n_intensities]
+        intensities_without_0 = intensities[intensities > 2]
+
+        plt.subplot(3, 1, 1)
+        plt.hist(intensities, bins=100)
+
+        plt.subplot(3, 1, 2)
+        plt.hist(intensities_without_0, bins=100)
+
+        n_imgs = imgs.shape[0]
+        mean = (torch.mean(intensities_without_0),) * n_imgs
+        std = (torch.std(intensities_without_0),) * n_imgs
+
+        imgs = torchvision.transforms.Normalize(mean, std)(imgs)
+        intensities_normalized = imgs.reshape((-1))[:self.n_intensities]
+
+        plt.subplot(3, 1, 3)
+        plt.hist(intensities_normalized, bins=100)
+        plt.savefig('./plots/intensities')
+
+        return imgs
 
     def requires(self):
         return {'dataset': FetchDataSet()}
 
     def run(self):
         path = self.input()['dataset'].path
-        filepaths = glob.glob(path + '*/sub*T1w.nii.gz')
+        filepaths = glob.glob(path + '/ds000245/*T1w.nii.gz')
         n_vols = len(filepaths)
         logging.info('----- Number of 3D images: %d' % n_vols)
 
@@ -82,10 +108,13 @@ class MakeDataSet(luigi.Task):
         for i in range(n_vols):
             img = nib.load(filepaths[i])
             array = img.get_data()
-            print('!!!!!! array.shape = (%d, %d, %d)' % array.shape)
             for k in range(self.first_slice, self.last_slice):
                 imgs.append(array[:, k, :])
         imgs = np.asarray(imgs)
+        imgs = torch.Tensor(imgs)
+
+        imgs = self.normalization(imgs)
+
         new_shape = (imgs.shape[0],) + (1,) + imgs.shape[1:]
         imgs = imgs.reshape(new_shape)
 
@@ -95,15 +124,6 @@ class MakeDataSet(luigi.Task):
             '----- First image shape: (%d, %d, %d)' % imgs[0].shape)
         logging.info('----- Training set shape: (%d, %d, %d, %d)' % imgs.shape)
 
-        logging.info(
-            '-- Normalization of images intensities between 0.0 and 1.0')
-        intensity_min = np.min(imgs)
-        intensity_max = np.max(imgs)
-        imgs = (imgs - intensity_min) / (intensity_max - intensity_min)
-
-        logging.info(
-            '----- Check: Min: %f, Max: %f' % (np.min(imgs), np.max(imgs)))
-
         logging.info('-- Plot and save first image')
         plt.figure(figsize=[5, 5])
         first_img = imgs[0, :, :, 0]
@@ -112,8 +132,10 @@ class MakeDataSet(luigi.Task):
 
         logging.info('-- Split into train and test sets')
         split = sklearn.model_selection.train_test_split(
-            imgs, test_size=self.test_fraction, random_state=13)
+            np.array(imgs), test_size=self.test_fraction, random_state=13)
         train, test = split
+        train = torch.Tensor(train)
+        test = torch.Tensor(test)
 
         with open(self.output()['train'].path, 'wb') as train_pkl:
             pickle.dump(train, train_pkl)
@@ -200,24 +222,26 @@ class Train(luigi.Task):
         with open(self.input()['train'].path, 'rb') as train_pkl:
             train = pickle.load(train_pkl)
 
-        train_tensor = torch.Tensor(train)
         logging.info(
-            '----- Train tensor shape: (%d, %d, %d, %d)' % train_tensor.shape)
-        train_dataset = torch.utils.data.TensorDataset(train_tensor)
+            '----- Train tensor shape: (%d, %d, %d, %d)' % train.shape)
+        train_dataset = torch.utils.data.TensorDataset(train)
         train_loader = torch.utils.data.DataLoader(
             train_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
 
         with open(self.input()['test'].path, 'rb') as test_pkl:
             test = pickle.load(test_pkl)
 
-        test_tensor = torch.Tensor(test)
         logging.info(
-            '----- Test tensor shape: (%d, %d, %d, %d)' % test_tensor.shape)
-        test_dataset = torch.utils.data.TensorDataset(test_tensor)
+            '----- Test tensor shape: (%d, %d, %d, %d)' % test.shape)
+        test_dataset = torch.utils.data.TensorDataset(test)
         test_loader = torch.utils.data.DataLoader(
             test_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
 
-        model = nn.VAE(n_channels=1, latent_dim=LATENT_DIM).to(DEVICE)
+        model = nn.VAE(
+            n_channels=1,
+            latent_dim=LATENT_DIM,
+            w_in=train.shape[2],
+            h_in=train.shape[3]).to(DEVICE)
         optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
         train_losses = []
