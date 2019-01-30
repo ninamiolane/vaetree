@@ -8,8 +8,6 @@ import torch.autograd
 
 
 CUDA = torch.cuda.is_available()
-W_IN = 160
-H_IN = 192
 
 
 def cnn_output_size(kernel_size, stride, padding, dilation, w_in, h_in):
@@ -22,7 +20,7 @@ def cnn_output_size(kernel_size, stride, padding, dilation, w_in, h_in):
 
 
 class VAE(torch.nn.Module):
-    def __init__(self, n_channels, latent_dim):
+    def __init__(self, n_channels, latent_dim, w_in, h_in):
         super(VAE, self).__init__()
 
         self.n_channels = n_channels
@@ -41,8 +39,8 @@ class VAE(torch.nn.Module):
             stride=2,
             padding=1,
             dilation=1,
-            w_in=W_IN,
-            h_in=H_IN)
+            w_in=w_in,
+            h_in=h_in)
 
         self.fc1 = torch.nn.Linear(
             in_features=64*self.e1_height*self.e1_width,
