@@ -1,4 +1,4 @@
 FROM anibali/pytorch:cuda-9.0
-WORKDIR /data
+WORKDIR /scratch/
 RUN conda install jupyter
 CMD ["/home/user/miniconda/envs/py36/bin/jupyter", "notebook", "--ip=0.0.0.0"]
