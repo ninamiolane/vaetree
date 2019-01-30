@@ -15,6 +15,7 @@ import sklearn.model_selection
 import torch
 import torch.autograd
 import torch.utils.data
+import torchvision
 
 import nn
 
@@ -30,6 +31,10 @@ torch.manual_seed(SEED)
 BATCH_SIZE = 2
 PRINT_INTERVAL = 1
 N_EPOCHS = 1
+
+LATENT_DIM = 5
+
+LR = 1e-4
 
 
 class FetchDataSet(luigi.Task):
@@ -57,7 +62,7 @@ class MakeDataSet(luigi.Task):
 
     def run(self):
         path = self.input()['dataset'].path
-        filepaths = glob.glob(path + '/sub*T1w.nii.gz')
+        filepaths = glob.glob(path + '*/sub*T1w.nii.gz')
         n_vols = len(filepaths)
         logging.info('----- Number of 3D images: %d' % n_vols)
 
@@ -77,6 +82,7 @@ class MakeDataSet(luigi.Task):
         for i in range(n_vols):
             img = nib.load(filepaths[i])
             array = img.get_data()
+            print('!!!!!! array.shape = (%d, %d, %d)' % array.shape)
             for k in range(self.first_slice, self.last_slice):
                 imgs.append(array[:, k, :])
         imgs = np.asarray(imgs)
@@ -122,6 +128,8 @@ class MakeDataSet(luigi.Task):
 
 class Train(luigi.Task):
     path = os.path.join(OUTPUT_DIR, 'training')
+    train_losses_path = os.path.join(path, 'train_losses.pkl')
+    test_losses_path = os.path.join(path, 'test_losses.pkl')
 
     def requires(self):
         return MakeDataSet()
@@ -138,7 +146,6 @@ class Train(luigi.Task):
             loss.backward()
 
             train_loss += loss.item()
-
             optimizer.step()
 
             if batch_idx % PRINT_INTERVAL == 0:
@@ -146,40 +153,97 @@ class Train(luigi.Task):
                     'Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                         epoch,
                         batch_idx * len(data),
-                        (len(train_loader.dataset),
-                         100. * batch_idx / len(train_loader),
-                         loss.item() / len(data))))
+                        len(train_loader.dataset),
+                        100. * batch_idx / len(train_loader),
+                        loss.item() / len(data)))
 
         logging.info('====> Epoch: {} Average loss: {:.4f}'.format(
             epoch, train_loss / (len(train_loader.dataset))))
 
-        return train_loss / (len(train_loader.dataset))
+        train_loss /= len(train_loader.dataset)
+        return train_loss
+
+    def test(self, epoch, test_loader, model):
+        model.eval()
+        test_loss = 0
+        with torch.no_grad():
+            for i, data in enumerate(test_loader):
+                data = data[0].to(DEVICE)
+                recon_batch, mu, logvar = model(data)
+                test_loss += nn.loss_function(
+                    recon_batch, data, mu, logvar).item()
+
+                data_path = os.path.join(
+                    self.path,
+                    'imgs',
+                    'Epoch_{}_data.jpg'.format(epoch))
+                recon_path = os.path.join(
+                    self.path,
+                    'imgs',
+                    'Epoch_{}_recon.jpg'.format(epoch))
+                torchvision.utils.save_image(
+                    data.data,
+                    data_path,
+                    nrow=8,
+                    padding=2)
+                torchvision.utils.save_image(
+                    recon_batch.data,
+                    recon_path,
+                    nrow=8,
+                    padding=2)
+
+        test_loss /= len(test_loader.dataset)
+        print('====> Test set loss: {:.4f}'.format(test_loss))
+        return test_loss
 
     def run(self):
         with open(self.input()['train'].path, 'rb') as train_pkl:
             train = pickle.load(train_pkl)
 
-        train_ngf = train.shape[1]
-        train_ndf = train.shape[2]
         train_tensor = torch.Tensor(train)
-
+        logging.info(
+            '----- Train tensor shape: (%d, %d, %d, %d)' % train_tensor.shape)
         train_dataset = torch.utils.data.TensorDataset(train_tensor)
-
         train_loader = torch.utils.data.DataLoader(
             train_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
 
-        model = nn.VAE(
-            n_channels=1,
-            ngf=train_ngf,
-            ndf=train_ndf,
-            latent_dim=5).to(DEVICE)
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+        with open(self.input()['test'].path, 'rb') as test_pkl:
+            test = pickle.load(test_pkl)
 
+        test_tensor = torch.Tensor(test)
+        logging.info(
+            '----- Test tensor shape: (%d, %d, %d, %d)' % test_tensor.shape)
+        test_dataset = torch.utils.data.TensorDataset(test_tensor)
+        test_loader = torch.utils.data.DataLoader(
+            test_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
+
+        model = nn.VAE(n_channels=1, latent_dim=LATENT_DIM).to(DEVICE)
+        optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+
+        train_losses = []
+        test_losses = []
         for epoch in range(N_EPOCHS):
             train_loss = self.train(epoch, train_loader, model, optimizer)
+            test_loss = self.test(epoch, test_loader, model)
+            model_path = os.path.join(
+                self.path,
+                'models',
+                'Epoch_{}_Train_loss_{:.4f}_Test_loss_{:.4f}.pth'.format(
+                    epoch, train_loss, test_loss))
+            torch.save(model.state_dict(), model_path)
+
+            train_losses.append(train_loss)
+            test_losses.append(test_loss)
+
+        with open(self.output()['train_losses'].path, 'wb') as pkl:
+            pickle.dump(train_losses, pkl)
+
+        with open(self.output()['test_losses'].path, 'wb') as pkl:
+            pickle.dump(test_losses, pkl)
 
     def output(self):
-        return luigi.LocalTarget(self.path)
+        return {'train_losses': luigi.LocalTarget(self.train_losses_path),
+                'test_losses': luigi.LocalTarget(self.test_losses_path)}
 
 
 class RunAll(luigi.Task):
