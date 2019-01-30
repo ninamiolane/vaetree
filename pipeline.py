@@ -30,11 +30,39 @@ torch.manual_seed(SEED)
 
 BATCH_SIZE = 32
 PRINT_INTERVAL = 10
-N_EPOCHS = 20
+N_EPOCHS = 1 #20
 
 LATENT_DIM = 5
 
 LR = 15e-6
+
+N_INTENSITIES = 100000  # For speed-up
+
+
+def normalization(imgs):
+    logging.info(
+        '-- Normalization of images intensities.')
+    intensities = imgs.reshape((-1))[:N_INTENSITIES]
+    intensities_without_0 = intensities[intensities > 2]
+
+    plt.subplot(3, 1, 1)
+    plt.hist(intensities, bins=100)
+
+    plt.subplot(3, 1, 2)
+    plt.hist(intensities_without_0, bins=100)
+
+    n_imgs = imgs.shape[0]
+    mean = (torch.mean(intensities_without_0),) * n_imgs
+    std = (torch.std(intensities_without_0),) * n_imgs
+
+    imgs = torchvision.transforms.Normalize(mean, std)(imgs)
+    intensities_normalized = imgs.reshape((-1))[:N_INTENSITIES]
+
+    plt.subplot(3, 1, 3)
+    plt.hist(intensities_normalized, bins=100)
+    plt.savefig('./plots/intensities')
+
+    return imgs, mean, std
 
 
 class FetchDataSet(luigi.Task):
@@ -53,35 +81,10 @@ class FetchDataSet(luigi.Task):
 class MakeDataSet(luigi.Task):
     train_path = os.path.join(OUTPUT_DIR, 'train.pkl')
     test_path = os.path.join(OUTPUT_DIR, 'test.pkl')
+    mean_and_std_path = os.path.join(OUTPUT_DIR, 'mean_and_std.pkl')
     first_slice = 28
     last_slice = 228
     test_fraction = 0.2
-    n_intensities = 100000  # For speed-up
-
-    def normalization(self, imgs):
-        logging.info(
-            '-- Normalization of images intensities.')
-        intensities = imgs.reshape((-1))[:self.n_intensities]
-        intensities_without_0 = intensities[intensities > 2]
-
-        plt.subplot(3, 1, 1)
-        plt.hist(intensities, bins=100)
-
-        plt.subplot(3, 1, 2)
-        plt.hist(intensities_without_0, bins=100)
-
-        n_imgs = imgs.shape[0]
-        mean = (torch.mean(intensities_without_0),) * n_imgs
-        std = (torch.std(intensities_without_0),) * n_imgs
-
-        imgs = torchvision.transforms.Normalize(mean, std)(imgs)
-        intensities_normalized = imgs.reshape((-1))[:self.n_intensities]
-
-        plt.subplot(3, 1, 3)
-        plt.hist(intensities_normalized, bins=100)
-        plt.savefig('./plots/intensities')
-
-        return imgs
 
     def requires(self):
         return {'dataset': FetchDataSet()}
@@ -113,7 +116,8 @@ class MakeDataSet(luigi.Task):
         imgs = np.asarray(imgs)
         imgs = torch.Tensor(imgs)
 
-        imgs = self.normalization(imgs)
+        imgs, mean, std = normalization(imgs)
+        mean_and_std = {'mean': mean, 'std': std}
 
         new_shape = (imgs.shape[0],) + (1,) + imgs.shape[1:]
         imgs = imgs.reshape(new_shape)
@@ -143,9 +147,13 @@ class MakeDataSet(luigi.Task):
         with open(self.output()['test'].path, 'wb') as test_pkl:
             pickle.dump(test, test_pkl)
 
+        with open(self.output()['mean_and_std'].path, 'wb') as pkl:
+            pickle.dump(mean_and_std, pkl)
+
     def output(self):
         return {'train': luigi.LocalTarget(self.train_path),
-                'test': luigi.LocalTarget(self.test_path)}
+                'test': luigi.LocalTarget(self.test_path),
+                'mean_and_std': luigi.LocalTarget(self.mean_and_std_path)}
 
 
 class Train(luigi.Task):
@@ -160,6 +168,8 @@ class Train(luigi.Task):
         model.train()
         train_loss = 0
         for batch_idx, data in enumerate(train_loader):
+            if batch_idx > 3:
+                break
             data = data[0].to(DEVICE)
 
             optimizer.zero_grad()
@@ -185,7 +195,12 @@ class Train(luigi.Task):
         train_loss /= len(train_loader.dataset)
         return train_loss
 
-    def test(self, epoch, test_loader, model):
+    def test(self, epoch, test_loader, model, mean_and_std):
+        mean = mean_and_std['mean'][0]
+        std = mean_and_std['std'][0]
+        inv_mean = - mean / std
+        inv_std = 1. / std
+
         model.eval()
         test_loss = 0
         with torch.no_grad():
@@ -194,6 +209,16 @@ class Train(luigi.Task):
                 recon_batch, mu, logvar = model(data)
                 test_loss += nn.loss_function(
                     recon_batch, data, mu, logvar).item()
+
+                mean = (inv_mean,) * data.data.shape[0]
+                std = (inv_std,) * data.data.shape[0]
+                data_unnormalized = torchvision.transforms.Normalize(
+                    mean, std)(data.data)
+
+                mean = (inv_mean,) * recon_batch.data.shape[0]
+                std = (inv_std,) * recon_batch.data.shape[0]
+                recon_unnormalized = torchvision.transforms.Normalize(
+                    mean, std)(recon_batch.data)
 
                 data_path = os.path.join(
                     self.path,
@@ -204,12 +229,12 @@ class Train(luigi.Task):
                     'imgs',
                     'Epoch_{}_recon.jpg'.format(epoch))
                 torchvision.utils.save_image(
-                    data.data,
+                    data_unnormalized,
                     data_path,
                     nrow=8,
                     padding=2)
                 torchvision.utils.save_image(
-                    recon_batch.data,
+                    recon_unnormalized,
                     recon_path,
                     nrow=8,
                     padding=2)
@@ -219,6 +244,9 @@ class Train(luigi.Task):
         return test_loss
 
     def run(self):
+        with open(self.input()['mean_and_std'].path, 'rb') as pkl:
+            mean_and_std = pickle.load(pkl)
+
         with open(self.input()['train'].path, 'rb') as train_pkl:
             train = pickle.load(train_pkl)
 
@@ -248,7 +276,7 @@ class Train(luigi.Task):
         test_losses = []
         for epoch in range(N_EPOCHS):
             train_loss = self.train(epoch, train_loader, model, optimizer)
-            test_loss = self.test(epoch, test_loader, model)
+            test_loss = self.test(epoch, test_loader, model, mean_and_std)
             model_path = os.path.join(
                 self.path,
                 'models',
