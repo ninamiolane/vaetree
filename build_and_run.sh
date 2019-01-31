@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SIMGS_DIR=./simgs
+SIMGS_DIR=../simgs
 if [ ! -d $SIMGS_DIR ]; then
     mkdir $SIMGS_DIR
 fi

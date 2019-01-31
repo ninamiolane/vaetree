@@ -19,7 +19,7 @@ import torchvision
 
 import nn
 
-HOME_DIR = '/scratch/users/nmiolane'
+HOME_DIR = '/scratch/users/johmathe'
 OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
 
 CUDA = torch.cuda.is_available()
@@ -30,7 +30,7 @@ torch.manual_seed(SEED)
 
 BATCH_SIZE = 32
 PRINT_INTERVAL = 10
-N_EPOCHS = 1 #20
+N_EPOCHS = 10 #20
 
 LATENT_DIM = 5
 
@@ -60,7 +60,7 @@ def normalization(imgs):
 
     plt.subplot(3, 1, 3)
     plt.hist(intensities_normalized, bins=100)
-    plt.savefig('./plots/intensities')
+    #plt.savefig(f'{HOME_DIR}/outputs/plots/intensities.png')
 
     return imgs, mean, std
 
@@ -212,32 +212,20 @@ class Train(luigi.Task):
 
                 mean = (inv_mean,) * data.data.shape[0]
                 std = (inv_std,) * data.data.shape[0]
-                data_unnormalized = torchvision.transforms.Normalize(
-                    mean, std)(data.data)
 
                 mean = (inv_mean,) * recon_batch.data.shape[0]
                 std = (inv_std,) * recon_batch.data.shape[0]
-                recon_unnormalized = torchvision.transforms.Normalize(
-                    mean, std)(recon_batch.data)
 
                 data_path = os.path.join(
                     self.path,
                     'imgs',
-                    'Epoch_{}_data.jpg'.format(epoch))
+                    'Epoch_{}_data.npy'.format(epoch))
                 recon_path = os.path.join(
                     self.path,
                     'imgs',
-                    'Epoch_{}_recon.jpg'.format(epoch))
-                torchvision.utils.save_image(
-                    data_unnormalized,
-                    data_path,
-                    nrow=8,
-                    padding=2)
-                torchvision.utils.save_image(
-                    recon_unnormalized,
-                    recon_path,
-                    nrow=8,
-                    padding=2)
+                    'Epoch_{}_recon.npy'.format(epoch))
+                np.save(data_path, data.cpu().numpy())
+                np.save(recon_path, recon_batch.data.cpu().numpy())
 
         test_loss /= len(test_loader.dataset)
         print('====> Test set loss: {:.4f}'.format(test_loss))
