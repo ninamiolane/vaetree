@@ -1,7 +1,7 @@
 FROM anibali/pytorch:cuda-9.0
-WORKDIR /home/johmathe/
 RUN conda install jupyter
 RUN conda install -c conda-forge matplotlib
 RUN conda install -c conda-forge ipywidgets
+WORKDIR /home/nina/
 USER root
 CMD ["/home/user/miniconda/envs/py36/bin/jupyter", "notebook", "--allow-root", "--ip=0.0.0.0"]
