@@ -9,8 +9,21 @@ import torch.autograd
 
 CUDA = torch.cuda.is_available()
 
+ENC_KERNEL_SIZE = 4
+ENC_STRIDE = 2
+ENC_PADDING = 1
+ENC_DILATION = 1
+ENC_CHANNEL_BASE = 64
 
-def cnn_output_size(kernel_size, stride, padding, dilation, w_in, h_in):
+DEC_KERNEL_SIZE = 3
+DEC_STRIDE = 1
+DEC_CHANNEL_BASE = 64
+
+
+def cnn_output_size(w_in, h_in, kernel_size=ENC_KERNEL_SIZE,
+                    stride=ENC_STRIDE,
+                    padding=ENC_PADDING,
+                    dilation=ENC_DILATION):
     def one_dim(x):
         # From pytorch doc.
         return (((x + 2 * padding - dilation *
@@ -29,40 +42,52 @@ class VAE(torch.nn.Module):
         # encoder
         self.e1 = torch.nn.Conv2d(
             in_channels=self.n_channels,
-            out_channels=64,
-            kernel_size=4,
-            stride=2,
-            padding=1)
+            out_channels=ENC_CHANNEL_BASE,
+            kernel_size=ENC_KERNEL_SIZE,
+            stride=ENC_STRIDE,
+            padding=ENC_PADDING)
+        self.w_e1, self.h_e1 = cnn_output_size(
+            w_in=w_in, h_in=h_in)
 
-        self.e1_width, self.e1_height = cnn_output_size(
-            kernel_size=4,
-            stride=2,
-            padding=1,
-            dilation=1,
-            w_in=w_in,
-            h_in=h_in)
+        self.elast = torch.nn.Conv2d(
+            in_channels=self.e1.out_channels,
+            out_channels=ENC_CHANNEL_BASE*2,
+            kernel_size=ENC_KERNEL_SIZE,
+            stride=ENC_STRIDE,
+            padding=ENC_PADDING)
+        self.w_elast, self.h_elast = cnn_output_size(
+            w_in=self.w_e1, h_in=self.h_e1)
 
+        self.fcs_infeatures = self.elast.out_channels*self.h_elast*self.w_elast
         self.fc1 = torch.nn.Linear(
-            in_features=64*self.e1_height*self.e1_width,
+            in_features=self.fcs_infeatures,
             out_features=latent_dim)
 
         self.fc2 = torch.nn.Linear(
-            in_features=64*self.e1_height*self.e1_width,
+            in_features=self.fcs_infeatures,
             out_features=latent_dim)
 
         # decoder
         self.d1 = torch.nn.Linear(
             in_features=latent_dim,
-            out_features=64*self.e1_width*self.e1_height)
+            out_features=self.fcs_infeatures)
 
         self.up1 = torch.nn.UpsamplingNearest2d(
             scale_factor=2)
         self.pd1 = torch.nn.ReplicationPad2d(1)
         self.d2 = torch.nn.Conv2d(
-            in_channels=64,
+            in_channels=self.elast.out_channels,
+            out_channels=DEC_CHANNEL_BASE,
+            kernel_size=DEC_KERNEL_SIZE,
+            stride=DEC_STRIDE)
+
+        self.up2 = torch.nn.UpsamplingNearest2d(scale_factor=2)
+        self.pd2 = torch.nn.ReplicationPad2d(1)
+        self.d3 = torch.nn.Conv2d(
+            in_channels=self.d2.out_channels,
             out_channels=self.n_channels,
-            kernel_size=3,
-            stride=1)
+            kernel_size=DEC_KERNEL_SIZE,
+            stride=DEC_STRIDE)
 
         self.leakyrelu = torch.nn.LeakyReLU(0.2)
         self.relu = torch.nn.ReLU()
@@ -71,9 +96,10 @@ class VAE(torch.nn.Module):
     def encode(self, x):
         a1 = self.e1(x)
         h1 = self.leakyrelu(a1)
-        h1 = h1.view(-1, 64*self.e1_height*self.e1_width)
+        h2 = self.leakyrelu(self.elast(h1))
+        h2 = h2.view(-1, self.fcs_infeatures)
 
-        return self.fc1(h1), self.fc2(h1)
+        return self.fc1(h2), self.fc2(h2)
 
     def reparametrize(self, mu, logvar):
         std = logvar.mul(0.5).exp_()
@@ -86,10 +112,10 @@ class VAE(torch.nn.Module):
 
     def decode(self, z):
         h1 = self.relu(self.d1(z))
-        h1 = h1.view(-1, 64, self.e1_width, self.e1_height)
-        a1 = self.d2(self.pd1(self.up1(h1)))
-        res = self.sigmoid(a1)
-        return res
+        h1 = h1.view(-1, self.elast.out_channels, self.w_elast, self.h_elast)
+        h2 = self.leakyrelu(self.d2(self.pd1(self.up1(h1))))
+        h3 = self.d3(self.pd2(self.up2(h2)))
+        return self.sigmoid(h3)
 
     def forward(self, x):
         mu, logvar = self.encode(x)
