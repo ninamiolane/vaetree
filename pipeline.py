@@ -240,7 +240,7 @@ class Train(luigi.Task):
             train_test_path = os.path.join(
                 self.path,
                 'losses',
-                'epoch_{}_train_loss_{:.4f}_test_loss_{:.4f}.pth'.format(
+                'epoch_{}.pkl'.format(
                     epoch, train_loss, test_loss))
             with open(train_test_path, 'wb') as pkl:
                 pickle.dump(
