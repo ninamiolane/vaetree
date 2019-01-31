@@ -19,7 +19,7 @@ import torchvision
 
 import nn
 
-HOME_DIR = '/scratch/users/johmathe'
+HOME_DIR = '/scratch/users/nmiolane'
 OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
 
 CUDA = torch.cuda.is_available()
@@ -30,11 +30,11 @@ torch.manual_seed(SEED)
 
 BATCH_SIZE = 32
 PRINT_INTERVAL = 10
-N_EPOCHS = 10 #20
+N_EPOCHS = 50
 
-LATENT_DIM = 5
+LATENT_DIM = 20
 
-LR = 15e-6
+LR = 5e-5
 
 N_INTENSITIES = 100000  # For speed-up
 
@@ -56,11 +56,6 @@ def normalization(imgs):
     std = (torch.std(intensities_without_0),) * n_imgs
 
     imgs = torchvision.transforms.Normalize(mean, std)(imgs)
-    intensities_normalized = imgs.reshape((-1))[:N_INTENSITIES]
-
-    plt.subplot(3, 1, 3)
-    plt.hist(intensities_normalized, bins=100)
-    #plt.savefig(f'{HOME_DIR}/outputs/plots/intensities.png')
 
     return imgs, mean, std
 
@@ -81,7 +76,6 @@ class FetchDataSet(luigi.Task):
 class MakeDataSet(luigi.Task):
     train_path = os.path.join(OUTPUT_DIR, 'train.pkl')
     test_path = os.path.join(OUTPUT_DIR, 'test.pkl')
-    mean_and_std_path = os.path.join(OUTPUT_DIR, 'mean_and_std.pkl')
     first_slice = 28
     last_slice = 228
     test_fraction = 0.2
@@ -116,23 +110,13 @@ class MakeDataSet(luigi.Task):
         imgs = np.asarray(imgs)
         imgs = torch.Tensor(imgs)
 
-        imgs, mean, std = normalization(imgs)
-        mean_and_std = {'mean': mean, 'std': std}
+        imgs, _, _ = normalization(imgs)
 
         new_shape = (imgs.shape[0],) + (1,) + imgs.shape[1:]
         imgs = imgs.reshape(new_shape)
 
-        n_imgs = imgs.shape[0]
-        logging.info('----- Number of 2D images: %d' % n_imgs)
         logging.info(
-            '----- First image shape: (%d, %d, %d)' % imgs[0].shape)
-        logging.info('----- Training set shape: (%d, %d, %d, %d)' % imgs.shape)
-
-        logging.info('-- Plot and save first image')
-        plt.figure(figsize=[5, 5])
-        first_img = imgs[0, :, :, 0]
-        plt.imshow(first_img, cmap='gray')
-        plt.savefig('./plots/first_image')
+            '----- 2D images: training set shape: (%d, %d, %d, %d)' % imgs.shape)
 
         logging.info('-- Split into train and test sets')
         split = sklearn.model_selection.train_test_split(
@@ -147,13 +131,9 @@ class MakeDataSet(luigi.Task):
         with open(self.output()['test'].path, 'wb') as test_pkl:
             pickle.dump(test, test_pkl)
 
-        with open(self.output()['mean_and_std'].path, 'wb') as pkl:
-            pickle.dump(mean_and_std, pkl)
-
     def output(self):
         return {'train': luigi.LocalTarget(self.train_path),
-                'test': luigi.LocalTarget(self.test_path),
-                'mean_and_std': luigi.LocalTarget(self.mean_and_std_path)}
+                'test': luigi.LocalTarget(self.test_path)}
 
 
 class Train(luigi.Task):
@@ -193,12 +173,7 @@ class Train(luigi.Task):
         train_loss /= len(train_loader.dataset)
         return train_loss
 
-    def test(self, epoch, test_loader, model, mean_and_std):
-        mean = mean_and_std['mean'][0]
-        std = mean_and_std['std'][0]
-        inv_mean = - mean / std
-        inv_std = 1. / std
-
+    def test(self, epoch, test_loader, model):
         model.eval()
         test_loss = 0
         with torch.no_grad():
@@ -207,16 +182,6 @@ class Train(luigi.Task):
                 recon_batch, mu, logvar = model(data)
                 test_loss += nn.loss_function(
                     recon_batch, data, mu, logvar).item()
-
-                # mean = (inv_mean,) * data.data.shape[0]
-                # std = (inv_std,) * data.data.shape[0]
-                # data_unnormalized = torchvision.transforms.Normalize(
-                #     mean, std)(data.data)
-
-                # mean = (inv_mean,) * recon_batch.data.shape[0]
-                # std = (inv_std,) * recon_batch.data.shape[0]
-                # recon_unnormalized = torchvision.transforms.Normalize(
-                #     mean, std)(recon_batch.data)
 
                 data_path = os.path.join(
                     self.path,
@@ -234,9 +199,6 @@ class Train(luigi.Task):
         return test_loss
 
     def run(self):
-        with open(self.input()['mean_and_std'].path, 'rb') as pkl:
-            mean_and_std = pickle.load(pkl)
-
         with open(self.input()['train'].path, 'rb') as train_pkl:
             train = pickle.load(train_pkl)
 
@@ -266,7 +228,7 @@ class Train(luigi.Task):
         test_losses = []
         for epoch in range(N_EPOCHS):
             train_loss = self.train(epoch, train_loader, model, optimizer)
-            test_loss = self.test(epoch, test_loader, model, mean_and_std)
+            test_loss = self.test(epoch, test_loader, model)
             model_path = os.path.join(
                 self.path,
                 'models',
