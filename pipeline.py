@@ -30,7 +30,7 @@ torch.manual_seed(SEED)
 
 BATCH_SIZE = 32
 PRINT_INTERVAL = 10
-N_EPOCHS = 1 #20
+N_EPOCHS = 10 #20
 
 LATENT_DIM = 5
 
@@ -168,8 +168,6 @@ class Train(luigi.Task):
         model.train()
         train_loss = 0
         for batch_idx, data in enumerate(train_loader):
-            if batch_idx > 3:
-                break
             data = data[0].to(DEVICE)
 
             optimizer.zero_grad()
@@ -210,15 +208,15 @@ class Train(luigi.Task):
                 test_loss += nn.loss_function(
                     recon_batch, data, mu, logvar).item()
 
-                mean = (inv_mean,) * data.data.shape[0]
-                std = (inv_std,) * data.data.shape[0]
-                data_unnormalized = torchvision.transforms.Normalize(
-                    mean, std)(data.data)
+                # mean = (inv_mean,) * data.data.shape[0]
+                # std = (inv_std,) * data.data.shape[0]
+                # data_unnormalized = torchvision.transforms.Normalize(
+                #     mean, std)(data.data)
 
-                mean = (inv_mean,) * recon_batch.data.shape[0]
-                std = (inv_std,) * recon_batch.data.shape[0]
-                recon_unnormalized = torchvision.transforms.Normalize(
-                    mean, std)(recon_batch.data)
+                # mean = (inv_mean,) * recon_batch.data.shape[0]
+                # std = (inv_std,) * recon_batch.data.shape[0]
+                # recon_unnormalized = torchvision.transforms.Normalize(
+                #     mean, std)(recon_batch.data)
 
                 data_path = os.path.join(
                     self.path,
@@ -229,12 +227,12 @@ class Train(luigi.Task):
                     'imgs',
                     'Epoch_{}_recon.jpg'.format(epoch))
                 torchvision.utils.save_image(
-                    data_unnormalized,
+                    data.data,
                     data_path,
                     nrow=8,
                     padding=2)
                 torchvision.utils.save_image(
-                    recon_unnormalized,
+                    recon_batch.data,
                     recon_path,
                     nrow=8,
                     padding=2)
