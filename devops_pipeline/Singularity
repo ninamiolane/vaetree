@@ -1,5 +1,5 @@
 Bootstrap: localimage
-From: ../simgs/base.simg
+From: ../../simgs/base.simg
 
 %environment
     LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/lib64
@@ -14,6 +14,7 @@ From: ../simgs/base.simg
                  nibabel \
                  numpy \
                  scikit-learn \
+                 scikit-image \
                  torch \
                  torchvision
 

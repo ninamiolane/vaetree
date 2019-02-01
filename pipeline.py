@@ -20,7 +20,7 @@ import torchvision
 
 import nn
 
-HOME_DIR = '/scratch/users/nmiolane'
+HOME_DIR = '/scratch/users/johmathe'
 OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
 
 CUDA = torch.cuda.is_available()
@@ -57,7 +57,8 @@ def normalization(imgs):
     n_imgs = imgs.shape[0]
     mean = (torch.mean(intensities_without_0),) * n_imgs
     std = (torch.std(intensities_without_0),) * n_imgs
-
+    print(mean)
+    print(std)
     imgs = torchvision.transforms.Normalize(mean, std)(imgs)
 
     return imgs, mean, std
@@ -88,7 +89,7 @@ class MakeDataSet(luigi.Task):
 
     def run(self):
         path = self.input()['dataset'].path
-        filepaths = glob.glob(path + '/ds000245/*T1w.nii.gz')
+        filepaths = glob.glob(path + '/*/*.nii.gz')
         n_vols = len(filepaths)
         logging.info('----- Number of 3D images: %d' % n_vols)
 
@@ -107,7 +108,7 @@ class MakeDataSet(luigi.Task):
         imgs = []
 
         for path in filepaths:
-            logging.info(f'loading and resizing image {path}')
+            logging.info('loading and resizing image %s', path)
             img = nib.load(path)
             array = img.get_data()
             for k in range(0, array.shape[1]):
@@ -119,7 +120,7 @@ class MakeDataSet(luigi.Task):
                 if np.sum(img_array) < SUM_PIXEL_THRESHOLD * imshape[0] * imshape[1]:
                     continue
                 img = skimage.transform.resize(img_array, (64, 64))
-                final_array.append(img)
+                imgs.append(img)
         imgs = np.asarray(imgs)
         imgs = torch.Tensor(imgs)
 
