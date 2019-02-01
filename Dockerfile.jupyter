@@ -1,6 +1,6 @@
 FROM anibali/pytorch:cuda-9.0
 RUN conda install jupyter
-RUN conda install -c conda-forge matplotlib
+RUN conda install -c conda-forge matplotlib scikit-learn
 RUN conda install -c conda-forge ipywidgets
 WORKDIR /home/nina/
 USER root

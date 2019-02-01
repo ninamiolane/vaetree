@@ -235,7 +235,7 @@ class Train(luigi.Task):
                 'models',
                 'epoch_{}_train_loss_{:.4f}_test_loss_{:.4f}.pth'.format(
                     epoch, train_loss, test_loss))
-            torch.save(model.state_dict(), model_path)
+            torch.save(model, model_path)
 
             train_test_path = os.path.join(
                 self.path,
