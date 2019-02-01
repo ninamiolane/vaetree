@@ -12,6 +12,7 @@ import nibabel as nib
 import numpy as np
 import pickle
 import sklearn.model_selection
+import skimage.transform
 import torch
 import torch.autograd
 import torch.utils.data
@@ -37,6 +38,8 @@ LATENT_DIM = 20
 LR = 5e-6
 
 N_INTENSITIES = 100000  # For speed-up
+SUM_PIXEL_THRESHOLD = 40
+IMAGE_SIZE = (64, 64)
 
 
 def normalization(imgs):
@@ -102,11 +105,21 @@ class MakeDataSet(luigi.Task):
             % (self.first_slice, self.last_slice))
 
         imgs = []
-        for i in range(n_vols):
-            img = nib.load(filepaths[i])
+
+        for path in filepaths:
+            logging.info(f'loading and resizing image {path}')
+            img = nib.load(path)
             array = img.get_data()
-            for k in range(self.first_slice, self.last_slice):
-                imgs.append(array[:, k, :])
+            for k in range(0, array.shape[1]):
+                imshape = array[:, k, :].shape
+                max_dim = max(imshape)
+                # TODO(johmathe): Do better with scikit-image
+                img_array = np.ndarray(shape=(max_dim, max_dim))
+                img_array[:imshape[0], :imshape[1]] = array[:, k, :]
+                if np.sum(img_array) < SUM_PIXEL_THRESHOLD * imshape[0] * imshape[1]:
+                    continue
+                img = skimage.transform.resize(img_array, (64, 64))
+                final_array.append(img)
         imgs = np.asarray(imgs)
         imgs = torch.Tensor(imgs)
 
