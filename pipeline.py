@@ -116,6 +116,8 @@ class MakeDataSet(luigi.Task):
                 # TODO(johmathe): Do better with scikit-image
                 img_array = np.ndarray(shape=(max_dim, max_dim))
                 img_array[:imshape[0], :imshape[1]] = array[:, k, :]
+                if np.sum(np.isnan(img_array)) > 0:
+                    continue
                 if np.sum(img_array) < SUM_PIXEL_THRESHOLD * imshape[0] * imshape[1]:
                     continue
                 img = skimage.transform.resize(img_array, (64, 64))
