@@ -119,7 +119,7 @@ class MakeDataSet(luigi.Task):
                 img_array[:imshape[0], :imshape[1]] = array[:, k, :]
                 if np.sum(img_array) < SUM_PIXEL_THRESHOLD * imshape[0] * imshape[1]:
                     continue
-                img = skimage.transform.resize(img_array, (64, 64))
+                img = skimage.transform.resize(img_array, IMAGE_SIZE)
                 imgs.append(img)
         imgs = np.asarray(imgs)
         imgs = torch.Tensor(imgs)
