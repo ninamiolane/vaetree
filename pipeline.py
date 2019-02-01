@@ -34,7 +34,7 @@ N_EPOCHS = 50
 
 LATENT_DIM = 20
 
-LR = 5e-5
+LR = 5e-6
 
 N_INTENSITIES = 100000  # For speed-up
 
@@ -116,7 +116,8 @@ class MakeDataSet(luigi.Task):
         imgs = imgs.reshape(new_shape)
 
         logging.info(
-            '----- 2D images: training set shape: (%d, %d, %d, %d)' % imgs.shape)
+            '----- 2D images:'
+            'training set shape: (%d, %d, %d, %d)' % imgs.shape)
 
         logging.info('-- Split into train and test sets')
         split = sklearn.model_selection.train_test_split(
@@ -186,11 +187,11 @@ class Train(luigi.Task):
                 data_path = os.path.join(
                     self.path,
                     'imgs',
-                    'Epoch_{}_data.npy'.format(epoch))
+                    'epoch_{}_data.npy'.format(epoch))
                 recon_path = os.path.join(
                     self.path,
                     'imgs',
-                    'Epoch_{}_recon.npy'.format(epoch))
+                    'epoch_{}_recon.npy'.format(epoch))
                 np.save(data_path, data.cpu().numpy())
                 np.save(recon_path, recon_batch.data.cpu().numpy())
 
@@ -232,9 +233,18 @@ class Train(luigi.Task):
             model_path = os.path.join(
                 self.path,
                 'models',
-                'Epoch_{}_Train_loss_{:.4f}_Test_loss_{:.4f}.pth'.format(
+                'epoch_{}_train_loss_{:.4f}_test_loss_{:.4f}.pth'.format(
                     epoch, train_loss, test_loss))
-            torch.save(model.state_dict(), model_path)
+            torch.save(model, model_path)
+
+            train_test_path = os.path.join(
+                self.path,
+                'losses',
+                'epoch_{}.pkl'.format(
+                    epoch, train_loss, test_loss))
+            with open(train_test_path, 'wb') as pkl:
+                pickle.dump(
+                    {'train_loss': train_loss, 'test_loss': test_loss}, pkl)
 
             train_losses.append(train_loss)
             test_losses.append(test_loss)

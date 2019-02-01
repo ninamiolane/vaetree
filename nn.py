@@ -33,6 +33,7 @@ def cnn_output_size(w_in, h_in, kernel_size=ENC_KERNEL_SIZE,
 
 
 class VAE(torch.nn.Module):
+    # TODO(nina): Add BN in encoder and decoders?
     def __init__(self, n_channels, latent_dim, w_in, h_in):
         super(VAE, self).__init__()
 
@@ -49,14 +50,24 @@ class VAE(torch.nn.Module):
         self.w_e1, self.h_e1 = cnn_output_size(
             w_in=w_in, h_in=h_in)
 
-        self.elast = torch.nn.Conv2d(
+        self.e2 = torch.nn.Conv2d(
             in_channels=self.e1.out_channels,
             out_channels=ENC_CHANNEL_BASE*2,
             kernel_size=ENC_KERNEL_SIZE,
             stride=ENC_STRIDE,
             padding=ENC_PADDING)
-        self.w_elast, self.h_elast = cnn_output_size(
+
+        self.w_e2, self.h_e2 = cnn_output_size(
             w_in=self.w_e1, h_in=self.h_e1)
+
+        self.elast = torch.nn.Conv2d(
+            in_channels=self.e2.out_channels,
+            out_channels=ENC_CHANNEL_BASE*4,
+            kernel_size=ENC_KERNEL_SIZE,
+            stride=ENC_STRIDE,
+            padding=ENC_PADDING)
+        self.w_elast, self.h_elast = cnn_output_size(
+            w_in=self.w_e2, h_in=self.h_e2)
 
         self.fcs_infeatures = self.elast.out_channels*self.h_elast*self.w_elast
         self.fc1 = torch.nn.Linear(
@@ -77,7 +88,7 @@ class VAE(torch.nn.Module):
         self.pd1 = torch.nn.ReplicationPad2d(1)
         self.d2 = torch.nn.Conv2d(
             in_channels=self.elast.out_channels,
-            out_channels=DEC_CHANNEL_BASE,
+            out_channels=DEC_CHANNEL_BASE*2,
             kernel_size=DEC_KERNEL_SIZE,
             stride=DEC_STRIDE)
 
@@ -85,6 +96,14 @@ class VAE(torch.nn.Module):
         self.pd2 = torch.nn.ReplicationPad2d(1)
         self.d3 = torch.nn.Conv2d(
             in_channels=self.d2.out_channels,
+            out_channels=DEC_CHANNEL_BASE,
+            kernel_size=DEC_KERNEL_SIZE,
+            stride=DEC_STRIDE)
+
+        self.up3 = torch.nn.UpsamplingNearest2d(scale_factor=2)
+        self.pd3 = torch.nn.ReplicationPad2d(1)
+        self.d4 = torch.nn.Conv2d(
+            in_channels=self.d3.out_channels,
             out_channels=self.n_channels,
             kernel_size=DEC_KERNEL_SIZE,
             stride=DEC_STRIDE)
@@ -94,12 +113,12 @@ class VAE(torch.nn.Module):
         self.sigmoid = torch.nn.Sigmoid()
 
     def encode(self, x):
-        a1 = self.e1(x)
-        h1 = self.leakyrelu(a1)
-        h2 = self.leakyrelu(self.elast(h1))
-        h2 = h2.view(-1, self.fcs_infeatures)
+        h1 = self.leakyrelu(self.e1(x))
+        h2 = self.leakyrelu(self.e2(h1))
+        h3 = self.leakyrelu(self.elast(h2))
+        h3 = h3.view(-1, self.fcs_infeatures)
 
-        return self.fc1(h2), self.fc2(h2)
+        return self.fc1(h3), self.fc2(h3)
 
     def reparametrize(self, mu, logvar):
         std = logvar.mul(0.5).exp_()
@@ -114,8 +133,9 @@ class VAE(torch.nn.Module):
         h1 = self.relu(self.d1(z))
         h1 = h1.view(-1, self.elast.out_channels, self.w_elast, self.h_elast)
         h2 = self.leakyrelu(self.d2(self.pd1(self.up1(h1))))
-        h3 = self.d3(self.pd2(self.up2(h2)))
-        return self.sigmoid(h3)
+        h3 = self.leakyrelu(self.d3(self.pd2(self.up2(h2))))
+        h4 = self.d4(self.pd3(self.up3(h3)))
+        return self.sigmoid(h4)
 
     def forward(self, x):
         mu, logvar = self.encode(x)
