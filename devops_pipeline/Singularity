@@ -10,6 +10,7 @@ From: ../../simgs/base.simg
     export LC_ALL
 
 %post
+    pip3 install --upgrade pip
     pip3 install luigi \
                  nibabel \
                  numpy \
@@ -17,7 +18,7 @@ From: ../../simgs/base.simg
                  scikit-image \
                  torch \
                  torchvision
-
+    pip3 install nilearn joblib
 
 %runscript
     exec /usr/bin/python3 -u pipeline.py

@@ -3,16 +3,17 @@
 import glob
 import logging
 import luigi
-import os
-
 import matplotlib
 matplotlib.use('Agg')  # NOQA
-import matplotlib.pyplot as plt
-import nibabel as nib
+import os
+import random
+from joblib import Parallel, delayed
+import nibabel
+import nilearn
 import numpy as np
 import pickle
-import sklearn.model_selection
 import skimage.transform
+import sklearn.model_selection
 import torch
 import torch.autograd
 import torch.utils.data
@@ -29,53 +30,77 @@ DEVICE = torch.device("cuda" if CUDA else "cpu")
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
-BATCH_SIZE = 32
+BATCH_SIZE = 256
 PRINT_INTERVAL = 10
 N_EPOCHS = 50
 
-LATENT_DIM = 20
+LATENT_DIM = 100
 
-LR = 5e-6
+LR = 1e-4
 
 N_INTENSITIES = 100000  # For speed-up
 SUM_PIXEL_THRESHOLD = 40
 IMAGE_SIZE = (64, 64)
 
-
-def normalization(imgs):
-    logging.info(
-        '-- Normalization of images intensities.')
-    intensities = imgs.reshape((-1))[:N_INTENSITIES]
-    intensities_without_0 = intensities[intensities > 2]
-
-    plt.subplot(3, 1, 1)
-    plt.hist(intensities, bins=100)
-
-    plt.subplot(3, 1, 2)
-    plt.hist(intensities_without_0, bins=100)
-
-    n_imgs = imgs.shape[0]
-    mean = (torch.mean(intensities_without_0),) * n_imgs
-    std = (torch.std(intensities_without_0),) * n_imgs
-    print(mean)
-    print(std)
-    imgs = torchvision.transforms.Normalize(mean, std)(imgs)
-
-    return imgs, mean, std
+TARGET = '/neuro/'
 
 
-class FetchDataSet(luigi.Task):
-    path = os.path.join(HOME_DIR, 'dataset')
+class FetchOpenNeuroDataset(luigi.Task):
+    file_list_path = './datasets/openneuro_files.txt'
+    target_dir = '/neuro/'
+
+    def dl_file(self, path):
+        path = path.strip()
+        target_path = TARGET + os.path.dirname(path)
+        if not os.path.exists(target_path):
+            os.makedirs(target_path)
+        os.system("aws --no-sign-reques s3 cp  s3://openneuro.org/%s %s" %
+                  (path, target_path))
 
     def requires(self):
         pass
 
     def run(self):
-        pass
+        with open('files') as f:
+            all_files = f.readlines()
+
+        Parallel(n_jobs=10)(delayed(self.dl_file)(f) for f in all_files)
 
     def output(self):
-        return luigi.LocalTarget(self.path)
+        return luigi.LocalTarget(self.target_dir)
 
+
+def normalization(imgs):
+    imgs = imgs.unsqueeze(1)
+    print(imgs.size())
+    logging.info(
+        '-- Normalization of images intensities.')
+    intensities = imgs.reshape((-1))[:N_INTENSITIES]
+    intensities_without_0 = intensities[intensities > 2]
+
+    n_imgs = imgs.shape[0]
+    mean = (torch.mean(intensities_without_0),) * n_imgs
+    std = (torch.std(intensities_without_0),) * n_imgs
+    print('MEAN: %s' % str(mean))
+    print('STD: %s' % str(std))
+    imgs = torchvision.transforms.Normalize(mean, std)(imgs)
+
+    return imgs, mean, std
+
+def process_file(path, output, template):
+    logging.info('loading and resizing image %s', path)
+    img = nibabel.load(path)
+    img = nilearn.image.resample_to_img(img, template)
+    array = img.get_fdata()
+    array = np.nan_to_num(array)
+    volume_max = np.max(array)
+    volume_min = np.min(array)
+    volume_delta = volume_max - volume_min
+    array = (array - volume_min) / volume_delta
+    for k in range(30, array.shape[2]-20):
+        img_slice = array[:, :, k]
+        img = skimage.transform.resize(img_slice, IMAGE_SIZE)
+        output.append(img)
 
 class MakeDataSet(luigi.Task):
     train_path = os.path.join(OUTPUT_DIR, 'train.pkl')
@@ -85,17 +110,19 @@ class MakeDataSet(luigi.Task):
     test_fraction = 0.2
 
     def requires(self):
-        return {'dataset': FetchDataSet()}
+        return {'dataset': FetchOpenNeuroDataset()}
 
     def run(self):
         path = self.input()['dataset'].path
-        filepaths = glob.glob(path + '/*/*.nii.gz')
+        filepaths = glob.glob(path + '**/*.nii.gz', recursive=True)
+        random.shuffle(filepaths)
+        filepaths = filepaths[:200]
         n_vols = len(filepaths)
         logging.info('----- Number of 3D images: %d' % n_vols)
 
         first_filepath = filepaths[0]
-        first_img = nib.load(first_filepath)
-        first_array = first_img.get_data()
+        first_img = nibabel.load(first_filepath)
+        first_array = first_img.get_fdata()
 
         logging.info('----- First filepath: %s' % first_filepath)
         logging.info(
@@ -106,27 +133,12 @@ class MakeDataSet(luigi.Task):
             % (self.first_slice, self.last_slice))
 
         imgs = []
+        template = nibabel.load(
+            '/neuro/ds000030/sub-10159/anat/sub-10159_T1w.nii.gz')
 
-        for path in filepaths:
-            logging.info('loading and resizing image %s', path)
-            img = nib.load(path)
-            array = img.get_data()
-            for k in range(0, array.shape[1]):
-                imshape = array[:, k, :].shape
-                max_dim = max(imshape)
-                # TODO(johmathe): Do better with scikit-image
-                img_array = np.ndarray(shape=(max_dim, max_dim))
-                img_array[:imshape[0], :imshape[1]] = array[:, k, :]
-                if np.sum(np.isnan(img_array)) > 0:
-                    continue
-                if np.sum(img_array) < SUM_PIXEL_THRESHOLD * imshape[0] * imshape[1]:
-                    continue
-                img = skimage.transform.resize(img_array, IMAGE_SIZE)
-                imgs.append(img)
+        Parallel(backend="threading",n_jobs=12)(delayed(process_file)(f, imgs, template) for f in filepaths)
         imgs = np.asarray(imgs)
         imgs = torch.Tensor(imgs)
-
-        imgs, _, _ = normalization(imgs)
 
         new_shape = (imgs.shape[0],) + (1,) + imgs.shape[1:]
         imgs = imgs.reshape(new_shape)
