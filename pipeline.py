@@ -1,5 +1,6 @@
 """Data processing pipeline."""
 
+import tempfile
 import glob
 import logging
 import luigi
@@ -17,6 +18,7 @@ import sklearn.model_selection
 import torch
 import torch.autograd
 import torch.utils.data
+import torch.nn as tnn
 import torchvision
 
 import nn
@@ -30,13 +32,13 @@ DEVICE = torch.device("cuda" if CUDA else "cpu")
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
-BATCH_SIZE = 256
+BATCH_SIZE = 128
 PRINT_INTERVAL = 10
 N_EPOCHS = 50
 
 LATENT_DIM = 100
 
-LR = 1e-4
+LR = 3e-4
 
 N_INTENSITIES = 100000  # For speed-up
 SUM_PIXEL_THRESHOLD = 40
@@ -72,7 +74,6 @@ class FetchOpenNeuroDataset(luigi.Task):
 
 def normalization(imgs):
     imgs = imgs.unsqueeze(1)
-    print(imgs.size())
     logging.info(
         '-- Normalization of images intensities.')
     intensities = imgs.reshape((-1))[:N_INTENSITIES]
@@ -81,26 +82,51 @@ def normalization(imgs):
     n_imgs = imgs.shape[0]
     mean = (torch.mean(intensities_without_0),) * n_imgs
     std = (torch.std(intensities_without_0),) * n_imgs
-    print('MEAN: %s' % str(mean))
-    print('STD: %s' % str(std))
-    imgs = torchvision.transforms.Normalize(mean, std)(imgs)
+    #imgs = torchvision.transforms.Normalize(mean, std)(imgs)
 
     return imgs, mean, std
 
-def process_file(path, output, template):
+
+def is_diag(M):
+    return np.all(M == np.diag(np.diagonal(M)))
+
+
+def get_tempfile_name(some_id='def'):
+    return os.path.join(tempfile.gettempdir(), next(tempfile._get_candidate_names()) + "_" + some_id + ".nii.gz")
+
+def process_file(path, output):
     logging.info('loading and resizing image %s', path)
     img = nibabel.load(path)
-    img = nilearn.image.resample_to_img(img, template)
+    mat = img.affine[:3, :3]
+    if not is_diag(mat):
+        logging.info('not diagonal, skipping')
+        return
+    if np.any(mat < 0):
+        logging.info('negative values, skipping')
+        return
+    processed_file = get_tempfile_name()
+    os.system('/usr/lib/ants/N4BiasFieldCorrection -i %s -o %s -s 6' % (path, processed_file))
+    #os.system('cp -i %s %s' % (path, processed_file))
+    img = nibabel.load(processed_file)
     array = img.get_fdata()
     array = np.nan_to_num(array)
-    volume_max = np.max(array)
-    volume_min = np.min(array)
-    volume_delta = volume_max - volume_min
-    array = (array - volume_min) / volume_delta
-    for k in range(30, array.shape[2]-20):
+    std = np.std(array.reshape(-1))
+    mean = np.mean(array.reshape(-1))
+    print('PREMEAN: %s' % mean)
+    array = array / std
+    mean = np.mean(array.reshape(-1))
+    print('mean: %s' % mean)
+    if mean > 1.0:
+        print('mean too high: %s' % mean)
+        return
+    array -= mean
+    print('MEAN: %s' % np.mean(array))
+    print('STD: %s' % np.std(array))
+    for k in range(array.shape[2]):
         img_slice = array[:, :, k]
         img = skimage.transform.resize(img_slice, IMAGE_SIZE)
         output.append(img)
+    os.remove(processed_file)
 
 class MakeDataSet(luigi.Task):
     train_path = os.path.join(OUTPUT_DIR, 'train.pkl')
@@ -116,9 +142,9 @@ class MakeDataSet(luigi.Task):
         path = self.input()['dataset'].path
         filepaths = glob.glob(path + '**/*.nii.gz', recursive=True)
         random.shuffle(filepaths)
-        filepaths = filepaths[:200]
+        filepaths = filepaths[0:6000]
         n_vols = len(filepaths)
-        logging.info('----- Number of 3D images: %d' % n_vols)
+        logging.info('----- 3D images: %d' % n_vols)
 
         first_filepath = filepaths[0]
         first_img = nibabel.load(first_filepath)
@@ -133,10 +159,9 @@ class MakeDataSet(luigi.Task):
             % (self.first_slice, self.last_slice))
 
         imgs = []
-        template = nibabel.load(
-            '/neuro/ds000030/sub-10159/anat/sub-10159_T1w.nii.gz')
-
-        Parallel(backend="threading",n_jobs=12)(delayed(process_file)(f, imgs, template) for f in filepaths)
+        Parallel(backend="threading",n_jobs=4)(delayed(process_file)(f, imgs) for f in filepaths)
+        print(len(imgs))
+        print(imgs[0].shape)
         imgs = np.asarray(imgs)
         imgs = torch.Tensor(imgs)
 
@@ -253,6 +278,13 @@ class Train(luigi.Task):
             h_in=train.shape[3]).to(DEVICE)
         optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
+        def init_normal(m):
+            if type(m) == tnn.Linear:
+                tnn.init.xavier_normal_(m.weight)
+            if type(m) == tnn.Conv2d:
+                tnn.init.xavier_normal_(m.weight)
+
+        model.apply(init_normal)
         train_losses = []
         test_losses = []
         for epoch in range(N_EPOCHS):
