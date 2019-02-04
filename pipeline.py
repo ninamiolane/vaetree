@@ -30,13 +30,13 @@ DEVICE = torch.device("cuda" if CUDA else "cpu")
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
-BATCH_SIZE = 128
+BATCH_SIZE = 64
 PRINT_INTERVAL = 10
 N_EPOCHS = 50
 
-LATENT_DIM = 100
+LATENT_DIM = 20
 
-LR = 3e-4
+LR = 15e-6
 
 N_INTENSITIES = 100000  # For speed-up
 SUM_PIXEL_THRESHOLD = 40
