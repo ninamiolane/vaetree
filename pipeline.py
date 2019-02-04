@@ -10,7 +10,6 @@ import os
 import random
 from joblib import Parallel, delayed
 import nibabel
-import nilearn
 import numpy as np
 import pickle
 import skimage.transform
@@ -19,7 +18,6 @@ import torch
 import torch.autograd
 import torch.utils.data
 import torch.nn as tnn
-import torchvision
 
 import nn
 
@@ -72,27 +70,15 @@ class FetchOpenNeuroDataset(luigi.Task):
         return luigi.LocalTarget(self.target_dir)
 
 
-def normalization(imgs):
-    imgs = imgs.unsqueeze(1)
-    logging.info(
-        '-- Normalization of images intensities.')
-    intensities = imgs.reshape((-1))[:N_INTENSITIES]
-    intensities_without_0 = intensities[intensities > 2]
-
-    n_imgs = imgs.shape[0]
-    mean = (torch.mean(intensities_without_0),) * n_imgs
-    std = (torch.std(intensities_without_0),) * n_imgs
-    #imgs = torchvision.transforms.Normalize(mean, std)(imgs)
-
-    return imgs, mean, std
-
-
 def is_diag(M):
     return np.all(M == np.diag(np.diagonal(M)))
 
 
 def get_tempfile_name(some_id='def'):
-    return os.path.join(tempfile.gettempdir(), next(tempfile._get_candidate_names()) + "_" + some_id + ".nii.gz")
+    return os.path.join(
+        tempfile.gettempdir(),
+        next(tempfile._get_candidate_names()) + "_" + some_id + ".nii.gz")
+
 
 def process_file(path, output):
     logging.info('loading and resizing image %s', path)
@@ -105,8 +91,8 @@ def process_file(path, output):
         logging.info('negative values, skipping')
         return
     processed_file = get_tempfile_name()
-    os.system('/usr/lib/ants/N4BiasFieldCorrection -i %s -o %s -s 6' % (path, processed_file))
-    #os.system('cp -i %s %s' % (path, processed_file))
+    os.system('/usr/lib/ants/N4BiasFieldCorrection -i %s -o %s -s 6' %
+              (path, processed_file))
     img = nibabel.load(processed_file)
     array = img.get_fdata()
     array = np.nan_to_num(array)
@@ -128,6 +114,7 @@ def process_file(path, output):
         output.append(img)
     os.remove(processed_file)
 
+
 class MakeDataSet(luigi.Task):
     train_path = os.path.join(OUTPUT_DIR, 'train.pkl')
     test_path = os.path.join(OUTPUT_DIR, 'test.pkl')
@@ -142,7 +129,6 @@ class MakeDataSet(luigi.Task):
         path = self.input()['dataset'].path
         filepaths = glob.glob(path + '**/*.nii.gz', recursive=True)
         random.shuffle(filepaths)
-        filepaths = filepaths[0:6000]
         n_vols = len(filepaths)
         logging.info('----- 3D images: %d' % n_vols)
 
@@ -159,9 +145,9 @@ class MakeDataSet(luigi.Task):
             % (self.first_slice, self.last_slice))
 
         imgs = []
-        Parallel(backend="threading",n_jobs=4)(delayed(process_file)(f, imgs) for f in filepaths)
-        print(len(imgs))
-        print(imgs[0].shape)
+        Parallel(
+            backend="threading",
+            n_jobs=4)(delayed(process_file)(f, imgs) for f in filepaths)
         imgs = np.asarray(imgs)
         imgs = torch.Tensor(imgs)
 
