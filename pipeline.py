@@ -1,25 +1,27 @@
 """Data processing pipeline."""
 
+import tempfile
 import glob
 import logging
 import luigi
-import os
-
 import matplotlib
 matplotlib.use('Agg')  # NOQA
-import matplotlib.pyplot as plt
-import nibabel as nib
+import os
+import random
+from joblib import Parallel, delayed
+import nibabel
 import numpy as np
 import pickle
+import skimage.transform
 import sklearn.model_selection
 import torch
 import torch.autograd
 import torch.utils.data
-import torchvision
+import torch.nn as tnn
 
 import nn
 
-HOME_DIR = '/scratch/users/nmiolane'
+HOME_DIR = '/scratch/users/johmathe'
 OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
 
 CUDA = torch.cuda.is_available()
@@ -28,49 +30,86 @@ DEVICE = torch.device("cuda" if CUDA else "cpu")
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
-BATCH_SIZE = 32
+BATCH_SIZE = 64
 PRINT_INTERVAL = 10
 N_EPOCHS = 50
 
 LATENT_DIM = 20
 
-LR = 5e-6
+LR = 15e-6
 
 N_INTENSITIES = 100000  # For speed-up
+SUM_PIXEL_THRESHOLD = 40
+IMAGE_SIZE = (64, 64)
+
+TARGET = '/neuro/'
 
 
-def normalization(imgs):
-    logging.info(
-        '-- Normalization of images intensities.')
-    intensities = imgs.reshape((-1))[:N_INTENSITIES]
-    intensities_without_0 = intensities[intensities > 2]
+class FetchOpenNeuroDataset(luigi.Task):
+    file_list_path = './datasets/openneuro_files.txt'
+    target_dir = '/neuro/'
 
-    plt.subplot(3, 1, 1)
-    plt.hist(intensities, bins=100)
-
-    plt.subplot(3, 1, 2)
-    plt.hist(intensities_without_0, bins=100)
-
-    n_imgs = imgs.shape[0]
-    mean = (torch.mean(intensities_without_0),) * n_imgs
-    std = (torch.std(intensities_without_0),) * n_imgs
-
-    imgs = torchvision.transforms.Normalize(mean, std)(imgs)
-
-    return imgs, mean, std
-
-
-class FetchDataSet(luigi.Task):
-    path = os.path.join(HOME_DIR, 'dataset')
+    def dl_file(self, path):
+        path = path.strip()
+        target_path = TARGET + os.path.dirname(path)
+        if not os.path.exists(target_path):
+            os.makedirs(target_path)
+        os.system("aws --no-sign-request s3 cp  s3://openneuro.org/%s %s" %
+                  (path, target_path))
 
     def requires(self):
         pass
 
     def run(self):
-        pass
+        with open('files') as f:
+            all_files = f.readlines()
+
+        Parallel(n_jobs=10)(delayed(self.dl_file)(f) for f in all_files)
 
     def output(self):
-        return luigi.LocalTarget(self.path)
+        return luigi.LocalTarget(self.target_dir)
+
+
+def is_diag(M):
+    return np.all(M == np.diag(np.diagonal(M)))
+
+
+def get_tempfile_name(some_id='def'):
+    return os.path.join(
+        tempfile.gettempdir(),
+        next(tempfile._get_candidate_names()) + "_" + some_id + ".nii.gz")
+
+
+def process_file(path, output):
+    logging.info('loading and resizing image %s', path)
+    img = nibabel.load(path)
+    mat = img.affine[:3, :3]
+    if not is_diag(mat):
+        logging.info('not diagonal, skipping')
+        return
+    if np.any(mat < 0):
+        logging.info('negative values, skipping')
+        return
+    processed_file = get_tempfile_name()
+    os.system('/usr/lib/ants/N4BiasFieldCorrection -i %s -o %s -s 6' %
+              (path, processed_file))
+    img = nibabel.load(processed_file)
+    array = img.get_fdata()
+    array = np.nan_to_num(array)
+    std = np.std(array.reshape(-1))
+    mean = np.mean(array.reshape(-1))
+    array = array / std
+    mean = np.mean(array.reshape(-1))
+    # HACK Alert - This is a way to check if the backgound is a white noise.
+    if mean > 1.0:
+        print('mean too high: %s' % mean)
+        return
+    array -= mean
+    for k in range(array.shape[2]):
+        img_slice = array[:, :, k]
+        img = skimage.transform.resize(img_slice, IMAGE_SIZE)
+        output.append(img)
+    os.remove(processed_file)
 
 
 class MakeDataSet(luigi.Task):
@@ -81,17 +120,18 @@ class MakeDataSet(luigi.Task):
     test_fraction = 0.2
 
     def requires(self):
-        return {'dataset': FetchDataSet()}
+        return {'dataset': FetchOpenNeuroDataset()}
 
     def run(self):
         path = self.input()['dataset'].path
-        filepaths = glob.glob(path + '/ds000245/*T1w.nii.gz')
+        filepaths = glob.glob(path + '**/*.nii.gz', recursive=True)
+        random.shuffle(filepaths)
         n_vols = len(filepaths)
-        logging.info('----- Number of 3D images: %d' % n_vols)
+        logging.info('----- 3D images: %d' % n_vols)
 
         first_filepath = filepaths[0]
-        first_img = nib.load(first_filepath)
-        first_array = first_img.get_data()
+        first_img = nibabel.load(first_filepath)
+        first_array = first_img.get_fdata()
 
         logging.info('----- First filepath: %s' % first_filepath)
         logging.info(
@@ -102,15 +142,11 @@ class MakeDataSet(luigi.Task):
             % (self.first_slice, self.last_slice))
 
         imgs = []
-        for i in range(n_vols):
-            img = nib.load(filepaths[i])
-            array = img.get_data()
-            for k in range(self.first_slice, self.last_slice):
-                imgs.append(array[:, k, :])
+        Parallel(
+            backend="threading",
+            n_jobs=4)(delayed(process_file)(f, imgs) for f in filepaths)
         imgs = np.asarray(imgs)
         imgs = torch.Tensor(imgs)
-
-        imgs, _, _ = normalization(imgs)
 
         new_shape = (imgs.shape[0],) + (1,) + imgs.shape[1:]
         imgs = imgs.reshape(new_shape)
@@ -225,6 +261,13 @@ class Train(luigi.Task):
             h_in=train.shape[3]).to(DEVICE)
         optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
+        def init_normal(m):
+            if type(m) == tnn.Linear:
+                tnn.init.xavier_normal_(m.weight)
+            if type(m) == tnn.Conv2d:
+                tnn.init.xavier_normal_(m.weight)
+
+        model.apply(init_normal)
         train_losses = []
         test_losses = []
         for epoch in range(N_EPOCHS):

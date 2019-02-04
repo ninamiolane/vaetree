@@ -2,27 +2,27 @@
 
 import torch
 import torch.utils.data
-import torch.nn
+import torch.nn as nn
 import torch.optim
 import torch.autograd
 
 
 CUDA = torch.cuda.is_available()
 
-ENC_KERNEL_SIZE = 4
-ENC_STRIDE = 2
-ENC_PADDING = 1
+ENC_KS = 4
+ENC_STR = 2
+ENC_PAD = 1
 ENC_DILATION = 1
-ENC_CHANNEL_BASE = 64
+ENC_C = 64
 
-DEC_KERNEL_SIZE = 3
-DEC_STRIDE = 1
-DEC_CHANNEL_BASE = 64
+DEC_KS = 3
+DEC_STR = 1
+DEC_C = 64
 
 
-def cnn_output_size(w_in, h_in, kernel_size=ENC_KERNEL_SIZE,
-                    stride=ENC_STRIDE,
-                    padding=ENC_PADDING,
+def cnn_output_size(w_in, h_in, kernel_size=ENC_KS,
+                    stride=ENC_STR,
+                    padding=ENC_PAD,
                     dilation=ENC_DILATION):
     def one_dim(x):
         # From pytorch doc.
@@ -32,7 +32,7 @@ def cnn_output_size(w_in, h_in, kernel_size=ENC_KERNEL_SIZE,
     return one_dim(w_in), one_dim(h_in)
 
 
-class VAE(torch.nn.Module):
+class VAE(nn.Module):
     # TODO(nina): Add BN in encoder and decoders?
     def __init__(self, n_channels, latent_dim, w_in, h_in):
         super(VAE, self).__init__()
@@ -41,84 +41,122 @@ class VAE(torch.nn.Module):
         self.latent_dim = latent_dim
 
         # encoder
-        self.e1 = torch.nn.Conv2d(
+        self.e1 = nn.Conv2d(
             in_channels=self.n_channels,
-            out_channels=ENC_CHANNEL_BASE,
-            kernel_size=ENC_KERNEL_SIZE,
-            stride=ENC_STRIDE,
-            padding=ENC_PADDING)
-        self.w_e1, self.h_e1 = cnn_output_size(
-            w_in=w_in, h_in=h_in)
+            out_channels=ENC_C,
+            kernel_size=ENC_KS,
+            stride=ENC_STR,
+            padding=ENC_PAD)
+        self.bn1 = nn.BatchNorm2d(self.e1.out_channels)
 
-        self.e2 = torch.nn.Conv2d(
+        self.w_e1, self.h_e1 = cnn_output_size(w_in=w_in, h_in=h_in)
+
+        self.e2 = nn.Conv2d(
             in_channels=self.e1.out_channels,
-            out_channels=ENC_CHANNEL_BASE*2,
-            kernel_size=ENC_KERNEL_SIZE,
-            stride=ENC_STRIDE,
-            padding=ENC_PADDING)
+            out_channels=ENC_C * 2,
+            kernel_size=ENC_KS,
+            stride=ENC_STR,
+            padding=ENC_PAD)
+        self.bn2 = nn.BatchNorm2d(self.e2.out_channels)
+        self.w_e2, self.h_e2 = cnn_output_size(w_in=self.w_e1, h_in=self.h_e1)
 
-        self.w_e2, self.h_e2 = cnn_output_size(
-            w_in=self.w_e1, h_in=self.h_e1)
-
-        self.elast = torch.nn.Conv2d(
+        self.e3 = nn.Conv2d(
             in_channels=self.e2.out_channels,
-            out_channels=ENC_CHANNEL_BASE*4,
-            kernel_size=ENC_KERNEL_SIZE,
-            stride=ENC_STRIDE,
-            padding=ENC_PADDING)
-        self.w_elast, self.h_elast = cnn_output_size(
-            w_in=self.w_e2, h_in=self.h_e2)
+            out_channels=ENC_C * 4,
+            kernel_size=ENC_KS,
+            stride=ENC_STR,
+            padding=ENC_PAD)
+        self.bn3 = nn.BatchNorm2d(self.e3.out_channels)
+        self.w_e3, self.h_e3 = cnn_output_size(w_in=self.w_e2, h_in=self.h_e2)
 
-        self.fcs_infeatures = self.elast.out_channels*self.h_elast*self.w_elast
-        self.fc1 = torch.nn.Linear(
-            in_features=self.fcs_infeatures,
-            out_features=latent_dim)
+        self.e4 = nn.Conv2d(
+            in_channels=self.e3.out_channels,
+            out_channels=ENC_C * 8,
+            kernel_size=ENC_KS,
+            stride=ENC_STR,
+            padding=ENC_PAD)
+        self.bn4 = nn.BatchNorm2d(self.e4.out_channels)
+        self.w_e4, self.h_e4 = cnn_output_size(w_in=self.w_e3, h_in=self.h_e3)
 
-        self.fc2 = torch.nn.Linear(
-            in_features=self.fcs_infeatures,
-            out_features=latent_dim)
+        self.e5 = nn.Conv2d(
+            in_channels=self.e4.out_channels,
+            out_channels=ENC_C * 8,
+            kernel_size=ENC_KS,
+            stride=ENC_STR,
+            padding=ENC_PAD)
+        self.bn5 = nn.BatchNorm2d(self.e5.out_channels)
+        self.w_e5, self.h_e5 = cnn_output_size(
+            w_in=self.w_e4, h_in=self.h_e4)
+
+        self.fcs_infeatures = self.e5.out_channels * self.h_e5 * self.w_e5
+        self.fc1 = nn.Linear(
+            in_features=self.fcs_infeatures, out_features=latent_dim)
+
+        self.fc2 = nn.Linear(
+            in_features=self.fcs_infeatures, out_features=latent_dim)
 
         # decoder
-        self.d1 = torch.nn.Linear(
-            in_features=latent_dim,
-            out_features=self.fcs_infeatures)
+        self.d1 = nn.Linear(
+            in_features=latent_dim, out_features=self.fcs_infeatures)
 
-        self.up1 = torch.nn.UpsamplingNearest2d(
-            scale_factor=2)
-        self.pd1 = torch.nn.ReplicationPad2d(1)
-        self.d2 = torch.nn.Conv2d(
-            in_channels=self.elast.out_channels,
-            out_channels=DEC_CHANNEL_BASE*2,
-            kernel_size=DEC_KERNEL_SIZE,
-            stride=DEC_STRIDE)
+        self.up1 = nn.UpsamplingNearest2d(scale_factor=2)
+        self.pd1 = nn.ReplicationPad2d(1)
+        self.d2 = nn.Conv2d(
+            in_channels=self.e5.out_channels,
+            out_channels=DEC_C * 16,
+            kernel_size=DEC_KS,
+            stride=DEC_STR)
+        self.bnd1 = nn.BatchNorm2d(self.d2.out_channels, 1.e-3)
 
-        self.up2 = torch.nn.UpsamplingNearest2d(scale_factor=2)
-        self.pd2 = torch.nn.ReplicationPad2d(1)
-        self.d3 = torch.nn.Conv2d(
+        self.up2 = nn.UpsamplingNearest2d(scale_factor=2)
+        self.pd2 = nn.ReplicationPad2d(1)
+        self.d3 = nn.Conv2d(
             in_channels=self.d2.out_channels,
-            out_channels=DEC_CHANNEL_BASE,
-            kernel_size=DEC_KERNEL_SIZE,
-            stride=DEC_STRIDE)
+            out_channels=DEC_C * 8,
+            kernel_size=DEC_KS,
+            stride=DEC_STR)
+        self.bnd2 = nn.BatchNorm2d(self.d3.out_channels, 1.e-3)
 
-        self.up3 = torch.nn.UpsamplingNearest2d(scale_factor=2)
-        self.pd3 = torch.nn.ReplicationPad2d(1)
-        self.d4 = torch.nn.Conv2d(
+        self.up3 = nn.UpsamplingNearest2d(scale_factor=2)
+        self.pd3 = nn.ReplicationPad2d(1)
+        self.d4 = nn.Conv2d(
             in_channels=self.d3.out_channels,
-            out_channels=self.n_channels,
-            kernel_size=DEC_KERNEL_SIZE,
-            stride=DEC_STRIDE)
+            out_channels=DEC_C * 4,
+            kernel_size=DEC_KS,
+            stride=DEC_STR)
+        self.bnd3 = nn.BatchNorm2d(self.d4.out_channels, 1.e-3)
 
-        self.leakyrelu = torch.nn.LeakyReLU(0.2)
-        self.relu = torch.nn.ReLU()
-        self.sigmoid = torch.nn.Sigmoid()
+        self.up4 = nn.UpsamplingNearest2d(scale_factor=2)
+        self.pd4 = nn.ReplicationPad2d(1)
+        self.d5 = nn.Conv2d(
+            in_channels=self.d4.out_channels,
+            out_channels= DEC_C * 2,
+            kernel_size=DEC_KS,
+            stride=DEC_STR)
+        self.bnd4 = nn.BatchNorm2d(self.d5.out_channels, 1.e-3)
+
+        self.up5 = nn.UpsamplingNearest2d(scale_factor=2)
+        self.pd5 = nn.ReplicationPad2d(1)
+        self.d6 = nn.Conv2d(
+            in_channels=self.d5.out_channels,
+            out_channels=self.n_channels,
+            kernel_size=DEC_KS,
+            stride=DEC_STR)
+
+        self.leakyrelu = nn.LeakyReLU(0.2)
+        self.relu = nn.ReLU()
+        self.sigmoid = nn.Sigmoid()
+
 
     def encode(self, x):
-        h1 = self.leakyrelu(self.e1(x))
-        h2 = self.leakyrelu(self.e2(h1))
-        h3 = self.leakyrelu(self.elast(h2))
-        h3 = h3.view(-1, self.fcs_infeatures)
+        h1 = self.leakyrelu(self.bn1(self.e1(x)))
+        h2 = self.leakyrelu(self.bn2(self.e2(h1)))
+        h3 = self.leakyrelu(self.bn3(self.e3(h2)))
+        h4 = self.leakyrelu(self.bn4(self.e4(h3)))
+        h5 = self.leakyrelu(self.bn5(self.e5(h4)))
+        h5 = h5.view(-1, self.fcs_infeatures)
 
-        return self.fc1(h3), self.fc2(h3)
+        return self.fc1(h5), self.fc2(h5)
 
     def reparametrize(self, mu, logvar):
         std = logvar.mul(0.5).exp_()
@@ -131,11 +169,13 @@ class VAE(torch.nn.Module):
 
     def decode(self, z):
         h1 = self.relu(self.d1(z))
-        h1 = h1.view(-1, self.elast.out_channels, self.w_elast, self.h_elast)
-        h2 = self.leakyrelu(self.d2(self.pd1(self.up1(h1))))
-        h3 = self.leakyrelu(self.d3(self.pd2(self.up2(h2))))
-        h4 = self.d4(self.pd3(self.up3(h3)))
-        return self.sigmoid(h4)
+        h1 = h1.view(-1, self.e5.out_channels, self.w_e5, self.h_e5)
+        h2 = self.leakyrelu(self.bnd1(self.d2(self.pd1(self.up1(h1)))))
+        h3 = self.leakyrelu(self.bnd2(self.d3(self.pd2(self.up2(h2)))))
+        h4 = self.leakyrelu(self.bnd3(self.d4(self.pd3(self.up3(h3)))))
+        h5 = self.leakyrelu(self.bnd4(self.d5(self.pd4(self.up4(h4)))))
+        h5 = self.d6(self.pd5(self.up3(h5)))
+        return self.sigmoid(h5)
 
     def forward(self, x):
         mu, logvar = self.encode(x)
@@ -144,7 +184,7 @@ class VAE(torch.nn.Module):
         return res, mu, logvar
 
 
-reconstruction_function = torch.nn.MSELoss()
+reconstruction_function = nn.MSELoss()
 
 
 def loss_function(recon_x, x, mu, logvar):
