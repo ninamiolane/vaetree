@@ -1,6 +1,5 @@
 """Data processing pipeline."""
 
-import tempfile
 import glob
 import logging
 import luigi
@@ -14,10 +13,11 @@ import numpy as np
 import pickle
 import skimage.transform
 import sklearn.model_selection
+import tempfile
 import torch
 import torch.autograd
-import torch.utils.data
 import torch.nn as tnn
+import torch.utils.data
 
 import nn
 
@@ -80,15 +80,21 @@ def get_tempfile_name(some_id='def'):
         next(tempfile._get_candidate_names()) + "_" + some_id + ".nii.gz")
 
 
+def affine_matrix_permutes_axes(affine_matrix):
+    mat = affine_matrix[:3, :3]
+    if not is_diag(mat):
+        logging.info('not diagonal, skipping')
+        return True
+    if np.any(mat < 0):
+        logging.info('negative values, skipping')
+        return True
+    return False
+
+
 def process_file(path, output):
     logging.info('loading and resizing image %s', path)
     img = nibabel.load(path)
-    mat = img.affine[:3, :3]
-    if not is_diag(mat):
-        logging.info('not diagonal, skipping')
-        return
-    if np.any(mat < 0):
-        logging.info('negative values, skipping')
+    if affine_matrix_permutes_axes(img.affine):
         return
     processed_file = get_tempfile_name()
     os.system('/usr/lib/ants/N4BiasFieldCorrection -i %s -o %s -s 6' %
@@ -97,7 +103,6 @@ def process_file(path, output):
     array = img.get_fdata()
     array = np.nan_to_num(array)
     std = np.std(array.reshape(-1))
-    mean = np.mean(array.reshape(-1))
     array = array / std
     mean = np.mean(array.reshape(-1))
     # HACK Alert - This is a way to check if the backgound is a white noise.

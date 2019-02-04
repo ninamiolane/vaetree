@@ -1,10 +1,10 @@
 """NN fabric."""
 
 import torch
-import torch.utils.data
+import torch.autograd
 import torch.nn as nn
 import torch.optim
-import torch.autograd
+import torch.utils.data
 
 
 CUDA = torch.cuda.is_available()
@@ -99,6 +99,7 @@ class VAE(nn.Module):
         self.d1 = nn.Linear(
             in_features=latent_dim, out_features=self.fcs_infeatures)
 
+        # TODO(johmathe): Get rid of warning.
         self.up1 = nn.UpsamplingNearest2d(scale_factor=2)
         self.pd1 = nn.ReplicationPad2d(1)
         self.d2 = nn.Conv2d(

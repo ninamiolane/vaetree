@@ -17,8 +17,9 @@ From: ../../simgs/base.simg
                  scikit-learn \
                  scikit-image \
                  torch \
-                 torchvision
-    pip3 install nilearn joblib
+                 torchvision \
+                 nilearn \
+                 joblib
 
 %runscript
     exec /usr/bin/python3 -u pipeline.py
