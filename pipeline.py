@@ -98,16 +98,13 @@ def process_file(path, output):
     array = np.nan_to_num(array)
     std = np.std(array.reshape(-1))
     mean = np.mean(array.reshape(-1))
-    print('PREMEAN: %s' % mean)
     array = array / std
     mean = np.mean(array.reshape(-1))
-    print('mean: %s' % mean)
+    # HACK Alert - This is a way to check if the backgound is a white noise.
     if mean > 1.0:
         print('mean too high: %s' % mean)
         return
     array -= mean
-    print('MEAN: %s' % np.mean(array))
-    print('STD: %s' % np.std(array))
     for k in range(array.shape[2]):
         img_slice = array[:, :, k]
         img = skimage.transform.resize(img_slice, IMAGE_SIZE)
