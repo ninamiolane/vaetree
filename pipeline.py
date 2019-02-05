@@ -143,7 +143,6 @@ class MakeDataSet(luigi.Task):
         path = self.input()['dataset'].path
         filepaths = glob.glob(path + '**/*.nii.gz', recursive=True)
         random.shuffle(filepaths)
-        filepaths = filepaths[:400]
         n_vols = len(filepaths)
         logging.info('----- 3D images: %d' % n_vols)
 
