@@ -38,8 +38,6 @@ LATENT_DIM = 20
 
 LR = 15e-6
 
-N_INTENSITIES = 100000  # For speed-up
-SUM_PIXEL_THRESHOLD = 40
 IMAGE_SIZE = (64, 64)
 
 TARGET = '/neuro/'
@@ -96,21 +94,35 @@ def process_file(path, output):
     img = nibabel.load(path)
     if affine_matrix_permutes_axes(img.affine):
         return
-    processed_file = get_tempfile_name()
-    os.system('/usr/lib/ants/N4BiasFieldCorrection -i %s -o %s -s 6' %
-              (path, processed_file))
-    img = nibabel.load(processed_file)
+
     array = img.get_fdata()
     array = np.nan_to_num(array)
     std = np.std(array.reshape(-1))
+
     array = array / std
     mean = np.mean(array.reshape(-1))
     # HACK Alert - This is a way to check if the backgound is a white noise.
     if mean > 1.0:
         print('mean too high: %s' % mean)
         return
-    array -= mean
-    for k in range(array.shape[2]):
+
+    processed_file = get_tempfile_name()
+    # os.system('/usr/lib/ants/N4BiasFieldCorrection -i %s -o %s -s 6' %
+    #          (path, processed_file))
+    os.system('cp %s %s' %
+              (path, processed_file))
+    img = nibabel.load(processed_file)
+
+    array = img.get_fdata()
+    array = np.nan_to_num(array)
+    std = np.std(array.reshape(-1))
+    # No centering because we're using cross-entropy loss.
+    # Another HACK ALERT - statisticians please intervene.
+    array = array / (4 * std)
+    z_size = array.shape[2]
+    z_start = int(0.5 * z_size)
+    z_end = int(0.85 * z_size)
+    for k in range(z_start, z_end):
         img_slice = array[:, :, k]
         img = skimage.transform.resize(img_slice, IMAGE_SIZE)
         output.append(img)
@@ -131,6 +143,7 @@ class MakeDataSet(luigi.Task):
         path = self.input()['dataset'].path
         filepaths = glob.glob(path + '**/*.nii.gz', recursive=True)
         random.shuffle(filepaths)
+        filepaths = filepaths[:400]
         n_vols = len(filepaths)
         logging.info('----- 3D images: %d' % n_vols)
 
@@ -149,7 +162,7 @@ class MakeDataSet(luigi.Task):
         imgs = []
         Parallel(
             backend="threading",
-            n_jobs=4)(delayed(process_file)(f, imgs) for f in filepaths)
+            n_jobs=8)(delayed(process_file)(f, imgs) for f in filepaths)
         imgs = np.asarray(imgs)
         imgs = torch.Tensor(imgs)
 
@@ -246,7 +259,8 @@ class Train(luigi.Task):
 
         logging.info(
             '----- Train tensor shape: (%d, %d, %d, %d)' % train.shape)
-        train_dataset = torch.utils.data.TensorDataset(train)
+        np.random.shuffle(train)
+        train_dataset = torch.utils.data.TensorDataset(train[:10000])
         train_loader = torch.utils.data.DataLoader(
             train_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
 
@@ -255,7 +269,7 @@ class Train(luigi.Task):
 
         logging.info(
             '----- Test tensor shape: (%d, %d, %d, %d)' % test.shape)
-        test_dataset = torch.utils.data.TensorDataset(test)
+        test_dataset = torch.utils.data.TensorDataset(test[:1000])
         test_loader = torch.utils.data.DataLoader(
             test_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
 

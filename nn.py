@@ -5,6 +5,7 @@ import torch.autograd
 import torch.nn as nn
 import torch.optim
 import torch.utils.data
+from torch.nn import functional as F
 
 
 CUDA = torch.cuda.is_available()
@@ -148,7 +149,6 @@ class VAE(nn.Module):
         self.relu = nn.ReLU()
         self.sigmoid = nn.Sigmoid()
 
-
     def encode(self, x):
         h1 = self.leakyrelu(self.bn1(self.e1(x)))
         h2 = self.leakyrelu(self.bn2(self.e2(h1)))
@@ -185,15 +185,12 @@ class VAE(nn.Module):
         return res, mu, logvar
 
 
-reconstruction_function = nn.MSELoss()
-
-
 def loss_function(recon_x, x, mu, logvar):
-    mse = reconstruction_function(recon_x, x)
+    # Another hack alert...
+    bce = F.binary_cross_entropy(recon_x, x, reduction='sum')
 
     # https://arxiv.org/abs/1312.6114 (Appendix B)
     # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-    kld_element = mu.pow(2).add_(logvar.exp()).mul_(-1).add_(1).add_(logvar)
-    kld = torch.sum(kld_element).mul_(-0.5)
-
-    return mse + kld
+    kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    print('BCE: %s KLD: %s' % (bce.item(), kld.item()))
+    return bce + kld
