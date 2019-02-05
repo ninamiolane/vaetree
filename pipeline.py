@@ -107,10 +107,10 @@ def process_file(path, output):
         return
 
     processed_file = get_tempfile_name()
-    # os.system('/usr/lib/ants/N4BiasFieldCorrection -i %s -o %s -s 6' %
-    #          (path, processed_file))
-    os.system('cp %s %s' %
+    os.system('/usr/lib/ants/N4BiasFieldCorrection -i %s -o %s -s 6' %
               (path, processed_file))
+    #os.system('cp %s %s' %
+    #          (path, processed_file))
     img = nibabel.load(processed_file)
 
     array = img.get_fdata()
@@ -162,7 +162,7 @@ class MakeDataSet(luigi.Task):
         imgs = []
         Parallel(
             backend="threading",
-            n_jobs=8)(delayed(process_file)(f, imgs) for f in filepaths)
+            n_jobs=4)(delayed(process_file)(f, imgs) for f in filepaths)
         imgs = np.asarray(imgs)
         imgs = torch.Tensor(imgs)
 
@@ -260,7 +260,7 @@ class Train(luigi.Task):
         logging.info(
             '----- Train tensor shape: (%d, %d, %d, %d)' % train.shape)
         np.random.shuffle(train)
-        train_dataset = torch.utils.data.TensorDataset(train[:10000])
+        train_dataset = torch.utils.data.TensorDataset(train)
         train_loader = torch.utils.data.DataLoader(
             train_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
 
@@ -269,7 +269,7 @@ class Train(luigi.Task):
 
         logging.info(
             '----- Test tensor shape: (%d, %d, %d, %d)' % test.shape)
-        test_dataset = torch.utils.data.TensorDataset(test[:1000])
+        test_dataset = torch.utils.data.TensorDataset(test)
         test_loader = torch.utils.data.DataLoader(
             test_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
 
