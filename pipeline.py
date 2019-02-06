@@ -30,9 +30,9 @@ DEVICE = torch.device("cuda" if CUDA else "cpu")
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
-BATCH_SIZE = 64
+BATCH_SIZE = 128
 PRINT_INTERVAL = 10
-N_EPOCHS = 50
+N_EPOCHS = 200
 
 LATENT_DIM = 20
 
@@ -109,8 +109,6 @@ def process_file(path, output):
     processed_file = get_tempfile_name()
     os.system('/usr/lib/ants/N4BiasFieldCorrection -i %s -o %s -s 6' %
               (path, processed_file))
-    #os.system('cp %s %s' %
-    #          (path, processed_file))
     img = nibabel.load(processed_file)
 
     array = img.get_fdata()

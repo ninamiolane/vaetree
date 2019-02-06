@@ -192,5 +192,5 @@ def loss_function(recon_x, x, mu, logvar):
     # https://arxiv.org/abs/1312.6114 (Appendix B)
     # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
     kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    print('BCE: %s KLD: %s' % (bce.item(), kld.item()))
+    #print('BCE: %s KLD: %s' % (bce.item(), kld.item()))
     return bce + kld
