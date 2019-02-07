@@ -23,6 +23,7 @@ import nn
 
 HOME_DIR = '/scratch/users/nmiolane'
 OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
+TRAIN_DIR = os.path.join(OUTPUT_DIR, 'training')
 
 CUDA = torch.cuda.is_available()
 SEED = 12345
@@ -187,7 +188,10 @@ class MakeDataSet(luigi.Task):
 
 
 class Train(luigi.Task):
-    path = os.path.join(OUTPUT_DIR, 'training')
+    path = TRAIN_DIR
+    imgs_path = os.path.join(TRAIN_DIR, 'imgs')
+    models_path = os.path.join(TRAIN_DIR, 'models')
+    losses_path = os.path.join(TRAIN_DIR, 'losses')
     train_losses_path = os.path.join(path, 'train_losses.pkl')
     test_losses_path = os.path.join(path, 'test_losses.pkl')
 
@@ -249,6 +253,10 @@ class Train(luigi.Task):
         return test_loss
 
     def run(self):
+        for directory in (self.imgs_path, self.models_path, self.losses_path):
+            if not os.path.isdir(directory):
+                os.mkdir(directory)
+
         train = np.load(self.input()['train'].path)
         test = np.load(self.input()['test'].path)
         train = torch.Tensor(train)
@@ -325,6 +333,10 @@ class RunAll(luigi.Task):
 
 
 def init():
+    for directory in [OUTPUT_DIR, TRAIN_DIR]:
+        if not os.path.isdir(directory):
+            os.mkdir(directory)
+
     logging.basicConfig(level=logging.INFO)
     logging.info('start')
     luigi.run(
