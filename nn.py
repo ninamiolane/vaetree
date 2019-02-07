@@ -163,8 +163,10 @@ class VAE(nn.Module):
         h4 = self.leakyrelu(self.bn4(self.e4(h3)))
         h5 = self.leakyrelu(self.bn5(self.e5(h4)))
         h5 = h5.view(-1, self.fcs_infeatures)
+        mu = self.fc1(h5)
+        logvar = self.fc2(h5)
 
-        return self.fc1(h5), self.fc2(h5)
+        return mu, logvar
 
     def reparametrize(self, mu, logvar):
         std = logvar.mul(0.5).exp_()
@@ -184,7 +186,9 @@ class VAE(nn.Module):
         h5 = self.leakyrelu(self.bnd4(self.d5(self.pd4(self.up4(h4)))))
         h6 = self.d6(self.pd5(self.up5(h5)))
         h7 = self.d7(self.pd6(self.up6(h5)))
-        return self.sigmoid(h6), self.sigmoid(h7)
+        recon = self.sigmoid(h6)
+        scale_b = self.sigmoid(h7)
+        return recon, scale_b
 
     def forward(self, x):
         mu, logvar = self.encode(x)
