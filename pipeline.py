@@ -30,9 +30,9 @@ DEVICE = torch.device("cuda" if CUDA else "cpu")
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
-BATCH_SIZE = 128
+BATCH_SIZE = 64
 PRINT_INTERVAL = 10
-N_EPOCHS = 200 #200
+N_EPOCHS = 200
 
 LATENT_DIM = 20
 
@@ -129,8 +129,8 @@ def process_file(path, output):
 
 
 class MakeDataSet(luigi.Task):
-    train_path = os.path.join(OUTPUT_DIR, 'train.pkl')
-    test_path = os.path.join(OUTPUT_DIR, 'test.pkl')
+    train_path = os.path.join(OUTPUT_DIR, 'train.npy')
+    test_path = os.path.join(OUTPUT_DIR, 'test.npy')
     first_slice = 28
     last_slice = 228
     test_fraction = 0.2
@@ -178,11 +178,8 @@ class MakeDataSet(luigi.Task):
         train = torch.Tensor(train)
         test = torch.Tensor(test)
 
-        with open(self.output()['train'].path, 'wb') as train_pkl:
-            pickle.dump(train, train_pkl)
-
-        with open(self.output()['test'].path, 'wb') as test_pkl:
-            pickle.dump(test, test_pkl)
+        np.save(self.output()['train'].path, train)
+        np.save(self.output()['test'].path, test)
 
     def output(self):
         return {'train': luigi.LocalTarget(self.train_path),
@@ -252,8 +249,10 @@ class Train(luigi.Task):
         return test_loss
 
     def run(self):
-        with open(self.input()['train'].path, 'rb') as train_pkl:
-            train = pickle.load(train_pkl)
+        train = np.load(self.input()['train'].path)
+        test = np.load(self.input()['test'].path)
+        train = torch.Tensor(train)
+        test = torch.Tensor(test)
 
         logging.info(
             '----- Train tensor shape: (%d, %d, %d, %d)' % train.shape)
@@ -261,9 +260,6 @@ class Train(luigi.Task):
         train_dataset = torch.utils.data.TensorDataset(train)
         train_loader = torch.utils.data.DataLoader(
             train_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
-
-        with open(self.input()['test'].path, 'rb') as test_pkl:
-            test = pickle.load(test_pkl)
 
         logging.info(
             '----- Test tensor shape: (%d, %d, %d, %d)' % test.shape)
