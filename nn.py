@@ -34,11 +34,11 @@ def cnn_output_size(w_in, h_in, kernel_size=ENC_KS,
 
 
 class VAE(nn.Module):
-    def __init__(self, n_channels, latent_dim, w_in, h_in):
+    def __init__(self, n_channels, latent_dims, w_in, h_in):
         super(VAE, self).__init__()
 
         self.n_channels = n_channels
-        self.latent_dim = latent_dim
+        self.latent_dims = latent_dims
 
         # encoder
         self.e1 = nn.Conv2d(
@@ -89,15 +89,16 @@ class VAE(nn.Module):
             w_in=self.w_e4, h_in=self.h_e4)
 
         self.fcs_infeatures = self.e5.out_channels * self.h_e5 * self.w_e5
-        self.fc1 = nn.Linear(
-            in_features=self.fcs_infeatures, out_features=latent_dim)
 
-        self.fc2 = nn.Linear(
-            in_features=self.fcs_infeatures, out_features=latent_dim)
+        self.fc0_1 = nn.Linear(
+            in_features=self.fcs_infeatures, out_features=latent_dims[0])
+
+        self.fc0_2 = nn.Linear(
+            in_features=self.fcs_infeatures, out_features=latent_dims[0])
 
         # decoder
         self.d1 = nn.Linear(
-            in_features=latent_dim, out_features=self.fcs_infeatures)
+            in_features=latent_dims[0], out_features=self.fcs_infeatures)
 
         # TODO(johmathe): Get rid of warning.
         self.up1 = nn.UpsamplingNearest2d(scale_factor=2)
@@ -163,8 +164,8 @@ class VAE(nn.Module):
         h4 = self.leakyrelu(self.bn4(self.e4(h3)))
         h5 = self.leakyrelu(self.bn5(self.e5(h4)))
         h5 = h5.view(-1, self.fcs_infeatures)
-        mu = self.fc1(h5)
-        logvar = self.fc2(h5)
+        mu = self.fc0_1(h5)
+        logvar = self.fc0_2(h5)
 
         return mu, logvar
 
