@@ -186,6 +186,7 @@ class VAE(nn.Module):
         h7 = self.d7(self.pd6(self.up6(h5)))
         return self.sigmoid(h6), self.sigmoid(h7)
 
+
     def forward(self, x):
         mu, logvar = self.encode(x)
         z = self.reparametrize(mu, logvar)
