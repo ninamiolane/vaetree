@@ -38,7 +38,7 @@ LATENT_DIM = 20
 
 LR = 15e-6
 
-IMAGE_SIZE = (64, 64)
+IMAGE_SIZE = (128, 128)
 
 TARGET = '/neuro/'
 
@@ -59,7 +59,7 @@ class FetchOpenNeuroDataset(luigi.Task):
         pass
 
     def run(self):
-        with open('files') as f:
+        with open(self.file_list_path) as f:
             all_files = f.readlines()
 
         Parallel(n_jobs=10)(delayed(self.dl_file)(f) for f in all_files)
@@ -107,8 +107,9 @@ def process_file(path, output):
         return
 
     processed_file = get_tempfile_name()
-    os.system('/usr/lib/ants/N4BiasFieldCorrection -i %s -o %s -s 6' %
-              (path, processed_file))
+    #os.system('/usr/lib/ants/N4BiasFieldCorrection -i %s -o %s -s 6' %
+    #          (path, processed_file))
+    os.system('cp %s %s' % (path, processed_file))
     img = nibabel.load(processed_file)
 
     array = img.get_fdata()
