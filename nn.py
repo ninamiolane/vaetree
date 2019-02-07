@@ -34,7 +34,6 @@ def cnn_output_size(w_in, h_in, kernel_size=ENC_KS,
 
 
 class VAE(nn.Module):
-    # TODO(nina): Add BN in encoder and decoders?
     def __init__(self, n_channels, latent_dim, w_in, h_in):
         super(VAE, self).__init__()
 
