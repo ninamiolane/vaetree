@@ -190,6 +190,7 @@ class VAE(nn.Module):
         scale_b = self.sigmoid(h7)
         return recon, scale_b
 
+
     def forward(self, x):
         mu, logvar = self.encode(x)
         z = self.reparametrize(mu, logvar)
