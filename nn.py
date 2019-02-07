@@ -90,11 +90,21 @@ class VAE(nn.Module):
 
         self.fcs_infeatures = self.e5.out_channels * self.h_e5 * self.w_e5
 
-        self.fc0_1 = nn.Linear(
+        # fcs_infeatures to mu, logvar for z0
+        self.fc0_mu = nn.Linear(
             in_features=self.fcs_infeatures, out_features=latent_dims[0])
 
-        self.fc0_2 = nn.Linear(
+        self.fc0_logvar = nn.Linear(
             in_features=self.fcs_infeatures, out_features=latent_dims[0])
+
+        # fcs_infeatures and 0 to mu, logvar for z1
+        self.fc1_1 = nn.Linear(
+            in_features=self.fcs_infeatures+latent_dims[0],
+            out_features=latent_dims[1])
+
+        self.fc1_2 = nn.Linear(
+            in_features=self.fcs_infeatures+latent_dims[0],
+            out_features=latent_dims[1])
 
         # decoder
         self.d1 = nn.Linear(
@@ -157,15 +167,22 @@ class VAE(nn.Module):
         self.relu = nn.ReLU()
         self.sigmoid = nn.Sigmoid()
 
-    def encode(self, x):
+    def encode_global(self, x):
         h1 = self.leakyrelu(self.bn1(self.e1(x)))
         h2 = self.leakyrelu(self.bn2(self.e2(h1)))
         h3 = self.leakyrelu(self.bn3(self.e3(h2)))
         h4 = self.leakyrelu(self.bn4(self.e4(h3)))
         h5 = self.leakyrelu(self.bn5(self.e5(h4)))
         h5 = h5.view(-1, self.fcs_infeatures)
-        mu = self.fc0_1(h5)
-        logvar = self.fc0_2(h5)
+        mu = self.fc0_mu(h5)
+        logvar = self.fc0_logvar(h5)
+
+        return mu, logvar, h5
+
+    def encode_local(self, x_features, z0, level=1):
+        h = torch.cat(x_features, z0, dim=1)
+        mu = self.fc1_mu(h)
+        logvar = self.fc1_logvar(h)
 
         return mu, logvar
 
@@ -191,12 +208,21 @@ class VAE(nn.Module):
         scale_b = self.sigmoid(h7)
         return recon, scale_b
 
-
     def forward(self, x):
-        mu, logvar = self.encode(x)
-        z = self.reparametrize(mu, logvar)
-        res, scale_b = self.decode(z)
-        return res, scale_b, mu, logvar
+        mu0, logvar0, h = self.encode_global(x)
+        z0 = self.reparametrize(mu0, logvar0)
+
+        mu1, logvar1 = self.encode_local(h, z0)
+        z1 = self.reparametrize(mu1, logvar1)
+
+        mus = [mu0, mu1]
+        logvars = [logvar0, logvar1]
+
+        latent_features = torch.cat(z0, z1, dim=1)
+
+        res, scale_b = self.decode(latent_features)
+
+        return res, scale_b, mus, logvars
 
 
 def loss_function(x, recon_x, scale_b, mu, logvar):
