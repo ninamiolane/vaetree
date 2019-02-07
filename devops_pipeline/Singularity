@@ -10,7 +10,7 @@ From: ../../simgs/base.simg
     export LC_ALL
 
 %post
-    pip3 install --upgrade pip
+    #pip3 install --upgrade pip
     pip3 install luigi \
                  nibabel \
                  numpy \
