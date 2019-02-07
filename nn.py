@@ -174,7 +174,7 @@ class VAE(nn.Module):
         h3 = self.leakyrelu(self.bnd2(self.d3(self.pd2(self.up2(h2)))))
         h4 = self.leakyrelu(self.bnd3(self.d4(self.pd3(self.up3(h3)))))
         h5 = self.leakyrelu(self.bnd4(self.d5(self.pd4(self.up4(h4)))))
-        h5 = self.d6(self.pd5(self.up3(h5)))
+        h5 = self.d6(self.pd5(self.up5(h5)))
         return self.sigmoid(h5)
 
     def forward(self, x):
