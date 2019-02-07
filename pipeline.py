@@ -21,7 +21,7 @@ import torch.utils.data
 
 import nn
 
-HOME_DIR = '/scratch/users/johmathe'
+HOME_DIR = '/scratch/users/nmiolane'
 OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
 
 CUDA = torch.cuda.is_available()
@@ -32,7 +32,7 @@ torch.manual_seed(SEED)
 
 BATCH_SIZE = 128
 PRINT_INTERVAL = 10
-N_EPOCHS = 200
+N_EPOCHS = 200 #200
 
 LATENT_DIM = 20
 
@@ -203,8 +203,8 @@ class Train(luigi.Task):
             data = data[0].to(DEVICE)
 
             optimizer.zero_grad()
-            recon_batch, mu, logvar = model(data)
-            loss = nn.loss_function(recon_batch, data, mu, logvar)
+            recon_batch, logvar_x, mu, logvar = model(data)
+            loss = nn.loss_function(data, recon_batch, logvar_x, mu, logvar)
             loss.backward()
 
             train_loss += loss.item()
@@ -231,9 +231,9 @@ class Train(luigi.Task):
         with torch.no_grad():
             for i, data in enumerate(test_loader):
                 data = data[0].to(DEVICE)
-                recon_batch, mu, logvar = model(data)
+                recon_batch, logvar_x, mu, logvar = model(data)
                 test_loss += nn.loss_function(
-                    recon_batch, data, mu, logvar).item()
+                    data, recon_batch, logvar_x, mu, logvar).item()
 
                 data_path = os.path.join(
                     self.path,

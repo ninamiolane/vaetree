@@ -131,7 +131,7 @@ class VAE(nn.Module):
         self.pd4 = nn.ReplicationPad2d(1)
         self.d5 = nn.Conv2d(
             in_channels=self.d4.out_channels,
-            out_channels= DEC_C * 2,
+            out_channels=DEC_C * 2,
             kernel_size=DEC_KS,
             stride=DEC_STR)
         self.bnd4 = nn.BatchNorm2d(self.d5.out_channels, 1.e-3)
@@ -139,6 +139,14 @@ class VAE(nn.Module):
         self.up5 = nn.UpsamplingNearest2d(scale_factor=2)
         self.pd5 = nn.ReplicationPad2d(1)
         self.d6 = nn.Conv2d(
+            in_channels=self.d5.out_channels,
+            out_channels=self.n_channels,
+            kernel_size=DEC_KS,
+            stride=DEC_STR)
+
+        self.up6 = nn.UpsamplingNearest2d(scale_factor=2)
+        self.pd6 = nn.ReplicationPad2d(1)
+        self.d7 = nn.Conv2d(
             in_channels=self.d5.out_channels,
             out_channels=self.n_channels,
             kernel_size=DEC_KS,
@@ -155,8 +163,10 @@ class VAE(nn.Module):
         h4 = self.leakyrelu(self.bn4(self.e4(h3)))
         h5 = self.leakyrelu(self.bn5(self.e5(h4)))
         h5 = h5.view(-1, self.fcs_infeatures)
+        mu = self.fc1(h5)
+        logvar = self.fc2(h5)
 
-        return self.fc1(h5), self.fc2(h5)
+        return mu, logvar
 
     def reparametrize(self, mu, logvar):
         std = logvar.mul(0.5).exp_()
@@ -174,19 +184,23 @@ class VAE(nn.Module):
         h3 = self.leakyrelu(self.bnd2(self.d3(self.pd2(self.up2(h2)))))
         h4 = self.leakyrelu(self.bnd3(self.d4(self.pd3(self.up3(h3)))))
         h5 = self.leakyrelu(self.bnd4(self.d5(self.pd4(self.up4(h4)))))
-        h5 = self.d6(self.pd5(self.up5(h5)))
-        return self.sigmoid(h5)
+        h6 = self.d6(self.pd5(self.up5(h5)))
+        h7 = self.d7(self.pd6(self.up6(h5)))
+        recon = self.sigmoid(h6)
+        scale_b = self.sigmoid(h7)
+        return recon, scale_b
+
 
     def forward(self, x):
         mu, logvar = self.encode(x)
         z = self.reparametrize(mu, logvar)
-        res = self.decode(z)
-        return res, mu, logvar
+        res, scale_b = self.decode(z)
+        return res, scale_b, mu, logvar
 
 
-def loss_function(recon_x, x, mu, logvar):
-    # Another hack alert...
-    bce = F.binary_cross_entropy(recon_x, x, reduction='sum')
+def loss_function(x, recon_x, scale_b, mu, logvar):
+    bce = torch.sum(
+        F.binary_cross_entropy(recon_x, x) / scale_b.exp() + 2 * scale_b)
 
     # https://arxiv.org/abs/1312.6114 (Appendix B)
     # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
