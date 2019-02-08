@@ -226,11 +226,15 @@ class VAE(nn.Module):
 
 
 def loss_function(x, recon_x, scale_b, mus, logvars):
+    n_latent_vars = len(mus)
     bce = torch.sum(
         F.binary_cross_entropy(recon_x, x) / scale_b.exp() + 2 * scale_b)
 
     # https://arxiv.org/abs/1312.6114 (Appendix B)
     # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-    kld = -0.5 * torch.sum(1 + logvars[0] - mus[0].pow(2) - logvars[0].exp())
+    kld = 0
+    for mu, logvar in zip(mus, logvars):
+        kld += -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    kld /= n_latent_vars
     #print('BCE: %s KLD: %s' % (bce.item(), kld.item()))
     return bce + kld
