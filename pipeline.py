@@ -333,9 +333,20 @@ class Train(luigi.Task):
                 'test_losses': luigi.LocalTarget(self.test_losses_path)}
 
 
-class RunAll(luigi.Task):
+class Report(luigi.Task):
+    report_path = os.path.join(REPORT_DIR, 'report.html')
     def requires(self):
         return Train()
+
+    def run(self):
+
+    def output(self):
+        return luigi.LocalTarget(self.report_path)
+
+
+class RunAll(luigi.Task):
+    def requires(self):
+        return Report()
 
     def output(self):
         return luigi.LocalTarget('dummy')
