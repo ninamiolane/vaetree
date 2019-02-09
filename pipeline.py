@@ -23,7 +23,7 @@ import torch.utils.data
 import nn
 
 HOME_DIR = '/scratch/users/nmiolane'
-OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
+OUTPUT_DIR = os.path.join(HOME_DIR, 'output0206')
 TRAIN_DIR = os.path.join(OUTPUT_DIR, 'training')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
@@ -357,6 +357,9 @@ class Report(luigi.Task):
             os.path.join(TRAIN_DIR, '/imgs/epoch_%d_recon.npy' % epoch_id))
 
         n_imgs = data.shape[0]
+        bce = F.binary_cross_entropy(recon, data)
+        mse = F.mse_loss(recon, target)
+        l1 = np.abs(data_img - recon_img)
 
         for id in range(n_imgs):
             if id > 1:
