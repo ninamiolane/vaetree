@@ -20,6 +20,7 @@ import torch.autograd
 import torch.nn as tnn
 import torch.utils.data
 
+import metrics
 import nn
 
 HOME_DIR = '/scratch/users/nmiolane'
@@ -356,21 +357,20 @@ class Report(luigi.Task):
         recon = np.load(
             os.path.join(TRAIN_DIR, '/imgs/epoch_%d_recon.npy' % epoch_id))
 
-        n_imgs = data.shape[0]
-        bce = F.binary_cross_entropy(recon, data)
-        mse = F.mse_loss(recon, target)
-        l1 = np.abs(data_img - recon_img)
-
-        for id in range(n_imgs):
-            if id > 1:
-                break  # debug
-            data_img = data[id][0]
-            recon_img = recon[id][0]
-            metric = np.sum((data_img - recon_img)**2)  # placeholder
+        bce = metrics.binary_cross_entropy(recon, data)
+        mse = metrics.mse_loss(recon, data)
+        l1_norm = metrics.l1_norm(recon, data)
+        mutual_information = metrics.mutual_information(recon, data)
+        fid = metrics.frechet_inception_distance(recon, data)
 
         context = {
             'title': 'Vaetree Report',
-            'metric': metric}
+            'bce': bce,
+            'mse': mse,
+            'l1_norm': l1_norm,
+            'mutual_information': mutual_information,
+            'fid': fid,
+            }
 
         with open(self.output().path, 'w') as f:
             template = TEMPLATE_ENVIRONMENT.get_template(TEMPLATE_NAME)
