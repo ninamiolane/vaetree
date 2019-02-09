@@ -25,6 +25,8 @@ HOME_DIR = '/scratch/users/nmiolane'
 OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
 TRAIN_DIR = os.path.join(OUTPUT_DIR, 'training')
 
+DEBUG = False
+
 CUDA = torch.cuda.is_available()
 SEED = 12345
 DEVICE = torch.device("cuda" if CUDA else "cpu")
@@ -33,7 +35,10 @@ torch.manual_seed(SEED)
 
 BATCH_SIZE = 64
 PRINT_INTERVAL = 10
+
 N_EPOCHS = 200
+if DEBUG:
+    N_EPOCHS = 2
 
 LATENT_DIM = 20
 
@@ -108,9 +113,9 @@ def process_file(path, output):
         return
 
     processed_file = get_tempfile_name()
-    #os.system('/usr/lib/ants/N4BiasFieldCorrection -i %s -o %s -s 6' %
-    #          (path, processed_file))
-    os.system('cp %s %s' % (path, processed_file))
+    os.system('/usr/lib/ants/N4BiasFieldCorrection -i %s -o %s -s 6' %
+              (path, processed_file))
+    #os.system('cp %s %s' % (path, processed_file))
     img = nibabel.load(processed_file)
 
     array = img.get_fdata()
@@ -157,6 +162,9 @@ class MakeDataSet(luigi.Task):
         logging.info(
             '-- Selecting 2D slices on dim 1 from slide %d to slice %d'
             % (self.first_slice, self.last_slice))
+
+        if DEBUG:
+            filepaths = filepaths[:16]
 
         imgs = []
         Parallel(
@@ -256,6 +264,7 @@ class Train(luigi.Task):
         for directory in (self.imgs_path, self.models_path, self.losses_path):
             if not os.path.isdir(directory):
                 os.mkdir(directory)
+                os.chmod(directory, 0o777)
 
         train = np.load(self.input()['train'].path)
         test = np.load(self.input()['test'].path)
@@ -336,6 +345,7 @@ def init():
     for directory in [OUTPUT_DIR, TRAIN_DIR]:
         if not os.path.isdir(directory):
             os.mkdir(directory)
+            os.chmod(directory, 0o777)
 
     logging.basicConfig(level=logging.INFO)
     logging.info('start')
