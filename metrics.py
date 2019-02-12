@@ -18,7 +18,7 @@ def mse(input, target):
     """
     MSE averaged over the voxels of the images.
     """
-    mse = F.mse(input, target, reduction='mean')
+    mse = F.mse_loss(input, target, reduction='mean')
     return mse
 
 
