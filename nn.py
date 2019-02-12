@@ -21,7 +21,7 @@ DEC_STR = 1
 DEC_C = 64
 
 
-def cnn_output_size(w_in, h_in, kernel_size=ENC_KS,
+def cnn_output_size(in_w, in_h, kernel_size=ENC_KS,
                     stride=ENC_STR,
                     padding=ENC_PAD,
                     dilation=ENC_DILATION):
@@ -30,15 +30,30 @@ def cnn_output_size(w_in, h_in, kernel_size=ENC_KS,
         return (((x + 2 * padding - dilation *
                   (kernel_size - 1) - 1) // stride) + 1)
 
-    return one_dim(w_in), one_dim(h_in)
+    return one_dim(in_w), one_dim(in_h)
 
 
-class VAE(nn.Module):
-    def __init__(self, n_channels, latent_dim, w_in, h_in):
-        super(VAE, self).__init__()
+def reparametrize(mu, logvar):
+    std = logvar.mul(0.5).exp_()
+    if CUDA:
+        eps = torch.cuda.FloatTensor(std.size()).normal_()
+    else:
+        eps = torch.FloatTensor(std.size()).normal_()
+    eps = torch.autograd.Variable(eps)
+    return eps.mul(std).add_(mu)
 
-        self.n_channels = n_channels
+
+class Encoder(nn.Module):
+    def __init__(self, latent_dim, in_channels, in_h, in_w):
+        super(Encoder, self).__init__()
+
+        self.n_channels = in_channels
         self.latent_dim = latent_dim
+
+        # activation functions
+        self.leakyrelu = nn.LeakyReLU(0.2)
+        self.relu = nn.ReLU()
+        self.sigmoid = nn.Sigmoid()
 
         # encoder
         self.e1 = nn.Conv2d(
@@ -49,7 +64,7 @@ class VAE(nn.Module):
             padding=ENC_PAD)
         self.bn1 = nn.BatchNorm2d(self.e1.out_channels)
 
-        self.w_e1, self.h_e1 = cnn_output_size(w_in=w_in, h_in=h_in)
+        self.w_e1, self.h_e1 = cnn_output_size(in_w=in_w, in_h=in_h)
 
         self.e2 = nn.Conv2d(
             in_channels=self.e1.out_channels,
@@ -58,7 +73,7 @@ class VAE(nn.Module):
             stride=ENC_STR,
             padding=ENC_PAD)
         self.bn2 = nn.BatchNorm2d(self.e2.out_channels)
-        self.w_e2, self.h_e2 = cnn_output_size(w_in=self.w_e1, h_in=self.h_e1)
+        self.w_e2, self.h_e2 = cnn_output_size(in_w=self.w_e1, in_h=self.h_e1)
 
         self.e3 = nn.Conv2d(
             in_channels=self.e2.out_channels,
@@ -67,7 +82,7 @@ class VAE(nn.Module):
             stride=ENC_STR,
             padding=ENC_PAD)
         self.bn3 = nn.BatchNorm2d(self.e3.out_channels)
-        self.w_e3, self.h_e3 = cnn_output_size(w_in=self.w_e2, h_in=self.h_e2)
+        self.w_e3, self.h_e3 = cnn_output_size(in_w=self.w_e2, in_h=self.h_e2)
 
         self.e4 = nn.Conv2d(
             in_channels=self.e3.out_channels,
@@ -76,7 +91,7 @@ class VAE(nn.Module):
             stride=ENC_STR,
             padding=ENC_PAD)
         self.bn4 = nn.BatchNorm2d(self.e4.out_channels)
-        self.w_e4, self.h_e4 = cnn_output_size(w_in=self.w_e3, h_in=self.h_e3)
+        self.w_e4, self.h_e4 = cnn_output_size(in_w=self.w_e3, in_h=self.h_e3)
 
         self.e5 = nn.Conv2d(
             in_channels=self.e4.out_channels,
@@ -86,7 +101,7 @@ class VAE(nn.Module):
             padding=ENC_PAD)
         self.bn5 = nn.BatchNorm2d(self.e5.out_channels)
         self.w_e5, self.h_e5 = cnn_output_size(
-            w_in=self.w_e4, h_in=self.h_e4)
+            in_w=self.w_e4, in_h=self.h_e4)
 
         self.fcs_infeatures = self.e5.out_channels * self.h_e5 * self.w_e5
         self.fc1 = nn.Linear(
@@ -94,6 +109,37 @@ class VAE(nn.Module):
 
         self.fc2 = nn.Linear(
             in_features=self.fcs_infeatures, out_features=latent_dim)
+
+    def forward(self, x):
+        """Forward pass of the encoder is encode."""
+        h1 = self.leakyrelu(self.bn1(self.e1(x)))
+        h2 = self.leakyrelu(self.bn2(self.e2(h1)))
+        h3 = self.leakyrelu(self.bn3(self.e3(h2)))
+        h4 = self.leakyrelu(self.bn4(self.e4(h3)))
+        h5 = self.leakyrelu(self.bn5(self.e5(h4)))
+        h5 = h5.view(-1, self.fcs_infeatures)
+        mu = self.fc1(h5)
+        logvar = self.fc2(h5)
+
+        return mu, logvar
+
+
+class Decoder(nn.Module):
+    def __init__(self, latent_dim, in_channels, in_h, in_w, out_channels):
+        super(Decoder, self).__init__()
+
+        self.latent_dim = latent_dim
+        self.in_channels = in_channels
+        self.in_h = in_h
+        self.in_w = in_w
+        self.out_channels = out_channels
+
+        self.fcs_infeatures = self.in_channels * self.in_h * self.in_w
+
+        # activation functions
+        self.leakyrelu = nn.LeakyReLU(0.2)
+        self.relu = nn.ReLU()
+        self.sigmoid = nn.Sigmoid()
 
         # decoder
         self.d1 = nn.Linear(
@@ -103,7 +149,7 @@ class VAE(nn.Module):
         self.up1 = nn.UpsamplingNearest2d(scale_factor=2)
         self.pd1 = nn.ReplicationPad2d(1)
         self.d2 = nn.Conv2d(
-            in_channels=self.e5.out_channels,
+            in_channels=self.in_channels,
             out_channels=DEC_C * 16,
             kernel_size=DEC_KS,
             stride=DEC_STR)
@@ -136,50 +182,28 @@ class VAE(nn.Module):
             stride=DEC_STR)
         self.bnd4 = nn.BatchNorm2d(self.d5.out_channels, 1.e-3)
 
+        # Generates recon
         self.up5 = nn.UpsamplingNearest2d(scale_factor=2)
         self.pd5 = nn.ReplicationPad2d(1)
         self.d6 = nn.Conv2d(
             in_channels=self.d5.out_channels,
-            out_channels=self.n_channels,
+            out_channels=self.out_channels,
             kernel_size=DEC_KS,
             stride=DEC_STR)
 
+        # Generates scale_b
         self.up6 = nn.UpsamplingNearest2d(scale_factor=2)
         self.pd6 = nn.ReplicationPad2d(1)
         self.d7 = nn.Conv2d(
             in_channels=self.d5.out_channels,
-            out_channels=self.n_channels,
+            out_channels=self.out_channels,
             kernel_size=DEC_KS,
             stride=DEC_STR)
 
-        self.leakyrelu = nn.LeakyReLU(0.2)
-        self.relu = nn.ReLU()
-        self.sigmoid = nn.Sigmoid()
-
-    def encode(self, x):
-        h1 = self.leakyrelu(self.bn1(self.e1(x)))
-        h2 = self.leakyrelu(self.bn2(self.e2(h1)))
-        h3 = self.leakyrelu(self.bn3(self.e3(h2)))
-        h4 = self.leakyrelu(self.bn4(self.e4(h3)))
-        h5 = self.leakyrelu(self.bn5(self.e5(h4)))
-        h5 = h5.view(-1, self.fcs_infeatures)
-        mu = self.fc1(h5)
-        logvar = self.fc2(h5)
-
-        return mu, logvar
-
-    def reparametrize(self, mu, logvar):
-        std = logvar.mul(0.5).exp_()
-        if CUDA:
-            eps = torch.cuda.FloatTensor(std.size()).normal_()
-        else:
-            eps = torch.FloatTensor(std.size()).normal_()
-        eps = torch.autograd.Variable(eps)
-        return eps.mul(std).add_(mu)
-
-    def decode(self, z):
+    def forward(self, z):
+        """Forward pass of the decoder is to decode."""
         h1 = self.relu(self.d1(z))
-        h1 = h1.view(-1, self.e5.out_channels, self.w_e5, self.h_e5)
+        h1 = h1.view(-1, self.in_channels, self.in_w, self.in_h)
         h2 = self.leakyrelu(self.bnd1(self.d2(self.pd1(self.up1(h1)))))
         h3 = self.leakyrelu(self.bnd2(self.d3(self.pd2(self.up2(h2)))))
         h4 = self.leakyrelu(self.bnd3(self.d4(self.pd3(self.up3(h3)))))
@@ -191,19 +215,52 @@ class VAE(nn.Module):
         return recon, scale_b
 
 
+class VAE(nn.Module):
+    def __init__(self, n_channels, latent_dim, in_w, in_h):
+        super(VAE, self).__init__()
+
+        self.n_channels = n_channels
+        self.latent_dim = latent_dim
+
+        self.encoder = Encoder(
+            latent_dim=self.latent_dim,
+            in_channels=self.n_channels,
+            in_h=in_h,
+            in_w=in_w)
+
+        dec_in_channels = self.encoder.e5.out_channels
+        dec_in_h = self.encoder.h_e5
+        dec_in_w = self.encoder.w_e5
+
+        self.decoder = Decoder(
+            latent_dim=latent_dim,
+            in_channels=dec_in_channels,
+            in_h=dec_in_h,
+            in_w=dec_in_w,
+            out_channels=self.n_channels)
+
     def forward(self, x):
-        mu, logvar = self.encode(x)
-        z = self.reparametrize(mu, logvar)
-        res, scale_b = self.decode(z)
+        mu, logvar = self.encoder(x)
+        z = reparametrize(mu, logvar)
+        res, scale_b = self.decoder(z)
         return res, scale_b, mu, logvar
 
 
-def loss_function(x, recon_x, scale_b, mu, logvar):
+def reconstruction_loss(x, recon_x, scale_b):
     bce = torch.sum(
         F.binary_cross_entropy(recon_x, x) / scale_b.exp() + 2 * scale_b)
+    return bce
 
+
+def regularization_loss(mu, logvar):
     # https://arxiv.org/abs/1312.6114 (Appendix B)
     # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
     kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    #print('BCE: %s KLD: %s' % (bce.item(), kld.item()))
+    return kld
+
+
+def vae_loss(x, recon_x, scale_b, mu, logvar):
+    bce = reconstruction_loss(x, recon_x, scale_b)
+    kld = regularization_loss(mu, logvar)
+    # print('BCE: %s KLD: %s' % (bce.item(), kld.item()))
     return bce + kld

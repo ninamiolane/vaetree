@@ -24,11 +24,12 @@ import metrics
 import nn
 
 HOME_DIR = '/scratch/users/nmiolane'
-OUTPUT_DIR = os.path.join(HOME_DIR, 'output0206')
+# Change the output directory for new experiment
+OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
 TRAIN_DIR = os.path.join(OUTPUT_DIR, 'training')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
-DEBUG = False
+DEBUG = True
 
 CUDA = torch.cuda.is_available()
 SEED = 12345
@@ -223,8 +224,8 @@ class Train(luigi.Task):
             data = data[0].to(DEVICE)
 
             optimizer.zero_grad()
-            recon_batch, logvar_x, mu, logvar = model(data)
-            loss = nn.loss_function(data, recon_batch, logvar_x, mu, logvar)
+            recon_batch, scale_b, mu, logvar = model(data)
+            loss = nn.vae_loss(data, recon_batch, scale_b, mu, logvar)
             loss.backward()
 
             train_loss += loss.item()
@@ -251,9 +252,9 @@ class Train(luigi.Task):
         with torch.no_grad():
             for i, data in enumerate(test_loader):
                 data = data[0].to(DEVICE)
-                recon_batch, logvar_x, mu, logvar = model(data)
-                test_loss += nn.loss_function(
-                    data, recon_batch, logvar_x, mu, logvar).item()
+                recon_batch, scale_b, mu, logvar = model(data)
+                test_loss += nn.vae_loss(
+                    data, recon_batch, scale_b, mu, logvar).item()
 
                 data_path = os.path.join(
                     self.path,
@@ -297,8 +298,8 @@ class Train(luigi.Task):
         model = nn.VAE(
             n_channels=1,
             latent_dim=LATENT_DIM,
-            w_in=train.shape[2],
-            h_in=train.shape[3]).to(DEVICE)
+            in_w=train.shape[2],
+            in_h=train.shape[3]).to(DEVICE)
         optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
         def init_normal(m):
@@ -350,18 +351,25 @@ class Report(luigi.Task):
         return Train()
 
     def run(self):
-        epoch_id = N_EPOCHS
+        epoch_id = N_EPOCHS - 1
 
-        data = np.load(
-            os.path.join(TRAIN_DIR, '/imgs/epoch_%d_data.npy' % epoch_id))
-        recon = np.load(
-            os.path.join(TRAIN_DIR, '/imgs/epoch_%d_recon.npy' % epoch_id))
+        data_path = os.path.join(
+            TRAIN_DIR, 'imgs', 'epoch_%d_data.npy' % epoch_id)
+        recon_path = os.path.join(
+            TRAIN_DIR, 'imgs', 'epoch_%d_recon.npy' % epoch_id)
+        data = np.load(data_path)
+        recon = np.load(recon_path)
 
-        bce = metrics.binary_cross_entropy(recon, data)
-        mse = metrics.mse_loss(recon, data)
-        l1_norm = metrics.l1_norm(recon, data)
+        # TODO(nina): Rewrite mi and fid in pytorch
         mutual_information = metrics.mutual_information(recon, data)
         fid = metrics.frechet_inception_distance(recon, data)
+
+        data = torch.Tensor(data)
+        recon = torch.Tensor(recon)
+
+        bce = metrics.binary_cross_entropy(recon, data)
+        mse = metrics.mse(recon, data)
+        l1_norm = metrics.l1_norm(recon, data)
 
         context = {
             'title': 'Vaetree Report',
