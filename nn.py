@@ -182,6 +182,7 @@ class Decoder(nn.Module):
             stride=DEC_STR)
         self.bnd4 = nn.BatchNorm2d(self.d5.out_channels, 1.e-3)
 
+        # Generates recon
         self.up5 = nn.UpsamplingNearest2d(scale_factor=2)
         self.pd5 = nn.ReplicationPad2d(1)
         self.d6 = nn.Conv2d(
@@ -190,6 +191,7 @@ class Decoder(nn.Module):
             kernel_size=DEC_KS,
             stride=DEC_STR)
 
+        # Generates scale_b
         self.up6 = nn.UpsamplingNearest2d(scale_factor=2)
         self.pd6 = nn.ReplicationPad2d(1)
         self.d7 = nn.Conv2d(
