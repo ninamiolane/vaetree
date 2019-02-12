@@ -6,11 +6,12 @@ import luigi
 import matplotlib
 matplotlib.use('Agg')  # NOQA
 import os
-import random
+import jinja2
 from joblib import Parallel, delayed
 import nibabel
 import numpy as np
 import pickle
+import random
 import skimage.transform
 import sklearn.model_selection
 import tempfile
@@ -19,11 +20,13 @@ import torch.autograd
 import torch.nn as tnn
 import torch.utils.data
 
+import metrics
 import nn
 
 HOME_DIR = '/scratch/users/nmiolane'
-OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
+OUTPUT_DIR = os.path.join(HOME_DIR, 'output0206')
 TRAIN_DIR = os.path.join(OUTPUT_DIR, 'training')
+REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
 DEBUG = False
 
@@ -47,6 +50,12 @@ LR = 15e-6
 IMAGE_SIZE = (128, 128)
 
 TARGET = '/neuro/'
+
+LOADER = jinja2.FileSystemLoader('./templates/')
+TEMPLATE_ENVIRONMENT = jinja2.Environment(
+    autoescape=False,
+    loader=LOADER)
+TEMPLATE_NAME = 'report.jinja2'
 
 
 class FetchOpenNeuroDataset(luigi.Task):
@@ -115,7 +124,8 @@ def process_file(path, output):
     processed_file = get_tempfile_name()
     os.system('/usr/lib/ants/N4BiasFieldCorrection -i %s -o %s -s 6' %
               (path, processed_file))
-    #os.system('cp %s %s' % (path, processed_file))
+    # Uncomment to skip N4 Bias Field Correction:
+    # os.system('cp %s %s' % (path, processed_file))
     img = nibabel.load(processed_file)
 
     array = img.get_fdata()
@@ -333,16 +343,54 @@ class Train(luigi.Task):
                 'test_losses': luigi.LocalTarget(self.test_losses_path)}
 
 
-class RunAll(luigi.Task):
+class Report(luigi.Task):
+    report_path = os.path.join(REPORT_DIR, 'report.html')
+
     def requires(self):
         return Train()
+
+    def run(self):
+        epoch_id = N_EPOCHS
+
+        data = np.load(
+            os.path.join(TRAIN_DIR, '/imgs/epoch_%d_data.npy' % epoch_id))
+        recon = np.load(
+            os.path.join(TRAIN_DIR, '/imgs/epoch_%d_recon.npy' % epoch_id))
+
+        bce = metrics.binary_cross_entropy(recon, data)
+        mse = metrics.mse_loss(recon, data)
+        l1_norm = metrics.l1_norm(recon, data)
+        mutual_information = metrics.mutual_information(recon, data)
+        fid = metrics.frechet_inception_distance(recon, data)
+
+        context = {
+            'title': 'Vaetree Report',
+            'bce': bce,
+            'mse': mse,
+            'l1_norm': l1_norm,
+            'mutual_information': mutual_information,
+            'fid': fid,
+            }
+
+        with open(self.output().path, 'w') as f:
+            template = TEMPLATE_ENVIRONMENT.get_template(TEMPLATE_NAME)
+            html = template.render(context)
+            f.write(html)
+
+    def output(self):
+        return luigi.LocalTarget(self.report_path)
+
+
+class RunAll(luigi.Task):
+    def requires(self):
+        return Report()
 
     def output(self):
         return luigi.LocalTarget('dummy')
 
 
 def init():
-    for directory in [OUTPUT_DIR, TRAIN_DIR]:
+    for directory in [OUTPUT_DIR, TRAIN_DIR, REPORT_DIR]:
         if not os.path.isdir(directory):
             os.mkdir(directory)
             os.chmod(directory, 0o777)

@@ -24,6 +24,7 @@ From: ../../simgs/base.simg
                  torch \
                  torchvision \
                  nilearn \
+                 jinja2 \
                  joblib
 
 %runscript
