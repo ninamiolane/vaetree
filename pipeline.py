@@ -6,12 +6,12 @@ import luigi
 import matplotlib
 matplotlib.use('Agg')  # NOQA
 import os
-import random
 import jinja2
 from joblib import Parallel, delayed
 import nibabel
 import numpy as np
 import pickle
+import random
 import skimage.transform
 import sklearn.model_selection
 import tempfile

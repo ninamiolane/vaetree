@@ -2,6 +2,7 @@
 
 import numpy as np
 from scipy import linalg
+import torch
 from torch.nn import functional as F
 
 
@@ -25,7 +26,7 @@ def l1_norm(input, target):
     """
     L1 norm averaged over the voxels of the images.
     """
-    l1_norm = np.mean(np.abs(target - input))
+    l1_norm = torch.mean(torch.abs(target - input))
     return l1_norm
 
 
