@@ -33,9 +33,9 @@ def cnn_output_size(w_in, h_in, kernel_size=ENC_KS,
     return one_dim(w_in), one_dim(h_in)
 
 
-class VAE(nn.Module):
+class Encoder(nn.Module):
     def __init__(self, n_channels, latent_dim, w_in, h_in):
-        super(VAE, self).__init__()
+        super(Decoder, self).__init__()
 
         self.n_channels = n_channels
         self.latent_dim = latent_dim
@@ -94,6 +94,27 @@ class VAE(nn.Module):
 
         self.fc2 = nn.Linear(
             in_features=self.fcs_infeatures, out_features=latent_dim)
+
+    def forward(self, x):
+        """Forward pass of the encoder is encode."""
+        h1 = self.leakyrelu(self.bn1(self.e1(x)))
+        h2 = self.leakyrelu(self.bn2(self.e2(h1)))
+        h3 = self.leakyrelu(self.bn3(self.e3(h2)))
+        h4 = self.leakyrelu(self.bn4(self.e4(h3)))
+        h5 = self.leakyrelu(self.bn5(self.e5(h4)))
+        h5 = h5.view(-1, self.fcs_infeatures)
+        mu = self.fc1(h5)
+        logvar = self.fc2(h5)
+
+        return mu, logvar
+
+
+class Decoder(nn.Module):
+    def __init__(self, n_channels, latent_dim, w_in, h_in):
+        super(Decoder, self).__init__()
+
+        self.n_channels = n_channels
+        self.latent_dim = latent_dim
 
         # decoder
         self.d1 = nn.Linear(
@@ -156,18 +177,6 @@ class VAE(nn.Module):
         self.relu = nn.ReLU()
         self.sigmoid = nn.Sigmoid()
 
-    def encode(self, x):
-        h1 = self.leakyrelu(self.bn1(self.e1(x)))
-        h2 = self.leakyrelu(self.bn2(self.e2(h1)))
-        h3 = self.leakyrelu(self.bn3(self.e3(h2)))
-        h4 = self.leakyrelu(self.bn4(self.e4(h3)))
-        h5 = self.leakyrelu(self.bn5(self.e5(h4)))
-        h5 = h5.view(-1, self.fcs_infeatures)
-        mu = self.fc1(h5)
-        logvar = self.fc2(h5)
-
-        return mu, logvar
-
     def reparametrize(self, mu, logvar):
         std = logvar.mul(0.5).exp_()
         if CUDA:
@@ -177,7 +186,8 @@ class VAE(nn.Module):
         eps = torch.autograd.Variable(eps)
         return eps.mul(std).add_(mu)
 
-    def decode(self, z):
+    def forward(self, z):
+        """Forward pass of the decoder is to decode."""
         h1 = self.relu(self.d1(z))
         h1 = h1.view(-1, self.e5.out_channels, self.w_e5, self.h_e5)
         h2 = self.leakyrelu(self.bnd1(self.d2(self.pd1(self.up1(h1)))))
@@ -191,19 +201,37 @@ class VAE(nn.Module):
         return recon, scale_b
 
 
+class VAE(nn.Module):
+    def __init__(self, n_channels, latent_dim, w_in, h_in):
+        super(VAE, self).__init__()
+
+        self.n_channels = n_channels
+        self.latent_dim = latent_dim
+        self.encoder = Encoder(n_channels, latent_dim, w_in, h_in)
+        self.decoder = Decoder(n_channels, latent_dim, w_in, h_in)
+
     def forward(self, x):
-        mu, logvar = self.encode(x)
+        mu, logvar = self.encoder.forward(x)
         z = self.reparametrize(mu, logvar)
-        res, scale_b = self.decode(z)
+        res, scale_b = self.decoder.forward(z)
         return res, scale_b, mu, logvar
 
 
-def loss_function(x, recon_x, scale_b, mu, logvar):
+def reconstruction_loss(x, recon_x, scale_b):
     bce = torch.sum(
         F.binary_cross_entropy(recon_x, x) / scale_b.exp() + 2 * scale_b)
+    return bce
 
+
+def regularization_loss(mu, logvar):
     # https://arxiv.org/abs/1312.6114 (Appendix B)
     # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
     kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    #print('BCE: %s KLD: %s' % (bce.item(), kld.item()))
+    return kld
+
+
+def vae_loss(x, recon_x, scale_b, mu, logvar):
+    bce = reconstruction_loss(x, recon_x, scale_b)
+    kld = regularization_loss(mu, logvar)
+    # print('BCE: %s KLD: %s' % (bce.item(), kld.item()))
     return bce + kld
