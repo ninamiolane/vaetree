@@ -223,8 +223,8 @@ class Train(luigi.Task):
             data = data[0].to(DEVICE)
 
             optimizer.zero_grad()
-            recon_batch, logvar_x, mu, logvar = model(data)
-            loss = nn.loss_function(data, recon_batch, logvar_x, mu, logvar)
+            recon_batch, scale_b, mu, logvar = model(data)
+            loss = nn.vae_loss(data, recon_batch, scale_b, mu, logvar)
             loss.backward()
 
             train_loss += loss.item()
@@ -251,9 +251,9 @@ class Train(luigi.Task):
         with torch.no_grad():
             for i, data in enumerate(test_loader):
                 data = data[0].to(DEVICE)
-                recon_batch, logvar_x, mu, logvar = model(data)
-                test_loss += nn.loss_function(
-                    data, recon_batch, logvar_x, mu, logvar).item()
+                recon_batch, scale_b, mu, logvar = model(data)
+                test_loss += nn.vae_loss(
+                    data, recon_batch, scale_b, mu, logvar).item()
 
                 data_path = os.path.join(
                     self.path,

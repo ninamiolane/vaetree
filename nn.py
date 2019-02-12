@@ -211,9 +211,9 @@ class VAE(nn.Module):
         self.decoder = Decoder(n_channels, latent_dim, w_in, h_in)
 
     def forward(self, x):
-        mu, logvar = self.encoder.forward(x)
+        mu, logvar = self.encoder(x)
         z = self.reparametrize(mu, logvar)
-        res, scale_b = self.decoder.forward(z)
+        res, scale_b = self.decoder(z)
         return res, scale_b, mu, logvar
 
 
