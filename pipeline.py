@@ -298,7 +298,7 @@ class Train(luigi.Task):
         model = nn.VAE(
             n_channels=1,
             latent_dim=LATENT_DIM,
-            w_in=train.shape[2],
+            in_w=train.shape[2],
             in_h=train.shape[3]).to(DEVICE)
         optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
