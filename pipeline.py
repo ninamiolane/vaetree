@@ -24,6 +24,7 @@ import metrics
 import nn
 
 HOME_DIR = '/scratch/users/nmiolane'
+# Change the output directory for new experiment
 OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
 TRAIN_DIR = os.path.join(OUTPUT_DIR, 'training')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
