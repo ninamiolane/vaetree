@@ -41,6 +41,7 @@ torch.manual_seed(SEED)
 BATCH_SIZE = 128
 PRINT_INTERVAL = 10
 REGULARIZATION = 'adversarial'
+torch.backends.cudnn.benchmark = True
 
 N_EPOCHS = 200
 if DEBUG:
@@ -255,7 +256,8 @@ class Train(luigi.Task):
             elif regularization == 'adversarial':
                 discriminator = modules['discriminator']
 
-                real_z = nn.sample_from_prior(LATENT_DIM, n_samples=n_data).to(DEVICE)
+                real_z = nn.sample_from_prior(
+                    LATENT_DIM, n_samples=n_data).to(DEVICE)
                 real_recon_batch, real_scale_b = decoder(real_z)
 
                 loss_regularization = losses.regularization_adversarial(
@@ -301,8 +303,9 @@ class Train(luigi.Task):
             module.eval()
         total_test_loss = 0
         with torch.no_grad():
-            for i, data in enumerate(test_loader):
+            for batch_idx, data in enumerate(test_loader):
                 data = data[0].to(DEVICE)
+                n_data = data.shape[0]
 
                 encoder = modules['encoder']
                 decoder = modules['decoder']
@@ -320,11 +323,12 @@ class Train(luigi.Task):
 
                 elif regularization == 'adversarial':
                     discriminator = modules['discriminator']
-                    real_z = nn.sample_from_prior(LATENT_DIM).to(DEVICE)
+                    real_z = nn.sample_from_prior(
+                        LATENT_DIM, n_samples=n_data).to(DEVICE)
                     real_recon_batch, real_scale_b = decoder(real_z)
 
                     loss_regularization = losses.regularization_adversarial(
-                        discriminato=discriminator,
+                        discriminator=discriminator,
                         real_recon_batch=real_recon_batch,
                         fake_recon_batch=recon_batch)
 

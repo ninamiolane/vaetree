@@ -46,6 +46,8 @@ def regularization_adversarial(discriminator,
     #print('real_recon shape (%d, %d, %d, %d)' % real_recon_batch.shape)
     #print('fake_recon shape (%d, %d, %d, %d)' % fake_recon_batch.shape)
     batch_size = real_recon_batch.shape[0]
+    fake_batch_size = fake_recon_batch.shape[0]
+    assert batch_size == fake_batch_size
     real_labels = torch.full(
         (batch_size,), REAL_LABEL, device=DEVICE)
     fake_labels = torch.full(
