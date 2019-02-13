@@ -255,7 +255,7 @@ class Train(luigi.Task):
             elif regularization == 'adversarial':
                 discriminator = modules['discriminator']
 
-                real_z = nn.sample_from_prior(LATENT_DIM).to(DEVICE)
+                real_z = nn.sample_from_prior(LATENT_DIM, n_samples=n_data).to(DEVICE)
                 real_recon_batch, real_scale_b = decoder(real_z)
 
                 loss_regularization = losses.regularization_adversarial(

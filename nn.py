@@ -39,13 +39,22 @@ def cnn_output_size(in_w, in_h, kernel_size=ENC_KS,
 
 
 def reparametrize(mu, logvar):
+    # TODO(nina): only one eps sampled?
     std = logvar.mul(0.5).exp_()
+
+    n_samples, latent_dim = mu.shape
+    print('mu shape (%d, %d)' % mu.shape)
+    print('std shape (%d, %d)' % std.shape)
     if CUDA:
-        eps = torch.cuda.FloatTensor(std.size()).normal_()
+        eps = torch.cuda.FloatTensor(n_samples, latent_dim).normal_()
     else:
-        eps = torch.FloatTensor(std.size()).normal_()
+        eps = torch.FloatTensor(n_samples, latent_dim).normal_()
     eps = torch.autograd.Variable(eps)
-    z = eps.mul(std).add_(mu)
+    print('eps shape (%d, %d)' % eps.shape)
+    # z = eps.mul(std).add_(mu)
+    z = eps * std + mu
+    z = z.squeeze()
+    print('z shape (%d, %d)' % z.shape)
     return z
 
 
@@ -53,13 +62,13 @@ def sample_from_q(mu, logvar):
     return reparametrize(mu, logvar)
 
 
-def sample_from_prior(latent_dim):
+def sample_from_prior(latent_dim, n_samples=1):
     if CUDA:
-        mu = torch.cuda.FloatTensor(latent_dim).fill_(0)
-        logvar = torch.cuda.FloatTensor(latent_dim).fill_(0)
+        mu = torch.cuda.FloatTensor(n_samples, latent_dim).fill_(0)
+        logvar = torch.cuda.FloatTensor(n_samples, latent_dim).fill_(0)
     else:
-        mu = torch.zeros(latent_dim)
-        logvar = torch.zeros(latent_dim)
+        mu = torch.zeros(n_samples, latent_dim)
+        logvar = torch.zeros(n_samples, latent_dim)
     return reparametrize(mu, logvar)
 
 
