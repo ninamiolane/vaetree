@@ -232,7 +232,7 @@ class Train(luigi.Task):
         eg. encoder, decoder, discriminator, depending on the architecture
         - optimizers: a dict with optimizers corresponding to each module.
         """
-        for module in modules:
+        for module in modules.values():
             module.train()
 
         total_loss = 0
@@ -241,7 +241,7 @@ class Train(luigi.Task):
             data = data[0].to(DEVICE)
             n_data = len(data)
 
-            for optimizer in optimizers:
+            for optimizer in optimizers.values():
                 optimizer.zero_grad()
 
             encoder = modules['encoder']
@@ -281,7 +281,7 @@ class Train(luigi.Task):
 
             total_loss += loss.item()
 
-            for optimizer in optimizers:
+            for optimizer in optimizers.values():
                 optimizer.step()
 
             # TODO(nina): Add logging for the different losses
@@ -302,7 +302,7 @@ class Train(luigi.Task):
         return average_loss
 
     def test(self, epoch, test_loader, modules, regularization=REGULARIZATION):
-        for module in modules:
+        for module in modules.values():
             module.eval()
         total_test_loss = 0
         with torch.no_grad():
@@ -448,7 +448,7 @@ class Train(luigi.Task):
             if type(m) == tnn.Conv2d:
                 tnn.init.xavier_normal_(m.weight)
 
-        for module in modules:
+        for module in modules.values():
             module.apply(init_normal)
 
         train_losses = []
