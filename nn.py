@@ -266,7 +266,7 @@ class VAE(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, latent_dim, in_channels, in_h, in_w):
+    def __init__(self, latent_dim, in_channels, in_w, in_h):
         super(Discriminator, self).__init__()
 
         self.n_channels = in_channels

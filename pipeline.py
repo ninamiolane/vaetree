@@ -226,7 +226,7 @@ class Train(luigi.Task):
 
     def train(self, epoch, train_loader,
               modules, optimizers,
-              regularization='kullbackleibler'):
+              regularization=REGULARIZATION):
         """
         - modules: a dict with the bricks of the model,
         eg. encoder, decoder, discriminator, depending on the architecture
@@ -258,31 +258,15 @@ class Train(luigi.Task):
                 loss_regularization = nn.regularization_loss(mu, logvar)
 
             elif regularization == 'adversarial':
+                discriminator = modules['discriminator']
+
                 real_z = nn.sample_from_prior().to(DEVICE)
                 real_recon_batch, real_scale_b = decoder(real_z)
 
-                discriminator = modules['discriminator']
-
-                # discriminator - real
-                predicted_labels_real = discriminator(real_recon_batch)
-                loss_real = nn.gan_loss(
-                    predicted_labels=predicted_labels_real,
-                    true_labels=REAL_LABELS)
-
-                # discriminator - fake
-                predicted_labels_fake = discriminator(recon_batch)
-                loss_fake = nn.gan_loss(
-                    predicted_labels=predicted_labels_fake,
-                    true_labels=FAKE_LABELS)
-
-                loss_discriminator = loss_real + loss_fake
-
-                # generator/decoder - wants to fool the discriminator
-                loss_generator = nn.gan_loss(
-                    predicted_labels=predicted_labels_fake,
-                    true_labels=REAL_LABELS)
-
-                loss_regularization = loss_discriminator + loss_generator
+                loss_regularization = self.regularization_adversarial(
+                    discriminato=discriminator,
+                    real_recon_batch=real_recon_batch,
+                    fake_recon_batch=recon_batch)
 
             elif regularization == 'wasserstein':
                 raise NotImplementedError(
@@ -317,30 +301,90 @@ class Train(luigi.Task):
 
         return average_loss
 
-    def test_vae(self, epoch, test_loader, model):
-        model.eval()
-        test_loss = 0
+    def test(self, epoch, test_loader, modules, regularization=REGULARIZATION):
+        for module in modules:
+            module.eval()
+        total_test_loss = 0
         with torch.no_grad():
             for i, data in enumerate(test_loader):
                 data = data[0].to(DEVICE)
-                recon_batch, scale_b, mu, logvar = model(data)
-                test_loss += nn.vae_loss(
-                    data, recon_batch, scale_b, mu, logvar).item()
+
+                encoder = modules['encoder']
+                decoder = modules['decoder']
+
+                mu, logvar = encoder(data)
+                z = nn.sample_from_q(mu, logvar).to(DEVICE)
+                recon_batch, scale_b = decoder(z)
+
+                test_loss_reconstruction = nn.reconstruction_loss(
+                    data, recon_batch, scale_b)
+
+                if regularization == 'kullbackleibler':
+                    test_loss_regularization = nn.regularization_loss(
+                        mu, logvar)
+
+                elif regularization == 'adversarial':
+                    discriminator = modules['discriminator']
+                    real_z = nn.sample_from_prior().to(DEVICE)
+                    real_recon_batch, real_scale_b = decoder(real_z)
+
+                    test_loss_regularization = self.regularization_adversarial(
+                        discriminato=discriminator,
+                        real_recon_batch=real_recon_batch,
+                        fake_recon_batch=recon_batch)
+
+                elif regularization == 'wasserstein':
+                    raise NotImplementedError(
+                        'Wasserstein regularization not implemented.')
+                else:
+                    raise NotImplementedError(
+                        'Regularization not implemented.')
+
+                test_loss = test_loss_reconstruction + test_loss_regularization
+
+                total_test_loss += test_loss.item()
 
                 data_path = os.path.join(
-                    self.path,
-                    'imgs',
-                    'epoch_{}_data.npy'.format(epoch))
+                    self.imgs_path, 'epoch_{}_data.npy'.format(epoch))
                 recon_path = os.path.join(
-                    self.path,
-                    'imgs',
-                    'epoch_{}_recon.npy'.format(epoch))
+                    self.imgs_path, 'epoch_{}_recon.npy'.format(epoch))
+                real_recon_path = os.path.join(
+                    self.imgs_path, 'epoch_{}_real_recon.npy'.format(epoch))
+
                 np.save(data_path, data.cpu().numpy())
                 np.save(recon_path, recon_batch.data.cpu().numpy())
+                np.save(real_recon_path, real_recon_batch.data.cpu().numpy())
 
-        test_loss /= len(test_loader.dataset)
-        print('====> Test set loss: {:.4f}'.format(test_loss))
-        return test_loss
+        average_test_loss = total_test_loss / len(test_loader.dataset)
+        print('====> Test set loss: {:.4f}'.format(average_test_loss))
+        return average_test_loss
+
+    def regularization_adversarial(self,
+                                   discriminator,
+                                   real_recon_batch,
+                                   fake_recon_batch):
+
+        # discriminator - real
+        predicted_labels_real = discriminator(real_recon_batch)
+        loss_real = nn.gan_loss(
+            predicted_labels=predicted_labels_real,
+            true_labels=REAL_LABELS)
+
+        # discriminator - fake
+        predicted_labels_fake = discriminator(fake_recon_batch)
+        loss_fake = nn.gan_loss(
+            predicted_labels=predicted_labels_fake,
+            true_labels=FAKE_LABELS)
+
+        loss_discriminator = loss_real + loss_fake
+
+        # generator/decoder - wants to fool the discriminator
+        loss_generator = nn.gan_loss(
+            predicted_labels=predicted_labels_fake,
+            true_labels=REAL_LABELS)
+
+        loss_regularization = loss_discriminator + loss_generator
+        return loss_regularization
 
     def run(self):
         for directory in (self.imgs_path, self.models_path, self.losses_path):
@@ -366,12 +410,33 @@ class Train(luigi.Task):
         test_loader = torch.utils.data.DataLoader(
             test_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
 
-        model = nn.VAE(
+        vae = nn.VAE(
             n_channels=1,
             latent_dim=LATENT_DIM,
             in_w=train.shape[2],
             in_h=train.shape[3]).to(DEVICE)
-        optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+
+        modules = {}
+        modules['encoder'] = vae.encoder
+        modules['decoder'] = vae.decoder
+
+        if REGULARIZATION == 'adversarial':
+            discriminator = nn.Discriminator(
+                latent_dim=LATENT_DIM,
+                in_channels=1,
+                in_w=train.shape[2],
+                in_h=train.shape[3]).to(DEVICE)
+            modules['discriminator'] = discriminator
+
+        optimizers = {}
+        optimizers['encoder'] = torch.optim.Adam(
+            modules['encoder'].parameters(), lr=LR)
+        optimizers['decoder'] = torch.optim.Adam(
+            modules['decoder'].parameters(), lr=LR)
+
+        if REGULARIZATION == 'adversarial':
+            optimizers['discriminator'] = torch.optim.Adam(
+                modules['discriminator'].parameters(), lr=LR)
 
         def init_normal(m):
             if type(m) == tnn.Linear:
@@ -379,22 +444,27 @@ class Train(luigi.Task):
             if type(m) == tnn.Conv2d:
                 tnn.init.xavier_normal_(m.weight)
 
-        model.apply(init_normal)
+        for module in modules:
+            module.apply(init_normal)
+
         train_losses = []
         test_losses = []
         for epoch in range(N_EPOCHS):
-            train_loss = self.train_vae(epoch, train_loader, model, optimizer)
-            test_loss = self.test_vae(epoch, test_loader, model)
-            model_path = os.path.join(
-                self.path,
-                'models',
-                'epoch_{}_train_loss_{:.4f}_test_loss_{:.4f}.pth'.format(
-                    epoch, train_loss, test_loss))
-            torch.save(model, model_path)
+            train_loss = self.train(
+                epoch, train_loader, modules, optimizers, REGULARIZATION)
+            test_loss = self.test(
+                epoch, test_loader, modules, REGULARIZATION)
+
+            for module_name, module in modules.items():
+                module_path = os.path.join(
+                    self.models_path,
+                    'epoch_{}_{}_'
+                    'train_loss_{:.4f}_test_loss_{:.4f}.pth'.format(
+                        epoch, module_name, train_loss, test_loss))
+                torch.save(module, module_path)
 
             train_test_path = os.path.join(
-                self.path,
-                'losses',
+                self.losses_path,
                 'epoch_{}.pkl'.format(
                     epoch, train_loss, test_loss))
             with open(train_test_path, 'wb') as pkl:
