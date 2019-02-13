@@ -5,7 +5,6 @@ import torch.autograd
 import torch.nn as nn
 import torch.optim
 import torch.utils.data
-from torch.nn import functional as F
 
 
 CUDA = torch.cuda.is_available()
@@ -25,9 +24,6 @@ DIS_STR = 2
 DIS_PAD = 1
 DIS_DILATION = 1
 DIS_C = 64
-
-REAL_LABEL = 1
-FAKE_LABEL = 0
 
 
 def cnn_output_size(in_w, in_h, kernel_size=ENC_KS,
@@ -49,7 +45,8 @@ def reparametrize(mu, logvar):
     else:
         eps = torch.FloatTensor(std.size()).normal_()
     eps = torch.autograd.Variable(eps)
-    return eps.mul(std).add_(mu)
+    z = eps.mul(std).add_(mu)
+    return z
 
 
 def sample_from_q(mu, logvar):
@@ -57,8 +54,12 @@ def sample_from_q(mu, logvar):
 
 
 def sample_from_prior(latent_dim):
-    mu = torch.zeros(latent_dim)
-    logvar = torch.zeros(latent_dim)
+    if CUDA:
+        mu = torch.cuda.FloatTensor(latent_dim).fill_(0)
+        logvar = torch.cuda.FloatTensor(latent_dim).fill_(0)
+    else:
+        mu = torch.zeros(latent_dim)
+        logvar = torch.zeros(latent_dim)
     return reparametrize(mu, logvar)
 
 
@@ -343,28 +344,3 @@ class Discriminator(nn.Module):
         prob = prob.view(-1, 1)
 
         return prob
-
-
-def reconstruction_loss(x, recon_x, scale_b):
-    bce = torch.sum(
-        F.binary_cross_entropy(recon_x, x) / scale_b.exp() + 2 * scale_b)
-    return bce
-
-
-def regularization_loss(mu, logvar):
-    # https://arxiv.org/abs/1312.6114 (Appendix B)
-    # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-    kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    return kld
-
-
-def vae_loss(x, recon_x, scale_b, mu, logvar):
-    bce = reconstruction_loss(x, recon_x, scale_b)
-    kld = regularization_loss(mu, logvar)
-    # print('BCE: %s KLD: %s' % (bce.item(), kld.item()))
-    return bce + kld
-
-
-def gan_loss(predicted_label, true_label):
-    bce = torch.nn.BCELoss(predicted_label, true_label)
-    return bce

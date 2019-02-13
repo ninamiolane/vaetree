@@ -20,6 +20,7 @@ import torch.autograd
 import torch.nn as tnn
 import torch.utils.data
 
+import losses
 import metrics
 import nn
 
@@ -40,12 +41,6 @@ torch.manual_seed(SEED)
 BATCH_SIZE = 128
 PRINT_INTERVAL = 10
 REGULARIZATION = 'adversarial'
-
-if REGULARIZATION == 'adversarial':
-    REAL_LABELS = torch.full(
-        (BATCH_SIZE,), nn.FAKE_LABEL, device=DEVICE)
-    FAKE_LABELS = torch.full(
-        (BATCH_SIZE,), nn.FAKE_LABEL, device=DEVICE)
 
 N_EPOCHS = 200
 if DEBUG:
@@ -251,20 +246,20 @@ class Train(luigi.Task):
             z = nn.sample_from_q(mu, logvar).to(DEVICE)
             recon_batch, scale_b = decoder(z)
 
-            loss_reconstruction = nn.reconstruction_loss(
+            loss_reconstruction = losses.bce_on_intensities(
                 data, recon_batch, scale_b)
 
             if regularization == 'kullbackleibler':
-                loss_regularization = nn.regularization_loss(mu, logvar)
+                loss_regularization = losses.kullback_leibler(mu, logvar)
 
             elif regularization == 'adversarial':
                 discriminator = modules['discriminator']
 
-                real_z = nn.sample_from_prior().to(DEVICE)
+                real_z = nn.sample_from_prior(LATENT_DIM).to(DEVICE)
                 real_recon_batch, real_scale_b = decoder(real_z)
 
-                loss_regularization = self.regularization_adversarial(
-                    discriminato=discriminator,
+                loss_regularization = losses.regularization_adversarial(
+                    discriminator=discriminator,
                     real_recon_batch=real_recon_batch,
                     fake_recon_batch=recon_batch)
 
@@ -316,19 +311,19 @@ class Train(luigi.Task):
                 z = nn.sample_from_q(mu, logvar).to(DEVICE)
                 recon_batch, scale_b = decoder(z)
 
-                test_loss_reconstruction = nn.reconstruction_loss(
+                loss_reconstruction = losses.bce_on_intensities(
                     data, recon_batch, scale_b)
 
                 if regularization == 'kullbackleibler':
-                    test_loss_regularization = nn.regularization_loss(
+                    loss_regularization = losses.kullback_leibler(
                         mu, logvar)
 
                 elif regularization == 'adversarial':
                     discriminator = modules['discriminator']
-                    real_z = nn.sample_from_prior().to(DEVICE)
+                    real_z = nn.sample_from_prior(LATENT_DIM).to(DEVICE)
                     real_recon_batch, real_scale_b = decoder(real_z)
 
-                    test_loss_regularization = self.regularization_adversarial(
+                    loss_regularization = losses.regularization_adversarial(
                         discriminato=discriminator,
                         real_recon_batch=real_recon_batch,
                         fake_recon_batch=recon_batch)
@@ -340,7 +335,7 @@ class Train(luigi.Task):
                     raise NotImplementedError(
                         'Regularization not implemented.')
 
-                test_loss = test_loss_reconstruction + test_loss_regularization
+                test_loss = loss_reconstruction + loss_regularization
 
                 total_test_loss += test_loss.item()
 
@@ -362,33 +357,6 @@ class Train(luigi.Task):
         average_test_loss = total_test_loss / len(test_loader.dataset)
         print('====> Test set loss: {:.4f}'.format(average_test_loss))
         return average_test_loss
-
-    def regularization_adversarial(self,
-                                   discriminator,
-                                   real_recon_batch,
-                                   fake_recon_batch):
-
-        # discriminator - real
-        predicted_labels_real = discriminator(real_recon_batch)
-        loss_real = nn.gan_loss(
-            predicted_labels=predicted_labels_real,
-            true_labels=REAL_LABELS)
-
-        # discriminator - fake
-        predicted_labels_fake = discriminator(fake_recon_batch)
-        loss_fake = nn.gan_loss(
-            predicted_labels=predicted_labels_fake,
-            true_labels=FAKE_LABELS)
-
-        loss_discriminator = loss_real + loss_fake
-
-        # generator/decoder - wants to fool the discriminator
-        loss_generator = nn.gan_loss(
-            predicted_labels=predicted_labels_fake,
-            true_labels=REAL_LABELS)
-
-        loss_regularization = loss_discriminator + loss_generator
-        return loss_regularization
 
     def run(self):
         for directory in (self.imgs_path, self.models_path, self.losses_path):
