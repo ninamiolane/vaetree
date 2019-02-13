@@ -39,7 +39,7 @@ torch.manual_seed(SEED)
 
 BATCH_SIZE = 128
 PRINT_INTERVAL = 10
-REGULARIZATION = 'kullbackleibler'
+REGULARIZATION = 'adversarial'
 
 if REGULARIZATION == 'adversarial':
     REAL_LABELS = torch.full(
