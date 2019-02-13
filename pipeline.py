@@ -39,6 +39,13 @@ torch.manual_seed(SEED)
 
 BATCH_SIZE = 64
 PRINT_INTERVAL = 10
+REGULARIZATION = 'kullbackleibler'
+
+if REGULARIZATION == 'adversarial':
+    REAL_LABELS = torch.full(
+        (BATCH_SIZE,), nn.FAKE_LABEL, device=DEVICE)
+    FAKE_LABELS = torch.full(
+        (BATCH_SIZE,), nn.FAKE_LABEL, device=DEVICE)
 
 N_EPOCHS = 200
 if DEBUG:
@@ -217,36 +224,100 @@ class Train(luigi.Task):
     def requires(self):
         return MakeDataSet()
 
-    def train(self, epoch, train_loader, model, optimizer):
-        model.train()
-        train_loss = 0
+    def train(self, epoch, train_loader,
+              modules, optimizers,
+              regularization='kullbackleibler'):
+        """
+        - modules: a dict with the bricks of the model,
+        eg. encoder, decoder, discriminator, depending on the architecture
+        - optimizers: a dict with optimizers corresponding to each module.
+        """
+        for module in modules:
+            module.train()
+
+        total_loss = 0
+
         for batch_idx, data in enumerate(train_loader):
             data = data[0].to(DEVICE)
+            n_data = len(data)
 
-            optimizer.zero_grad()
-            recon_batch, scale_b, mu, logvar = model(data)
-            loss = nn.vae_loss(data, recon_batch, scale_b, mu, logvar)
+            for optimizer in optimizers:
+                optimizer.zero_grad()
+
+            encoder = modules['encoder']
+            decoder = modules['decoder']
+
+            mu, logvar = encoder(data)
+            z = nn.sample_from_q(mu, logvar).to(DEVICE)
+            recon_batch, scale_b = decoder(z)
+
+            loss_reconstruction = nn.reconstruction_loss(
+                data, recon_batch, scale_b)
+
+            if regularization == 'kullbackleibler':
+                loss_regularization = nn.regularization_loss(mu, logvar)
+
+            elif regularization == 'adversarial':
+                real_z = nn.sample_from_prior().to(DEVICE)
+                real_recon_batch, real_scale_b = decoder(real_z)
+
+                discriminator = modules['discriminator']
+
+                # discriminator - real
+                predicted_labels_real = discriminator(real_recon_batch)
+                loss_real = nn.gan_loss(
+                    predicted_labels=predicted_labels_real,
+                    true_labels=REAL_LABELS)
+
+                # discriminator - fake
+                predicted_labels_fake = discriminator(recon_batch)
+                loss_fake = nn.gan_loss(
+                    predicted_labels=predicted_labels_fake,
+                    true_labels=FAKE_LABELS)
+
+                loss_discriminator = loss_real + loss_fake
+
+                # generator/decoder - wants to fool the discriminator
+                loss_generator = nn.gan_loss(
+                    predicted_labels=predicted_labels_fake,
+                    true_labels=REAL_LABELS)
+
+                loss_regularization = loss_discriminator + loss_generator
+
+            elif regularization == 'wasserstein':
+                raise NotImplementedError(
+                    'Wasserstein regularization not implemented.')
+            else:
+                raise NotImplementedError(
+                    'Regularization not implemented.')
+
+            loss = loss_reconstruction + loss_regularization
+
             loss.backward()
 
-            train_loss += loss.item()
-            optimizer.step()
+            total_loss += loss.item()
 
+            for optimizer in optimizers:
+                optimizer.step()
+
+            # TODO(nina): Add logging for the different losses
             if batch_idx % PRINT_INTERVAL == 0:
                 logging.info(
-                    'Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                    'Train Epoch: {} [{}/{} ({:.0f}%)]'
+                    '\tLoss: {:.6f}'.format(
                         epoch,
-                        batch_idx * len(data),
+                        batch_idx * n_data,
                         len(train_loader.dataset),
                         100. * batch_idx / len(train_loader),
-                        loss.item() / len(data)))
+                        loss.item() / n_data))
 
+        average_loss = total_loss / (len(train_loader.dataset))
         logging.info('====> Epoch: {} Average loss: {:.4f}'.format(
-            epoch, train_loss / (len(train_loader.dataset))))
+            epoch, average_loss))
 
-        train_loss /= len(train_loader.dataset)
-        return train_loss
+        return average_loss
 
-    def test(self, epoch, test_loader, model):
+    def test_vae(self, epoch, test_loader, model):
         model.eval()
         test_loss = 0
         with torch.no_grad():
@@ -312,8 +383,8 @@ class Train(luigi.Task):
         train_losses = []
         test_losses = []
         for epoch in range(N_EPOCHS):
-            train_loss = self.train(epoch, train_loader, model, optimizer)
-            test_loss = self.test(epoch, test_loader, model)
+            train_loss = self.train_vae(epoch, train_loader, model, optimizer)
+            test_loss = self.test_vae(epoch, test_loader, model)
             model_path = os.path.join(
                 self.path,
                 'models',
