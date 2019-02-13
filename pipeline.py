@@ -37,7 +37,7 @@ DEVICE = torch.device("cuda" if CUDA else "cpu")
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
-BATCH_SIZE = 64
+BATCH_SIZE = 128
 PRINT_INTERVAL = 10
 REGULARIZATION = 'kullbackleibler'
 
@@ -55,7 +55,7 @@ LATENT_DIM = 20
 
 LR = 15e-6
 
-IMAGE_SIZE = (128, 128)
+IMAGE_SIZE = (64, 64)
 
 TARGET = '/neuro/'
 
