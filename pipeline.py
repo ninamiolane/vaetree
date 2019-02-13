@@ -348,12 +348,16 @@ class Train(luigi.Task):
                     self.imgs_path, 'epoch_{}_data.npy'.format(epoch))
                 recon_path = os.path.join(
                     self.imgs_path, 'epoch_{}_recon.npy'.format(epoch))
-                real_recon_path = os.path.join(
-                    self.imgs_path, 'epoch_{}_real_recon.npy'.format(epoch))
 
                 np.save(data_path, data.cpu().numpy())
                 np.save(recon_path, recon_batch.data.cpu().numpy())
-                np.save(real_recon_path, real_recon_batch.data.cpu().numpy())
+
+                if regularization == 'adversarial':
+                    real_recon_path = os.path.join(
+                        self.imgs_path,
+                        'epoch_{}_real_recon.npy'.format(epoch))
+                    np.save(
+                        real_recon_path, real_recon_batch.data.cpu().numpy())
 
         average_test_loss = total_test_loss / len(test_loader.dataset)
         print('====> Test set loss: {:.4f}'.format(average_test_loss))
