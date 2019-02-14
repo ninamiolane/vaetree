@@ -34,8 +34,6 @@ def vae_loss(x, recon_x, scale_b, mu, logvar):
 
 
 def gan_loss(predicted_labels, true_labels):
-    #print('predict shape = (%d, %d)' % predicted_labels.shape)
-    #print('true shape = (%d)' % true_labels.shape)
     bce = F.binary_cross_entropy(predicted_labels, true_labels)
     return bce
 
@@ -43,8 +41,6 @@ def gan_loss(predicted_labels, true_labels):
 def regularization_adversarial(discriminator,
                                real_recon_batch,
                                fake_recon_batch):
-    #print('real_recon shape (%d, %d, %d, %d)' % real_recon_batch.shape)
-    #print('fake_recon shape (%d, %d, %d, %d)' % fake_recon_batch.shape)
     batch_size = real_recon_batch.shape[0]
     fake_batch_size = fake_recon_batch.shape[0]
     assert batch_size == fake_batch_size
