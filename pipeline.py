@@ -20,16 +20,17 @@ import torch.autograd
 import torch.nn as tnn
 import torch.utils.data
 
+import losses
 import metrics
 import nn
 
 HOME_DIR = '/scratch/users/nmiolane'
-# Change the output directory for new experiment
+
 OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
 TRAIN_DIR = os.path.join(OUTPUT_DIR, 'training')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
-DEBUG = True
+DEBUG = False
 
 CUDA = torch.cuda.is_available()
 SEED = 12345
@@ -37,8 +38,10 @@ DEVICE = torch.device("cuda" if CUDA else "cpu")
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
-BATCH_SIZE = 64
+BATCH_SIZE = 128
 PRINT_INTERVAL = 10
+REGULARIZATION = 'adversarial'
+torch.backends.cudnn.benchmark = True
 
 N_EPOCHS = 200
 if DEBUG:
@@ -48,7 +51,7 @@ LATENT_DIM = 20
 
 LR = 15e-6
 
-IMAGE_SIZE = (128, 128)
+IMAGE_SIZE = (64, 64)
 
 TARGET = '/neuro/'
 
@@ -217,59 +220,147 @@ class Train(luigi.Task):
     def requires(self):
         return MakeDataSet()
 
-    def train(self, epoch, train_loader, model, optimizer):
-        model.train()
-        train_loss = 0
+    def train(self, epoch, train_loader,
+              modules, optimizers,
+              regularization=REGULARIZATION):
+        """
+        - modules: a dict with the bricks of the model,
+        eg. encoder, decoder, discriminator, depending on the architecture
+        - optimizers: a dict with optimizers corresponding to each module.
+        """
+        for module in modules.values():
+            module.train()
+
+        total_loss = 0
+
         for batch_idx, data in enumerate(train_loader):
             data = data[0].to(DEVICE)
+            n_data = len(data)
 
-            optimizer.zero_grad()
-            recon_batch, scale_b, mu, logvar = model(data)
-            loss = nn.vae_loss(data, recon_batch, scale_b, mu, logvar)
+            for optimizer in optimizers.values():
+                optimizer.zero_grad()
+
+            encoder = modules['encoder']
+            decoder = modules['decoder']
+
+            mu, logvar = encoder(data)
+            z = nn.sample_from_q(mu, logvar).to(DEVICE)
+            recon_batch, scale_b = decoder(z)
+
+            loss_reconstruction = losses.bce_on_intensities(
+                data, recon_batch, scale_b)
+
+            if regularization == 'kullbackleibler':
+                loss_regularization = losses.kullback_leibler(mu, logvar)
+
+            elif regularization == 'adversarial':
+                discriminator = modules['discriminator']
+
+                real_z = nn.sample_from_prior(
+                    LATENT_DIM, n_samples=n_data).to(DEVICE)
+                real_recon_batch, real_scale_b = decoder(real_z)
+
+                loss_regularization = losses.regularization_adversarial(
+                    discriminator=discriminator,
+                    real_recon_batch=real_recon_batch,
+                    fake_recon_batch=recon_batch)
+
+            elif regularization == 'wasserstein':
+                raise NotImplementedError(
+                    'Wasserstein regularization not implemented.')
+            else:
+                raise NotImplementedError(
+                    'Regularization not implemented.')
+
+            loss = loss_reconstruction + loss_regularization
+
             loss.backward()
 
-            train_loss += loss.item()
-            optimizer.step()
+            total_loss += loss.item()
 
+            for optimizer in optimizers.values():
+                optimizer.step()
+
+            # TODO(nina): Add logging for the different losses
             if batch_idx % PRINT_INTERVAL == 0:
                 logging.info(
-                    'Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                    'Train Epoch: {} [{}/{} ({:.0f}%)]'
+                    '\tLoss: {:.6f}'.format(
                         epoch,
-                        batch_idx * len(data),
+                        batch_idx * n_data,
                         len(train_loader.dataset),
                         100. * batch_idx / len(train_loader),
-                        loss.item() / len(data)))
+                        loss.item() / n_data))
 
+        average_loss = total_loss / (len(train_loader.dataset))
         logging.info('====> Epoch: {} Average loss: {:.4f}'.format(
-            epoch, train_loss / (len(train_loader.dataset))))
+            epoch, average_loss))
 
-        train_loss /= len(train_loader.dataset)
-        return train_loss
+        return average_loss
 
-    def test(self, epoch, test_loader, model):
-        model.eval()
-        test_loss = 0
+    def test(self, epoch, test_loader, modules, regularization=REGULARIZATION):
+        for module in modules.values():
+            module.eval()
+        total_test_loss = 0
         with torch.no_grad():
-            for i, data in enumerate(test_loader):
+            for batch_idx, data in enumerate(test_loader):
                 data = data[0].to(DEVICE)
-                recon_batch, scale_b, mu, logvar = model(data)
-                test_loss += nn.vae_loss(
-                    data, recon_batch, scale_b, mu, logvar).item()
+                n_data = data.shape[0]
+
+                encoder = modules['encoder']
+                decoder = modules['decoder']
+
+                mu, logvar = encoder(data)
+                z = nn.sample_from_q(mu, logvar).to(DEVICE)
+                recon_batch, scale_b = decoder(z)
+
+                loss_reconstruction = losses.bce_on_intensities(
+                    data, recon_batch, scale_b)
+
+                if regularization == 'kullbackleibler':
+                    loss_regularization = losses.kullback_leibler(
+                        mu, logvar)
+
+                elif regularization == 'adversarial':
+                    discriminator = modules['discriminator']
+                    real_z = nn.sample_from_prior(
+                        LATENT_DIM, n_samples=n_data).to(DEVICE)
+                    real_recon_batch, real_scale_b = decoder(real_z)
+
+                    loss_regularization = losses.regularization_adversarial(
+                        discriminator=discriminator,
+                        real_recon_batch=real_recon_batch,
+                        fake_recon_batch=recon_batch)
+
+                elif regularization == 'wasserstein':
+                    raise NotImplementedError(
+                        'Wasserstein regularization not implemented.')
+                else:
+                    raise NotImplementedError(
+                        'Regularization not implemented.')
+
+                test_loss = loss_reconstruction + loss_regularization
+
+                total_test_loss += test_loss.item()
 
                 data_path = os.path.join(
-                    self.path,
-                    'imgs',
-                    'epoch_{}_data.npy'.format(epoch))
+                    self.imgs_path, 'epoch_{}_data.npy'.format(epoch))
                 recon_path = os.path.join(
-                    self.path,
-                    'imgs',
-                    'epoch_{}_recon.npy'.format(epoch))
+                    self.imgs_path, 'epoch_{}_recon.npy'.format(epoch))
+
                 np.save(data_path, data.cpu().numpy())
                 np.save(recon_path, recon_batch.data.cpu().numpy())
 
-        test_loss /= len(test_loader.dataset)
-        print('====> Test set loss: {:.4f}'.format(test_loss))
-        return test_loss
+                if regularization == 'adversarial':
+                    real_recon_path = os.path.join(
+                        self.imgs_path,
+                        'epoch_{}_real_recon.npy'.format(epoch))
+                    np.save(
+                        real_recon_path, real_recon_batch.data.cpu().numpy())
+
+        average_test_loss = total_test_loss / len(test_loader.dataset)
+        print('====> Test set loss: {:.4f}'.format(average_test_loss))
+        return average_test_loss
 
     def run(self):
         for directory in (self.imgs_path, self.models_path, self.losses_path):
@@ -295,12 +386,33 @@ class Train(luigi.Task):
         test_loader = torch.utils.data.DataLoader(
             test_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
 
-        model = nn.VAE(
+        vae = nn.VAE(
             n_channels=1,
             latent_dim=LATENT_DIM,
             in_w=train.shape[2],
             in_h=train.shape[3]).to(DEVICE)
-        optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+
+        modules = {}
+        modules['encoder'] = vae.encoder
+        modules['decoder'] = vae.decoder
+
+        if REGULARIZATION == 'adversarial':
+            discriminator = nn.Discriminator(
+                latent_dim=LATENT_DIM,
+                in_channels=1,
+                in_w=train.shape[2],
+                in_h=train.shape[3]).to(DEVICE)
+            modules['discriminator'] = discriminator
+
+        optimizers = {}
+        optimizers['encoder'] = torch.optim.Adam(
+            modules['encoder'].parameters(), lr=LR)
+        optimizers['decoder'] = torch.optim.Adam(
+            modules['decoder'].parameters(), lr=LR)
+
+        if REGULARIZATION == 'adversarial':
+            optimizers['discriminator'] = torch.optim.Adam(
+                modules['discriminator'].parameters(), lr=LR)
 
         def init_normal(m):
             if type(m) == tnn.Linear:
@@ -308,22 +420,27 @@ class Train(luigi.Task):
             if type(m) == tnn.Conv2d:
                 tnn.init.xavier_normal_(m.weight)
 
-        model.apply(init_normal)
+        for module in modules.values():
+            module.apply(init_normal)
+
         train_losses = []
         test_losses = []
         for epoch in range(N_EPOCHS):
-            train_loss = self.train(epoch, train_loader, model, optimizer)
-            test_loss = self.test(epoch, test_loader, model)
-            model_path = os.path.join(
-                self.path,
-                'models',
-                'epoch_{}_train_loss_{:.4f}_test_loss_{:.4f}.pth'.format(
-                    epoch, train_loss, test_loss))
-            torch.save(model, model_path)
+            train_loss = self.train(
+                epoch, train_loader, modules, optimizers, REGULARIZATION)
+            test_loss = self.test(
+                epoch, test_loader, modules, REGULARIZATION)
+
+            for module_name, module in modules.items():
+                module_path = os.path.join(
+                    self.models_path,
+                    'epoch_{}_{}_'
+                    'train_loss_{:.4f}_test_loss_{:.4f}.pth'.format(
+                        epoch, module_name, train_loss, test_loss))
+                torch.save(module, module_path)
 
             train_test_path = os.path.join(
-                self.path,
-                'losses',
+                self.losses_path,
                 'epoch_{}.pkl'.format(
                     epoch, train_loss, test_loss))
             with open(train_test_path, 'wb') as pkl:

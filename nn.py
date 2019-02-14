@@ -5,7 +5,6 @@ import torch.autograd
 import torch.nn as nn
 import torch.optim
 import torch.utils.data
-from torch.nn import functional as F
 
 
 CUDA = torch.cuda.is_available()
@@ -19,6 +18,14 @@ ENC_C = 64
 DEC_KS = 3
 DEC_STR = 1
 DEC_C = 64
+
+DIS_KS = 4
+DIS_STR = 2
+DIS_PAD = 1
+DIS_DILATION = 1
+DIS_C = 64
+
+# TODO(nina): Add Sequential for sequential layers
 
 
 def cnn_output_size(in_w, in_h, kernel_size=ENC_KS,
@@ -35,12 +42,30 @@ def cnn_output_size(in_w, in_h, kernel_size=ENC_KS,
 
 def reparametrize(mu, logvar):
     std = logvar.mul(0.5).exp_()
+
+    n_samples, latent_dim = mu.shape
     if CUDA:
-        eps = torch.cuda.FloatTensor(std.size()).normal_()
+        eps = torch.cuda.FloatTensor(n_samples, latent_dim).normal_()
     else:
-        eps = torch.FloatTensor(std.size()).normal_()
+        eps = torch.FloatTensor(n_samples, latent_dim).normal_()
     eps = torch.autograd.Variable(eps)
-    return eps.mul(std).add_(mu)
+    z = eps * std + mu
+    z = z.squeeze()
+    return z
+
+
+def sample_from_q(mu, logvar):
+    return reparametrize(mu, logvar)
+
+
+def sample_from_prior(latent_dim, n_samples=1):
+    if CUDA:
+        mu = torch.cuda.FloatTensor(n_samples, latent_dim).fill_(0)
+        logvar = torch.cuda.FloatTensor(n_samples, latent_dim).fill_(0)
+    else:
+        mu = torch.zeros(n_samples, latent_dim)
+        logvar = torch.zeros(n_samples, latent_dim)
+    return reparametrize(mu, logvar)
 
 
 class Encoder(nn.Module):
@@ -91,6 +116,7 @@ class Encoder(nn.Module):
             stride=ENC_STR,
             padding=ENC_PAD)
         self.bn4 = nn.BatchNorm2d(self.e4.out_channels)
+
         self.w_e4, self.h_e4 = cnn_output_size(in_w=self.w_e3, in_h=self.h_e3)
 
         self.e5 = nn.Conv2d(
@@ -246,21 +272,92 @@ class VAE(nn.Module):
         return res, scale_b, mu, logvar
 
 
-def reconstruction_loss(x, recon_x, scale_b):
-    bce = torch.sum(
-        F.binary_cross_entropy(recon_x, x) / scale_b.exp() + 2 * scale_b)
-    return bce
+class Discriminator(nn.Module):
+    def __init__(self, latent_dim, in_channels, in_w, in_h):
+        super(Discriminator, self).__init__()
 
+        self.n_channels = in_channels
+        self.latent_dim = latent_dim
 
-def regularization_loss(mu, logvar):
-    # https://arxiv.org/abs/1312.6114 (Appendix B)
-    # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-    kld = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-    return kld
+        # activation functions
+        self.leakyrelu = nn.LeakyReLU(0.2)
+        self.relu = nn.ReLU()
+        self.sigmoid = nn.Sigmoid()
 
+        # discriminator
+        self.dis1 = nn.Conv2d(
+            in_channels=self.n_channels,
+            out_channels=DIS_C,
+            kernel_size=DIS_KS,
+            stride=DIS_STR,
+            padding=DIS_PAD)
+        self.bn1 = nn.BatchNorm2d(self.dis1.out_channels)
 
-def vae_loss(x, recon_x, scale_b, mu, logvar):
-    bce = reconstruction_loss(x, recon_x, scale_b)
-    kld = regularization_loss(mu, logvar)
-    # print('BCE: %s KLD: %s' % (bce.item(), kld.item()))
-    return bce + kld
+        self.w_dis1, self.h_dis1 = cnn_output_size(in_w=in_w, in_h=in_h)
+
+        self.dis2 = nn.Conv2d(
+            in_channels=self.dis1.out_channels,
+            out_channels=DIS_C * 2,
+            kernel_size=DIS_KS,
+            stride=DIS_STR,
+            padding=DIS_PAD)
+        self.bn2 = nn.BatchNorm2d(self.dis2.out_channels)
+        self.w_dis2, self.h_dis2 = cnn_output_size(
+            in_w=self.w_dis1, in_h=self.h_dis1)
+
+        self.dis3 = nn.Conv2d(
+            in_channels=self.dis2.out_channels,
+            out_channels=DIS_C * 4,
+            kernel_size=DIS_KS,
+            stride=DIS_STR,
+            padding=DIS_PAD)
+        self.bn3 = nn.BatchNorm2d(self.dis3.out_channels)
+        self.w_dis3, self.h_dis3 = cnn_output_size(
+            in_w=self.w_dis2, in_h=self.h_dis2)
+
+        self.dis4 = nn.Conv2d(
+            in_channels=self.dis3.out_channels,
+            out_channels=DIS_C * 8,
+            kernel_size=DIS_KS,
+            stride=DIS_STR,
+            padding=DIS_PAD)
+        self.bn4 = nn.BatchNorm2d(self.dis4.out_channels)
+        self.w_dis4, self.h_dis4 = cnn_output_size(
+            in_w=self.w_dis3, in_h=self.h_dis3)
+
+        self.dis5 = nn.Conv2d(
+            in_channels=self.dis4.out_channels,
+            out_channels=1,
+            kernel_size=DIS_KS,
+            stride=DIS_STR,
+            padding=DIS_PAD)
+        self.bn5 = nn.BatchNorm2d(self.dis5.out_channels)
+        self.w_dis5, self.h_dis5 = cnn_output_size(
+            in_w=self.w_dis4, in_h=self.h_dis4)
+
+        self.dis6 = nn.Conv2d(
+            in_channels=self.dis5.out_channels,
+            out_channels=1,
+            kernel_size=DIS_KS,
+            stride=DIS_STR,
+            padding=DIS_PAD)
+        self.bn6 = nn.BatchNorm2d(self.dis6.out_channels)
+        self.w_dis6, self.h_dis6 = cnn_output_size(
+            in_w=self.w_dis5, in_h=self.h_dis5)
+
+    def forward(self, x):
+        """
+        Forward pass of the discriminator is to take an image
+        and output probability of the image being generated by the prior
+        versus the learned approximation of the posterior.
+        """
+        h1 = self.leakyrelu(self.bn1(self.dis1(x)))
+        h2 = self.leakyrelu(self.bn2(self.dis2(h1)))
+        h3 = self.leakyrelu(self.bn3(self.dis3(h2)))
+        h4 = self.leakyrelu(self.bn4(self.dis4(h3)))
+        h5 = self.leakyrelu(self.bn5(self.dis5(h4)))
+        h6 = self.leakyrelu(self.bn6(self.dis6(h5)))
+        prob = self.sigmoid(h6)
+        prob = prob.view(-1, 1)
+
+        return prob
