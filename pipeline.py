@@ -226,6 +226,28 @@ class Train(luigi.Task):
     def requires(self):
         return MakeDataSet()
 
+    def print_train_logs(self,
+                         epoch,
+                         batch_idx, n_batches, n_data, n_batch_data,
+                         loss,
+                         loss_reconstruction,
+                         loss_regularization):
+
+        loss = loss.item() / n_batch_data
+        loss_reconstruction = loss_reconstruction.item() / n_batch_data
+        loss_regularization = (
+            loss_regularization.item() / n_batch_data)
+        logging.info(
+            'Train Epoch: {} [{}/{} ({:.0f}%)]'
+            '\tLoss: {:.6f}'
+            '\t[Reconstruction: {:.6f} ({:.0f}%)'
+            ', Regularization: {:.6f} ({:.0f}%)]'.format(
+                epoch,
+                batch_idx * n_batch_data, n_data, 100. * batch_idx / n_batches,
+                loss,
+                loss_reconstruction, 100. * loss_reconstruction / loss,
+                loss_regularization, 100. * loss_regularization / loss))
+
     def train(self, epoch, train_loader,
               modules, optimizers,
               reconstruction=RECONSTRUCTION,
@@ -242,12 +264,14 @@ class Train(luigi.Task):
         total_loss_reconstruction = 0
         total_weighted_loss_regularization = 0
 
-        for batch_idx, data in enumerate(train_loader):
+        n_data = len(train_loader.dataset)
+        n_batches = len(train_loader)
+        for batch_idx, batch_data in enumerate(train_loader):
             if DEBUG:
                 if batch_idx > 1:
                     break
-            data = data[0].to(DEVICE)
-            n_data = len(data)
+            batch_data = batch_data[0].to(DEVICE)
+            n_batch_data = len(batch_data)
 
             for optimizer in optimizers.values():
                 optimizer.zero_grad()
@@ -255,20 +279,20 @@ class Train(luigi.Task):
             encoder = modules['encoder']
             decoder = modules['decoder']
 
-            mu, logvar = encoder(data)
+            mu, logvar = encoder(batch_data)
             z = nn.sample_from_q(mu, logvar).to(DEVICE)
-            recon_batch, scale_b = decoder(z)
+            batch_recon, scale_b = decoder(z)
 
             if reconstruction == 'bce_on_intensities':
                 loss_reconstruction = losses.bce_on_intensities(
-                    data, recon_batch, scale_b)
+                    batch_data, batch_recon, scale_b)
 
             elif reconstruction == 'adversarial':
                 discriminator = modules['discriminator_reconstruction']
                 loss_reconstruction = losses.adversarial(
                     discriminator=discriminator,
-                    real_recon_batch=data,
-                    fake_recon_batch=recon_batch)
+                    real_recon_batch=batch_data,
+                    fake_recon_batch=batch_recon)
 
             if regularization == 'kullbackleibler':
                 loss_regularization = losses.kullback_leibler(mu, logvar)
@@ -277,14 +301,14 @@ class Train(luigi.Task):
                 discriminator = modules['discriminator_regularization']
 
                 z_from_prior = nn.sample_from_prior(
-                    LATENT_DIM, n_samples=n_data).to(DEVICE)
-                recon_batch_from_prior, scale_b_from_prior = decoder(
+                    LATENT_DIM, n_samples=n_batch_data).to(DEVICE)
+                batch_recon_from_prior, scale_b_from_prior = decoder(
                     z_from_prior)
 
                 loss_regularization = losses.adversarial(
                     discriminator=discriminator,
-                    real_recon_batch=recon_batch_from_prior,
-                    fake_recon_batch=recon_batch)
+                    real_recon_batch=batch_recon_from_prior,
+                    fake_recon_batch=batch_recon)
 
             elif regularization == 'wasserstein':
                 raise NotImplementedError(
@@ -306,28 +330,16 @@ class Train(luigi.Task):
             for optimizer in optimizers.values():
                 optimizer.step()
 
-            # TODO(nina): Add logging for the different losses
             if batch_idx % PRINT_INTERVAL == 0:
-                logging.info(
-                    'Train Epoch: {} [{}/{} ({:.0f}%)]'
-                    '\tLoss: {:.6f}'
-                    '\t[Reconstruction Loss: {:.6f} ({:.0f}%)'
-                    'and Regularization Loss: {:.6f} ({:.0f}%)]'.format(
-                        epoch,
-                        batch_idx * n_data,
-                        len(train_loader.dataset),
-                        100. * batch_idx / len(train_loader),
-                        loss.item() / n_data,
-                        loss_reconstruction.item() / n_data,
-                        100. * loss_reconstruction.item() / loss.item(),
-                        REGU_FACTOR * loss_regularization.item() / n_data,
-                        (100. * REGU_FACTOR
-                         * loss_regularization.item() / loss.item())))
+                self.print_train_logs(
+                    batch_idx, n_batches, n_data, n_batch_data,
+                    loss, loss_reconstruction, weighted_loss_regularization)
 
         average_loss_reconstruction = total_loss_reconstruction / n_data
         average_weighted_loss_regularization = (
             total_weighted_loss_regularization / n_data)
         average_loss = total_loss / n_data
+
         logging.info('====> Epoch: {} Average loss: {:.4f}'.format(
             epoch, average_loss))
 
@@ -348,31 +360,32 @@ class Train(luigi.Task):
         total_loss_reconstruction = 0
         total_weighted_loss_regularization = 0
 
+        n_data = len(test_loader.dataset)
         with torch.no_grad():
-            for batch_idx, data in enumerate(test_loader):
+            for batch_idx, batch_data in enumerate(test_loader):
                 if DEBUG:
                     if batch_idx > 1:
                         break
-                data = data[0].to(DEVICE)
-                n_data = data.shape[0]
+                batch_data = batch_data[0].to(DEVICE)
+                n_batch_data = batch_data.shape[0]
 
                 encoder = modules['encoder']
                 decoder = modules['decoder']
 
-                mu, logvar = encoder(data)
+                mu, logvar = encoder(batch_data)
                 z = nn.sample_from_q(mu, logvar).to(DEVICE)
-                recon_batch, scale_b = decoder(z)
+                batch_recon, scale_b = decoder(z)
 
                 if reconstruction == 'bce_on_intensities':
                     loss_reconstruction = losses.bce_on_intensities(
-                        data, recon_batch, scale_b)
+                        batch_data, batch_recon, scale_b)
 
                 elif reconstruction == 'adversarial':
                     discriminator = modules['discriminator_reconstruction']
                     loss_reconstruction = losses.adversarial(
                         discriminator=discriminator,
-                        real_recon_batch=data,
-                        fake_recon_batch=recon_batch)
+                        real_recon_batch=batch_data,
+                        fake_recon_batch=batch_recon)
                 else:
                     raise NotImplementedError(
                         'This reconstruction loss is not implemented.')
@@ -385,14 +398,14 @@ class Train(luigi.Task):
                     discriminator = modules['discriminator_regularization']
 
                     z_from_prior = nn.sample_from_prior(
-                        LATENT_DIM, n_samples=n_data).to(DEVICE)
-                    recon_batch_from_prior, scale_b_from_prior = decoder(
+                        LATENT_DIM, n_samples=n_batch_data).to(DEVICE)
+                    batch_recon_from_prior, scale_b_from_prior = decoder(
                         z_from_prior)
 
                     loss_regularization = losses.adversarial(
                         discriminator=discriminator,
-                        real_recon_batch=recon_batch_from_prior,
-                        fake_recon_batch=recon_batch)
+                        real_recon_batch=batch_recon_from_prior,
+                        fake_recon_batch=batch_recon)
 
                 elif regularization == 'wasserstein':
                     raise NotImplementedError(
@@ -415,8 +428,8 @@ class Train(luigi.Task):
                 recon_path = os.path.join(
                     self.imgs_path, 'epoch_{}_recon.npy'.format(epoch))
 
-                np.save(data_path, data.cpu().numpy())
-                np.save(recon_path, recon_batch.data.cpu().numpy())
+                np.save(data_path, batch_data.data.cpu().numpy())
+                np.save(recon_path, batch_recon.data.cpu().numpy())
 
                 if regularization == 'adversarial':
                     recon_from_prior_path = os.path.join(
@@ -424,7 +437,7 @@ class Train(luigi.Task):
                         'epoch_{}_recon_from_prior.npy'.format(epoch))
                     np.save(
                         recon_from_prior_path,
-                        recon_batch_from_prior.data.cpu().numpy())
+                        batch_recon_from_prior.data.cpu().numpy())
 
         average_loss_reconstruction = total_loss_reconstruction / n_data
         average_weighted_loss_regularization = (
