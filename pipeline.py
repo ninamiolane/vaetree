@@ -44,6 +44,7 @@ torch.backends.cudnn.benchmark = True
 
 RECONSTRUCTION = 'adversarial'
 REGULARIZATION = 'kullbackleibler'
+WEIGHT_REGU = 0.01
 
 N_EPOCHS = 200
 if DEBUG:
@@ -52,6 +53,8 @@ if DEBUG:
 LATENT_DIM = 20
 
 LR = 15e-6
+if RECONSTRUCTION == 'adversarial':
+    LR = 1e-6
 
 IMAGE_SIZE = (64, 64)
 
@@ -287,7 +290,7 @@ class Train(luigi.Task):
                 raise NotImplementedError(
                     'Regularization not implemented.')
 
-            loss = loss_reconstruction + loss_regularization
+            loss = loss_reconstruction + WEIGHT_REGU * loss_regularization
 
             loss.backward()
 
@@ -372,7 +375,8 @@ class Train(luigi.Task):
                     raise NotImplementedError(
                         'This regularization loss is not implemented.')
 
-                test_loss = loss_reconstruction + loss_regularization
+                test_loss = (
+                    loss_reconstruction + WEIGHT_REGU * loss_regularization)
 
                 total_test_loss += test_loss.item()
 
