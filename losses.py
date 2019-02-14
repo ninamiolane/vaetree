@@ -38,9 +38,7 @@ def gan_loss(predicted_labels, true_labels):
     return bce
 
 
-def regularization_adversarial(discriminator,
-                               real_recon_batch,
-                               fake_recon_batch):
+def adversarial(discriminator, real_recon_batch, fake_recon_batch):
     batch_size = real_recon_batch.shape[0]
     fake_batch_size = fake_recon_batch.shape[0]
     assert batch_size == fake_batch_size

@@ -40,8 +40,10 @@ torch.manual_seed(SEED)
 
 BATCH_SIZE = 128
 PRINT_INTERVAL = 10
-REGULARIZATION = 'adversarial'
 torch.backends.cudnn.benchmark = True
+
+RECONSTRUCTION = 'bce_on_intensities'
+REGULARIZATION = 'adversarial'
 
 N_EPOCHS = 200
 if DEBUG:
@@ -222,6 +224,7 @@ class Train(luigi.Task):
 
     def train(self, epoch, train_loader,
               modules, optimizers,
+              reconstruction=RECONSTRUCTION,
               regularization=REGULARIZATION):
         """
         - modules: a dict with the bricks of the model,
@@ -247,22 +250,31 @@ class Train(luigi.Task):
             z = nn.sample_from_q(mu, logvar).to(DEVICE)
             recon_batch, scale_b = decoder(z)
 
-            loss_reconstruction = losses.bce_on_intensities(
-                data, recon_batch, scale_b)
+            if reconstruction == 'bce_on_intensities':
+                loss_reconstruction = losses.bce_on_intensities(
+                    data, recon_batch, scale_b)
+
+            elif reconstruction == 'adversarial':
+                discriminator = modules['discriminator_reconstruction']
+                loss_reconstruction = losses.adversarial(
+                    discriminator=discriminator,
+                    real_recon_batch=data,
+                    fake_recon_batch=recon_batch)
 
             if regularization == 'kullbackleibler':
                 loss_regularization = losses.kullback_leibler(mu, logvar)
 
             elif regularization == 'adversarial':
-                discriminator = modules['discriminator']
+                discriminator = modules['discriminator_regularization']
 
-                real_z = nn.sample_from_prior(
+                z_from_prior = nn.sample_from_prior(
                     LATENT_DIM, n_samples=n_data).to(DEVICE)
-                real_recon_batch, real_scale_b = decoder(real_z)
+                recon_batch_from_prior, scale_b_from_prior = decoder(
+                    z_from_prior)
 
-                loss_regularization = losses.regularization_adversarial(
+                loss_regularization = losses.adversarial(
                     discriminator=discriminator,
-                    real_recon_batch=real_recon_batch,
+                    real_recon_batch=recon_batch_from_prior,
                     fake_recon_batch=recon_batch)
 
             elif regularization == 'wasserstein':
@@ -298,7 +310,9 @@ class Train(luigi.Task):
 
         return average_loss
 
-    def test(self, epoch, test_loader, modules, regularization=REGULARIZATION):
+    def test(self, epoch, test_loader, modules,
+             reconstruction=RECONSTRUCTION,
+             regularization=REGULARIZATION):
         for module in modules.values():
             module.eval()
         total_test_loss = 0
@@ -314,22 +328,35 @@ class Train(luigi.Task):
                 z = nn.sample_from_q(mu, logvar).to(DEVICE)
                 recon_batch, scale_b = decoder(z)
 
-                loss_reconstruction = losses.bce_on_intensities(
-                    data, recon_batch, scale_b)
+                if reconstruction == 'bce_on_intensities':
+                    loss_reconstruction = losses.bce_on_intensities(
+                        data, recon_batch, scale_b)
+
+                elif reconstruction == 'adversarial':
+                    discriminator = modules['discriminator_reconstruction']
+                    loss_reconstruction = losses.adversarial(
+                        discriminator=discriminator,
+                        real_recon_batch=data,
+                        fake_recon_batch=recon_batch)
+                else:
+                    raise NotImplementedError(
+                        'This reconstruction loss is not implemented.')
 
                 if regularization == 'kullbackleibler':
                     loss_regularization = losses.kullback_leibler(
                         mu, logvar)
 
                 elif regularization == 'adversarial':
-                    discriminator = modules['discriminator']
-                    real_z = nn.sample_from_prior(
-                        LATENT_DIM, n_samples=n_data).to(DEVICE)
-                    real_recon_batch, real_scale_b = decoder(real_z)
+                    discriminator = modules['discriminator_regularization']
 
-                    loss_regularization = losses.regularization_adversarial(
+                    z_from_prior = nn.sample_from_prior(
+                        LATENT_DIM, n_samples=n_data).to(DEVICE)
+                    recon_batch_from_prior, scale_b_from_prior = decoder(
+                        z_from_prior)
+
+                    loss_regularization = losses.adversarial(
                         discriminator=discriminator,
-                        real_recon_batch=real_recon_batch,
+                        real_recon_batch=recon_batch_from_prior,
                         fake_recon_batch=recon_batch)
 
                 elif regularization == 'wasserstein':
@@ -337,7 +364,7 @@ class Train(luigi.Task):
                         'Wasserstein regularization not implemented.')
                 else:
                     raise NotImplementedError(
-                        'Regularization not implemented.')
+                        'This regularization loss is not implemented.')
 
                 test_loss = loss_reconstruction + loss_regularization
 
@@ -352,11 +379,12 @@ class Train(luigi.Task):
                 np.save(recon_path, recon_batch.data.cpu().numpy())
 
                 if regularization == 'adversarial':
-                    real_recon_path = os.path.join(
+                    recon_from_prior_path = os.path.join(
                         self.imgs_path,
-                        'epoch_{}_real_recon.npy'.format(epoch))
+                        'epoch_{}_recon_from_prior.npy'.format(epoch))
                     np.save(
-                        real_recon_path, real_recon_batch.data.cpu().numpy())
+                        recon_from_prior_path,
+                        recon_batch_from_prior.data.cpu().numpy())
 
         average_test_loss = total_test_loss / len(test_loader.dataset)
         print('====> Test set loss: {:.4f}'.format(average_test_loss))
@@ -396,13 +424,21 @@ class Train(luigi.Task):
         modules['encoder'] = vae.encoder
         modules['decoder'] = vae.decoder
 
+        if RECONSTRUCTION == 'adversarial':
+            discriminator = nn.Discriminator(
+                latent_dim=LATENT_DIM,
+                in_channels=1,
+                in_w=train.shape[2],
+                in_h=train.shape[3]).to(DEVICE)
+            modules['discriminator_reconstruction'] = discriminator
+
         if REGULARIZATION == 'adversarial':
             discriminator = nn.Discriminator(
                 latent_dim=LATENT_DIM,
                 in_channels=1,
                 in_w=train.shape[2],
                 in_h=train.shape[3]).to(DEVICE)
-            modules['discriminator'] = discriminator
+            modules['discriminator_regularization'] = discriminator
 
         optimizers = {}
         optimizers['encoder'] = torch.optim.Adam(
@@ -410,9 +446,13 @@ class Train(luigi.Task):
         optimizers['decoder'] = torch.optim.Adam(
             modules['decoder'].parameters(), lr=LR)
 
+        if RECONSTRUCTION == 'adversarial':
+            optimizers['discriminator_regularization'] = torch.optim.Adam(
+                modules['discriminator_regularization'].parameters(), lr=LR)
+
         if REGULARIZATION == 'adversarial':
-            optimizers['discriminator'] = torch.optim.Adam(
-                modules['discriminator'].parameters(), lr=LR)
+            optimizers['discriminator_regularization'] = torch.optim.Adam(
+                modules['discriminator_regularization'].parameters(), lr=LR)
 
         def init_normal(m):
             if type(m) == tnn.Linear:
