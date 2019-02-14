@@ -25,6 +25,8 @@ DIS_PAD = 1
 DIS_DILATION = 1
 DIS_C = 64
 
+# TODO(nina): Add Sequential for sequential layers
+
 
 def cnn_output_size(in_w, in_h, kernel_size=ENC_KS,
                     stride=ENC_STR,
@@ -114,6 +116,7 @@ class Encoder(nn.Module):
             stride=ENC_STR,
             padding=ENC_PAD)
         self.bn4 = nn.BatchNorm2d(self.e4.out_channels)
+
         self.w_e4, self.h_e4 = cnn_output_size(in_w=self.w_e3, in_h=self.h_e3)
 
         self.e5 = nn.Conv2d(
