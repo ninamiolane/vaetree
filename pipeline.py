@@ -238,6 +238,8 @@ class Train(luigi.Task):
             module.train()
 
         total_loss = 0
+        total_loss_reconstruction = 0
+        total_weighted_loss_regularization = 0
 
         for batch_idx, data in enumerate(train_loader):
             if DEBUG:
@@ -290,11 +292,15 @@ class Train(luigi.Task):
                 raise NotImplementedError(
                     'Regularization not implemented.')
 
-            loss = loss_reconstruction + WEIGHT_REGU * loss_regularization
+            weighted_loss_regularization = WEIGHT_REGU * loss_regularization
+            loss = loss_reconstruction + weighted_loss_regularization
+
+            total_loss_reconstruction += loss_reconstruction.item()
+            total_weighted_loss_regularization += (
+                weighted_loss_regularization.item())
+            total_loss += loss.item()
 
             loss.backward()
-
-            total_loss += loss.item()
 
             for optimizer in optimizers.values():
                 optimizer.step()
@@ -303,25 +309,44 @@ class Train(luigi.Task):
             if batch_idx % PRINT_INTERVAL == 0:
                 logging.info(
                     'Train Epoch: {} [{}/{} ({:.0f}%)]'
-                    '\tLoss: {:.6f}'.format(
+                    '\tLoss: {:.6f}'
+                    '\t[Reconstruction Loss: {:.6f} ({:.0f}%)'
+                    'and Regularization Loss: {:.6f} ({:.0f}%)]'.format(
                         epoch,
                         batch_idx * n_data,
                         len(train_loader.dataset),
                         100. * batch_idx / len(train_loader),
-                        loss.item() / n_data))
+                        loss.item() / n_data,
+                        loss_reconstruction.item() / n_data,
+                        100. * loss_reconstruction.item() / loss.item(),
+                        WEIGHT_REGU * loss_regularization.item() / n_data,
+                        (100. * WEIGHT_REGU
+                         * loss_regularization.item() / loss.item())))
 
-        average_loss = total_loss / (len(train_loader.dataset))
+        average_loss_reconstruction = total_loss_reconstruction / n_data
+        average_weighted_loss_regularization = (
+            total_weighted_loss_regularization / n_data)
+        average_loss = total_loss / n_data
         logging.info('====> Epoch: {} Average loss: {:.4f}'.format(
             epoch, average_loss))
 
-        return average_loss
+        train_losses = {}
+        train_losses['loss_reconstruction'] = average_loss_reconstruction
+        train_losses['weighted_loss_regularization'] = (
+            average_weighted_loss_regularization)
+        train_losses['loss'] = average_loss
+        return train_losses
 
     def test(self, epoch, test_loader, modules,
              reconstruction=RECONSTRUCTION,
              regularization=REGULARIZATION):
         for module in modules.values():
             module.eval()
-        total_test_loss = 0
+
+        total_loss = 0
+        total_loss_reconstruction = 0
+        total_weighted_loss_regularization = 0
+
         with torch.no_grad():
             for batch_idx, data in enumerate(test_loader):
                 if DEBUG:
@@ -375,10 +400,14 @@ class Train(luigi.Task):
                     raise NotImplementedError(
                         'This regularization loss is not implemented.')
 
-                test_loss = (
-                    loss_reconstruction + WEIGHT_REGU * loss_regularization)
+                weighted_loss_regularization = (
+                    WEIGHT_REGU * loss_regularization)
+                loss = loss_reconstruction + weighted_loss_regularization
 
-                total_test_loss += test_loss.item()
+                total_loss_reconstruction += loss_reconstruction.item()
+                total_weighted_loss_regularization += (
+                    weighted_loss_regularization.item())
+                total_loss += loss.item()
 
                 data_path = os.path.join(
                     self.imgs_path, 'epoch_{}_data.npy'.format(epoch))
@@ -396,9 +425,18 @@ class Train(luigi.Task):
                         recon_from_prior_path,
                         recon_batch_from_prior.data.cpu().numpy())
 
-        average_test_loss = total_test_loss / len(test_loader.dataset)
-        print('====> Test set loss: {:.4f}'.format(average_test_loss))
-        return average_test_loss
+        average_loss_reconstruction = total_loss_reconstruction / n_data
+        average_weighted_loss_regularization = (
+            total_weighted_loss_regularization / n_data)
+        average_loss = total_loss / n_data
+        print('====> Test set loss: {:.4f}'.format(average_loss))
+
+        test_losses = {}
+        test_losses['loss_reconstruction'] = average_loss_reconstruction
+        test_losses['weighted_loss_regularization'] = (
+            average_weighted_loss_regularization)
+        test_losses['loss'] = average_loss
+        return test_losses
 
     def run(self):
         for directory in (self.imgs_path, self.models_path, self.losses_path):
@@ -473,13 +511,13 @@ class Train(luigi.Task):
         for module in modules.values():
             module.apply(init_normal)
 
-        train_losses = []
-        test_losses = []
+        train_losses_all_epochs = []
+        test_losses_all_epochs = []
         for epoch in range(N_EPOCHS):
-            train_loss = self.train(
+            train_losses = self.train(
                 epoch, train_loader, modules, optimizers,
                 RECONSTRUCTION, REGULARIZATION)
-            test_loss = self.test(
+            test_losses = self.test(
                 epoch, test_loader, modules,
                 RECONSTRUCTION, REGULARIZATION)
 
@@ -488,25 +526,25 @@ class Train(luigi.Task):
                     self.models_path,
                     'epoch_{}_{}_'
                     'train_loss_{:.4f}_test_loss_{:.4f}.pth'.format(
-                        epoch, module_name, train_loss, test_loss))
+                        epoch, module_name,
+                        train_losses['loss'], test_losses['loss']))
                 torch.save(module, module_path)
 
             train_test_path = os.path.join(
-                self.losses_path,
-                'epoch_{}.pkl'.format(
-                    epoch, train_loss, test_loss))
+                self.losses_path, 'epoch_{}.pkl'.format(epoch))
             with open(train_test_path, 'wb') as pkl:
                 pickle.dump(
-                    {'train_loss': train_loss, 'test_loss': test_loss}, pkl)
+                    {'train_losses': train_losses, 'test_losses': test_losses},
+                    pkl)
 
-            train_losses.append(train_loss)
-            test_losses.append(test_loss)
+            train_losses_all_epochs.append(train_losses)
+            test_losses_all_epochs.append(test_losses)
 
         with open(self.output()['train_losses'].path, 'wb') as pkl:
-            pickle.dump(train_losses, pkl)
+            pickle.dump(train_losses_all_epochs, pkl)
 
         with open(self.output()['test_losses'].path, 'wb') as pkl:
-            pickle.dump(test_losses, pkl)
+            pickle.dump(test_losses_all_epochs, pkl)
 
     def output(self):
         return {'train_losses': luigi.LocalTarget(self.train_losses_path),

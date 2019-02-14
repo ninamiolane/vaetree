@@ -29,7 +29,6 @@ def kullback_leibler(mu, logvar):
 def vae_loss(x, recon_x, scale_b, mu, logvar):
     bce = bce_on_intensities(x, recon_x, scale_b)
     kld = kullback_leibler(mu, logvar)
-    # print('BCE: %s KLD: %s' % (bce.item(), kld.item()))
     return bce + kld
 
 
