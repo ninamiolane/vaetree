@@ -32,11 +32,6 @@ def vae_loss(x, recon_x, scale_b, mu, logvar):
     return bce + kld
 
 
-def gan_loss(predicted_labels, true_labels):
-    bce = F.binary_cross_entropy(predicted_labels, true_labels)
-    return bce
-
-
 def adversarial(discriminator, real_recon_batch, fake_recon_batch):
     batch_size = real_recon_batch.shape[0]
     fake_batch_size = fake_recon_batch.shape[0]
@@ -48,22 +43,22 @@ def adversarial(discriminator, real_recon_batch, fake_recon_batch):
 
     # discriminator - real
     predicted_labels_real = discriminator(real_recon_batch)
-    loss_real = gan_loss(
-        predicted_labels=predicted_labels_real,
-        true_labels=real_labels)
+    loss_real = F.binary_cross_entropy(
+        predicted_labels_real,
+        real_labels)
 
     # discriminator - fake
     predicted_labels_fake = discriminator(fake_recon_batch)
-    loss_fake = gan_loss(
-        predicted_labels=predicted_labels_fake,
-        true_labels=fake_labels)
+    loss_fake = F.binary_cross_entropy(
+        predicted_labels_fake,
+        fake_labels)
 
     loss_discriminator = loss_real + loss_fake
 
     # generator/decoder - wants to fool the discriminator
-    loss_generator = gan_loss(
-        predicted_labels=predicted_labels_fake,
-        true_labels=real_labels)
+    loss_generator = F.binary_cross_entropy(
+        predicted_labels_fake,
+        real_labels)
 
     loss_regularization = loss_discriminator + loss_generator
     return loss_regularization
