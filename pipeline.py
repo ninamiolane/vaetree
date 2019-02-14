@@ -45,7 +45,7 @@ torch.backends.cudnn.benchmark = True
 RECONSTRUCTION = 'adversarial'
 REGULARIZATION = 'kullbackleibler'
 WEIGHTS_INIT = 'kaiming'
-REGU_FACTOR = 0.01
+REGU_FACTOR = 0.003
 
 N_EPOCHS = 200
 if DEBUG:
@@ -240,13 +240,13 @@ class Train(luigi.Task):
         logging.info(
             'Train Epoch: {} [{}/{} ({:.0f}%)]'
             '\tLoss: {:.6f}'
-            '\t[Reconstruction: {:.6f} ({:.0f}%)'
-            ', Regularization: {:.6f} ({:.0f}%)]'.format(
+            '\t(Reconstruction: {:.0f}%'
+            ', Regularization: {:.0f}%)'.format(
                 epoch,
                 batch_idx * n_batch_data, n_data, 100. * batch_idx / n_batches,
                 loss,
-                loss_reconstruction, 100. * loss_reconstruction / loss,
-                loss_regularization, 100. * loss_regularization / loss))
+                100. * loss_reconstruction / loss,
+                100. * loss_regularization / loss))
 
     def train(self, epoch, train_loader,
               modules, optimizers,
@@ -332,6 +332,7 @@ class Train(luigi.Task):
 
             if batch_idx % PRINT_INTERVAL == 0:
                 self.print_train_logs(
+                    epoch,
                     batch_idx, n_batches, n_data, n_batch_data,
                     loss, loss_reconstruction, weighted_loss_regularization)
 
