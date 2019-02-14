@@ -44,7 +44,8 @@ torch.backends.cudnn.benchmark = True
 
 RECONSTRUCTION = 'adversarial'
 REGULARIZATION = 'kullbackleibler'
-WEIGHT_REGU = 0.01
+WEIGHTS_INIT = 'kaiming'
+REGU_FACTOR = 0.01
 
 N_EPOCHS = 200
 if DEBUG:
@@ -292,7 +293,7 @@ class Train(luigi.Task):
                 raise NotImplementedError(
                     'Regularization not implemented.')
 
-            weighted_loss_regularization = WEIGHT_REGU * loss_regularization
+            weighted_loss_regularization = REGU_FACTOR * loss_regularization
             loss = loss_reconstruction + weighted_loss_regularization
 
             total_loss_reconstruction += loss_reconstruction.item()
@@ -319,8 +320,8 @@ class Train(luigi.Task):
                         loss.item() / n_data,
                         loss_reconstruction.item() / n_data,
                         100. * loss_reconstruction.item() / loss.item(),
-                        WEIGHT_REGU * loss_regularization.item() / n_data,
-                        (100. * WEIGHT_REGU
+                        REGU_FACTOR * loss_regularization.item() / n_data,
+                        (100. * REGU_FACTOR
                          * loss_regularization.item() / loss.item())))
 
         average_loss_reconstruction = total_loss_reconstruction / n_data
@@ -401,7 +402,7 @@ class Train(luigi.Task):
                         'This regularization loss is not implemented.')
 
                 weighted_loss_regularization = (
-                    WEIGHT_REGU * loss_regularization)
+                    REGU_FACTOR * loss_regularization)
                 loss = loss_reconstruction + weighted_loss_regularization
 
                 total_loss_reconstruction += loss_reconstruction.item()
@@ -502,14 +503,26 @@ class Train(luigi.Task):
             optimizers['discriminator_regularization'] = torch.optim.Adam(
                 modules['discriminator_regularization'].parameters(), lr=LR)
 
-        def init_normal(m):
+        def init_xavier_normal(m):
             if type(m) == tnn.Linear:
                 tnn.init.xavier_normal_(m.weight)
             if type(m) == tnn.Conv2d:
                 tnn.init.xavier_normal_(m.weight)
 
+        def init_kaiming_normal(m):
+            if type(m) == tnn.Linear:
+                tnn.init.kaiming_normal_(m.weight)
+            if type(m) == tnn.Conv2d:
+                tnn.init.kaiming_normal_(m.weight)
+
         for module in modules.values():
-            module.apply(init_normal)
+            if WEIGHTS_INIT == 'xavier':
+                module.apply(init_xavier_normal)
+            elif WEIGHTS_INIT == 'kaiming':
+                module.apply(init_kaiming_normal)
+            else:
+                raise NotImplementedError(
+                    'This weight initialization is not implemented.')
 
         train_losses_all_epochs = []
         test_losses_all_epochs = []
