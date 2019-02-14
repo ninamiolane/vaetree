@@ -30,7 +30,7 @@ OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
 TRAIN_DIR = os.path.join(OUTPUT_DIR, 'training')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
-DEBUG = True
+DEBUG = False
 
 CUDA = torch.cuda.is_available()
 SEED = 12345
@@ -42,8 +42,8 @@ BATCH_SIZE = 128
 PRINT_INTERVAL = 10
 torch.backends.cudnn.benchmark = True
 
-RECONSTRUCTION = 'bce_on_intensities'
-REGULARIZATION = 'adversarial'
+RECONSTRUCTION = 'adversarial'
+REGULARIZATION = 'kullbackleibler'
 
 N_EPOCHS = 200
 if DEBUG:
