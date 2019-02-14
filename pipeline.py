@@ -45,7 +45,7 @@ torch.backends.cudnn.benchmark = True
 RECONSTRUCTION = 'adversarial'
 REGULARIZATION = 'kullbackleibler'
 WEIGHTS_INIT = 'kaiming'
-REGU_FACTOR = 0.003
+REGU_FACTOR = 1.
 
 N_EPOCHS = 200
 if DEBUG:
