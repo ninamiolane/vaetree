@@ -30,7 +30,7 @@ OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
 TRAIN_DIR = os.path.join(OUTPUT_DIR, 'training')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
-DEBUG = False
+DEBUG = True
 
 CUDA = torch.cuda.is_available()
 SEED = 12345
@@ -237,6 +237,9 @@ class Train(luigi.Task):
         total_loss = 0
 
         for batch_idx, data in enumerate(train_loader):
+            if DEBUG:
+                if batch_idx > 1:
+                    break
             data = data[0].to(DEVICE)
             n_data = len(data)
 
@@ -318,6 +321,9 @@ class Train(luigi.Task):
         total_test_loss = 0
         with torch.no_grad():
             for batch_idx, data in enumerate(test_loader):
+                if DEBUG:
+                    if batch_idx > 1:
+                        break
                 data = data[0].to(DEVICE)
                 n_data = data.shape[0]
 
@@ -447,8 +453,8 @@ class Train(luigi.Task):
             modules['decoder'].parameters(), lr=LR)
 
         if RECONSTRUCTION == 'adversarial':
-            optimizers['discriminator_regularization'] = torch.optim.Adam(
-                modules['discriminator_regularization'].parameters(), lr=LR)
+            optimizers['discriminator_reconstruction'] = torch.optim.Adam(
+                modules['discriminator_reconstruction'].parameters(), lr=LR)
 
         if REGULARIZATION == 'adversarial':
             optimizers['discriminator_regularization'] = torch.optim.Adam(
@@ -467,9 +473,11 @@ class Train(luigi.Task):
         test_losses = []
         for epoch in range(N_EPOCHS):
             train_loss = self.train(
-                epoch, train_loader, modules, optimizers, REGULARIZATION)
+                epoch, train_loader, modules, optimizers,
+                RECONSTRUCTION, REGULARIZATION)
             test_loss = self.test(
-                epoch, test_loader, modules, REGULARIZATION)
+                epoch, test_loader, modules,
+                RECONSTRUCTION, REGULARIZATION)
 
             for module_name, module in modules.items():
                 module_path = os.path.join(
