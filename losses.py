@@ -36,6 +36,7 @@ def adversarial(discriminator, real_recon_batch, fake_recon_batch):
     batch_size = real_recon_batch.shape[0]
     fake_batch_size = fake_recon_batch.shape[0]
     assert batch_size == fake_batch_size
+
     real_labels = torch.full(
         (batch_size,), REAL_LABEL, device=DEVICE)
     fake_labels = torch.full(
@@ -43,22 +44,19 @@ def adversarial(discriminator, real_recon_batch, fake_recon_batch):
 
     # discriminator - real
     predicted_labels_real = discriminator(real_recon_batch)
-    loss_real = F.binary_cross_entropy(
+    loss_discriminator_real = F.binary_cross_entropy(
         predicted_labels_real,
         real_labels)
 
     # discriminator - fake
     predicted_labels_fake = discriminator(fake_recon_batch)
-    loss_fake = F.binary_cross_entropy(
+    loss_discriminator_fake = F.binary_cross_entropy(
         predicted_labels_fake,
         fake_labels)
-
-    loss_discriminator = loss_real + loss_fake
 
     # generator/decoder - wants to fool the discriminator
     loss_generator = F.binary_cross_entropy(
         predicted_labels_fake,
         real_labels)
 
-    loss_regularization = loss_discriminator + loss_generator
-    return loss_regularization
+    return loss_discriminator_real, loss_discriminator_fake, loss_generator

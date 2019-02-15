@@ -45,7 +45,7 @@ torch.backends.cudnn.benchmark = True
 RECONSTRUCTION = 'adversarial'
 REGULARIZATION = 'kullbackleibler'
 WEIGHTS_INIT = 'kaiming'
-REGU_FACTOR = 1.
+REGU_FACTOR = 0.003
 
 N_EPOCHS = 200
 if DEBUG:
@@ -281,6 +281,8 @@ class Train(luigi.Task):
 
             mu, logvar = encoder(batch_data)
             z = nn.sample_from_q(mu, logvar).to(DEVICE)
+
+            # Detach to avoid training decoder on discriminator's loss?
             batch_recon, scale_b = decoder(z)
 
             if reconstruction == 'bce_on_intensities':
@@ -288,16 +290,41 @@ class Train(luigi.Task):
                     batch_data, batch_recon, scale_b)
 
             elif reconstruction == 'adversarial':
+                # From:
+                # Autoencoding beyond pixels using a learned similarity metric
+                # arXiv:1512.09300v2
                 discriminator = modules['discriminator_reconstruction']
-                loss_reconstruction = losses.adversarial(
+
+                loss_dis_real, loss_dis_fake_recon, _ = losses.adversarial(
                     discriminator=discriminator,
                     real_recon_batch=batch_data,
                     fake_recon_batch=batch_recon)
+
+                # Detach to avoid training decoder on discriminator's loss?
+                z_from_prior = nn.sample_from_prior(
+                    LATENT_DIM, n_samples=n_batch_data).to(DEVICE)
+                batch_recon_from_prior, scale_b_from_prior = decoder(
+                    z_from_prior)
+
+                _, loss_dis_fake_from_prior, _ = losses.adversarial(
+                    discriminator=discriminator,
+                    real_recon_batch=batch_data,
+                    fake_recon_batch=batch_recon_from_prior)
+
+                # TODO(nina): Add L2 norm on discriminator's activations
+                # discriminator_activations =
+
+                loss_reconstruction = (
+                    loss_dis_real + loss_dis_fake_recon
+                    + loss_dis_fake_from_prior)
 
             if regularization == 'kullbackleibler':
                 loss_regularization = losses.kullback_leibler(mu, logvar)
 
             elif regularization == 'adversarial':
+                # From:
+                # Adversarial autoencoders
+                # https://arxiv.org/pdf/1511.05644.pdf
                 discriminator = modules['discriminator_regularization']
 
                 z_from_prior = nn.sample_from_prior(
@@ -305,10 +332,12 @@ class Train(luigi.Task):
                 batch_recon_from_prior, scale_b_from_prior = decoder(
                     z_from_prior)
 
-                loss_regularization = losses.adversarial(
+                loss_dis_real, loss_dis_fake, _ = losses.adversarial(
                     discriminator=discriminator,
                     real_recon_batch=batch_recon_from_prior,
                     fake_recon_batch=batch_recon)
+
+                loss_regularization = loss_dis_real + loss_dis_fake
 
             elif regularization == 'wasserstein':
                 raise NotImplementedError(
@@ -325,10 +354,13 @@ class Train(luigi.Task):
                 weighted_loss_regularization.item())
             total_loss += loss.item()
 
-            loss.backward()
+            # Update scheme from Autoencoding pixels:
+            loss_regularization.backward(retain_graph=True)
+            optimizers['encoder'].step()
 
-            for optimizer in optimizers.values():
-                optimizer.step()
+            loss_reconstruction.backward()
+            optimizers['decoder'].step()
+            optimizers['discriminator_reconstruction'].step()
 
             if batch_idx % PRINT_INTERVAL == 0:
                 self.print_train_logs(
@@ -382,11 +414,32 @@ class Train(luigi.Task):
                         batch_data, batch_recon, scale_b)
 
                 elif reconstruction == 'adversarial':
+                    # From:
+                    # Autoencoding beyond pixels using a learned
+                    # similarity metric
+                    # arXiv:1512.09300v2
                     discriminator = modules['discriminator_reconstruction']
-                    loss_reconstruction = losses.adversarial(
+                    loss_dis_real, loss_dis_fake_recon, _ = losses.adversarial(
                         discriminator=discriminator,
                         real_recon_batch=batch_data,
                         fake_recon_batch=batch_recon)
+
+                    z_from_prior = nn.sample_from_prior(
+                        LATENT_DIM, n_samples=n_batch_data).to(DEVICE)
+                    batch_recon_from_prior, scale_b_from_prior = decoder(
+                        z_from_prior)
+
+                    _, loss_dis_fake_from_prior, _ = losses.adversarial(
+                        discriminator=discriminator,
+                        real_recon_batch=batch_data,
+                        fake_recon_batch=batch_recon_from_prior)
+
+                    # TODO(nina): Add L2 norm on discriminator's activations
+                    # discriminator_activations =
+
+                    loss_reconstruction = (
+                        loss_dis_real + loss_dis_fake_recon
+                        + loss_dis_fake_from_prior)
                 else:
                     raise NotImplementedError(
                         'This reconstruction loss is not implemented.')
@@ -403,10 +456,11 @@ class Train(luigi.Task):
                     batch_recon_from_prior, scale_b_from_prior = decoder(
                         z_from_prior)
 
-                    loss_regularization = losses.adversarial(
+                    loss_real, loss_fake_from_prior, _ = losses.adversarial(
                         discriminator=discriminator,
                         real_recon_batch=batch_recon_from_prior,
                         fake_recon_batch=batch_recon)
+                    loss_regularization = loss_real + loss_fake_from_prior
 
                 elif regularization == 'wasserstein':
                     raise NotImplementedError(
