@@ -56,6 +56,18 @@ if opt.cuda:
 
 cudnn.benchmark = True
 
+# module visualizations.py
+from datetime import datetime
+
+
+vis = visdom.Visdom()
+loss_window = vis.line(X=torch.zeros((1,)).cpu(),
+		       Y=torch.zeros((1)).cpu(),
+		       opts=dict(xlabel='item',
+				 ylabel='vae err',
+				 title='vae err',
+				 legend=['loss']))
+
 if torch.cuda.is_available() and not opt.cuda:
     print("WARNING: You have a CUDA device, so you should probably run with --cuda")
 
@@ -343,6 +355,10 @@ for epoch in range(opt.niter):
         print('[%d/%d][%d/%d] Loss_VAE: %.4f Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
               % (epoch, opt.niter, i, len(dataloader),
                  VAEerr.data.item(), errD.data.item(), errG.data.item(), D_x, D_G_z1, D_G_z2))
+    vis.line(X=torch.ones((1, 1)).cpu()*epoch,
+            Y=torch.Tensor([VAEerr.data.item()]).unsqueeze(0).cpu(),
+            win=loss_window,
+            update='append')
 
     if epoch%opt.saveInt == 0 and epoch!=0:
         torch.save(netG.state_dict(), '%s/netG_epoch_%d.pth' % (opt.outf, epoch))
