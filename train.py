@@ -13,6 +13,7 @@ import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import visdom
 from torch.autograd import Variable
+import numpy as np
 
 vis = visdom.Visdom()
 vis.env = 'vae_dcgan'
@@ -27,7 +28,7 @@ parser.add_argument('--imageSize', type=int, default=64, help='the height / widt
 parser.add_argument('--nz', type=int, default=100, help='size of the latent z vector')
 parser.add_argument('--ngf', type=int, default=64)
 parser.add_argument('--ndf', type=int, default=64)
-parser.add_argument('--niter', type=int, default=25, help='number of epochs to train for')
+parser.add_argument('--niter', type=int, default=50, help='number of epochs to train for')
 parser.add_argument('--saveInt', type=int, default=25, help='number of epochs between checkpoints')
 parser.add_argument('--lr', type=float, default=0.0002, help='learning rate, default=0.0002')
 parser.add_argument('--beta1', type=float, default=0.5, help='beta1 for adam. default=0.5')
@@ -56,17 +57,15 @@ if opt.cuda:
 
 cudnn.benchmark = True
 
-# module visualizations.py
-from datetime import datetime
 
 
-vis = visdom.Visdom()
-loss_window = vis.line(X=torch.zeros((1,)).cpu(),
-		       Y=torch.zeros((1)).cpu(),
-		       opts=dict(xlabel='item',
-				 ylabel='vae err',
-				 title='vae err',
-				 legend=['loss']))
+vis2 = visdom.Visdom()
+loss_window = vis2.line(X=torch.zeros((1,)).cpu(),
+		        Y=torch.zeros((1)).cpu(),
+		        opts=dict(xlabel='item',
+		 		  ylabel='vae err',
+		     		  title='vae err',
+		  		  legend=['loss']))
 
 if torch.cuda.is_available() and not opt.cuda:
     print("WARNING: You have a CUDA device, so you should probably run with --cuda")
@@ -96,6 +95,10 @@ elif opt.dataset == 'cifar10':
                                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
                            ])
     )
+
+dataset = np.load('/scratch/users/nmiolane/train_64x64.npy')
+dataset = torch.Tensor(dataset)
+dataset = torch.utils.data.TensorDataset(dataset)
 assert dataset
 dataloader = torch.utils.data.DataLoader(dataset, batch_size=opt.batchSize,
                                          shuffle=True, num_workers=int(opt.workers))
@@ -104,7 +107,7 @@ ngpu = int(opt.ngpu)
 nz = int(opt.nz)
 ngf = int(opt.ngf)
 ndf = int(opt.ndf)
-nc = 3
+nc = 1
 
 
 # custom weights initialization called on netG and netD
@@ -294,7 +297,8 @@ for epoch in range(opt.niter):
         ###########################
         # train with real
         netD.zero_grad()
-        real_cpu, _ = data
+        real_cpu = data[0]
+
         batch_size = real_cpu.size(0)
         input.data.resize_(real_cpu.size()).copy_(real_cpu)
         label.data.resize_(real_cpu.size(0)).fill_(real_label)
