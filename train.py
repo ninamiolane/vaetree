@@ -23,12 +23,12 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', required=True, help='cifar10 | lsun | imagenet | folder | lfw ')
 parser.add_argument('--dataroot', required=True, help='path to dataset')
 parser.add_argument('--workers', type=int, help='number of data loading workers', default=2)
-parser.add_argument('--batchSize', type=int, default=64, help='input batch size')
-parser.add_argument('--imageSize', type=int, default=64, help='the height / width of the input image to network')
+parser.add_argument('--batchSize', type=int, default=128, help='input batch size')
+parser.add_argument('--imageSize', type=int, default=128, help='the height / width of the input image to network')
 parser.add_argument('--nz', type=int, default=100, help='size of the latent z vector')
 parser.add_argument('--ngf', type=int, default=64)
 parser.add_argument('--ndf', type=int, default=64)
-parser.add_argument('--niter', type=int, default=50, help='number of epochs to train for')
+parser.add_argument('--niter', type=int, default=25, help='number of epochs to train for')
 parser.add_argument('--saveInt', type=int, default=25, help='number of epochs between checkpoints')
 parser.add_argument('--lr', type=float, default=0.0002, help='learning rate, default=0.0002')
 parser.add_argument('--beta1', type=float, default=0.5, help='beta1 for adam. default=0.5')
@@ -60,6 +60,7 @@ cudnn.benchmark = True
 
 
 vis2 = visdom.Visdom()
+vis2.env = 'losses'
 loss_window = vis2.line(X=torch.zeros((1,)).cpu(),
 		        Y=torch.zeros((1)).cpu(),
 		        opts=dict(xlabel='item',
@@ -96,7 +97,9 @@ elif opt.dataset == 'cifar10':
                            ])
     )
 
-dataset = np.load('/scratch/users/nmiolane/train_64x64.npy')
+dataset = np.load('/scratch/users/nmiolane/train_128x128.npy')
+dataset[dataset > 1] = 1
+dataset = (dataset * 0.5) - 0.5
 dataset = torch.Tensor(dataset)
 dataset = torch.utils.data.TensorDataset(dataset)
 assert dataset
@@ -339,7 +342,8 @@ for epoch in range(opt.niter):
 
         MSEerr = MSECriterion(rec,input)
 
-        VAEerr = KLD + MSEerr;
+        # TODO(johmathe): Statistician needed. HACK alert.
+        VAEerr = (KLD + MSEerr)
         VAEerr.backward()
         optimizerG.step()
 
@@ -364,6 +368,5 @@ for epoch in range(opt.niter):
             win=loss_window,
             update='append')
 
-    if epoch%opt.saveInt == 0 and epoch!=0:
-        torch.save(netG.state_dict(), '%s/netG_epoch_%d.pth' % (opt.outf, epoch))
-        torch.save(netD.state_dict(), '%s/netD_epoch_%d.pth' % (opt.outf, epoch))
+    torch.save(netG.state_dict(), '%s/netG_epoch_%d.pth' % (opt.outf, epoch))
+    torch.save(netD.state_dict(), '%s/netD_epoch_%d.pth' % (opt.outf, epoch))
