@@ -18,6 +18,7 @@ import tempfile
 import torch
 import torch.autograd
 import torch.nn as tnn
+import torch.optim
 import torch.utils.data
 
 import losses
@@ -66,6 +67,9 @@ TEMPLATE_ENVIRONMENT = jinja2.Environment(
     autoescape=False,
     loader=LOADER)
 TEMPLATE_NAME = 'report.jinja2'
+
+
+method = 'vaegan'
 
 
 class FetchOpenNeuroDataset(luigi.Task):
@@ -531,101 +535,235 @@ class Train(luigi.Task):
         test_loader = torch.utils.data.DataLoader(
             test_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
 
-        vae = nn.VAE(
-            n_channels=1,
-            latent_dim=LATENT_DIM,
-            in_w=train.shape[2],
-            in_h=train.shape[3]).to(DEVICE)
+        if method == 'original':
 
-        modules = {}
-        modules['encoder'] = vae.encoder
-        modules['decoder'] = vae.decoder
-
-        if RECONSTRUCTION == 'adversarial':
-            discriminator = nn.Discriminator(
+            vae = nn.VAE(
+                n_channels=1,
                 latent_dim=LATENT_DIM,
-                in_channels=1,
                 in_w=train.shape[2],
                 in_h=train.shape[3]).to(DEVICE)
-            modules['discriminator_reconstruction'] = discriminator
 
-        if REGULARIZATION == 'adversarial':
-            discriminator = nn.Discriminator(
-                latent_dim=LATENT_DIM,
-                in_channels=1,
-                in_w=train.shape[2],
-                in_h=train.shape[3]).to(DEVICE)
-            modules['discriminator_regularization'] = discriminator
+            modules = {}
+            modules['encoder'] = vae.encoder
+            modules['decoder'] = vae.decoder
 
-        optimizers = {}
-        optimizers['encoder'] = torch.optim.Adam(
-            modules['encoder'].parameters(), lr=LR)
-        optimizers['decoder'] = torch.optim.Adam(
-            modules['decoder'].parameters(), lr=LR)
+            if RECONSTRUCTION == 'adversarial':
+                discriminator = nn.Discriminator(
+                    latent_dim=LATENT_DIM,
+                    in_channels=1,
+                    in_w=train.shape[2],
+                    in_h=train.shape[3]).to(DEVICE)
+                modules['discriminator_reconstruction'] = discriminator
 
-        if RECONSTRUCTION == 'adversarial':
-            optimizers['discriminator_reconstruction'] = torch.optim.Adam(
-                modules['discriminator_reconstruction'].parameters(), lr=LR)
+            if REGULARIZATION == 'adversarial':
+                discriminator = nn.Discriminator(
+                    latent_dim=LATENT_DIM,
+                    in_channels=1,
+                    in_w=train.shape[2],
+                    in_h=train.shape[3]).to(DEVICE)
+                modules['discriminator_regularization'] = discriminator
 
-        if REGULARIZATION == 'adversarial':
-            optimizers['discriminator_regularization'] = torch.optim.Adam(
-                modules['discriminator_regularization'].parameters(), lr=LR)
+            optimizers = {}
+            optimizers['encoder'] = torch.optim.Adam(
+                modules['encoder'].parameters(), lr=LR)
+            optimizers['decoder'] = torch.optim.Adam(
+                modules['decoder'].parameters(), lr=LR)
 
-        def init_xavier_normal(m):
-            if type(m) == tnn.Linear:
-                tnn.init.xavier_normal_(m.weight)
-            if type(m) == tnn.Conv2d:
-                tnn.init.xavier_normal_(m.weight)
+            if RECONSTRUCTION == 'adversarial':
+                optimizers['discriminator_reconstruction'] = torch.optim.Adam(
+                    modules['discriminator_reconstruction'].parameters(), lr=LR)
 
-        def init_kaiming_normal(m):
-            if type(m) == tnn.Linear:
-                tnn.init.kaiming_normal_(m.weight)
-            if type(m) == tnn.Conv2d:
-                tnn.init.kaiming_normal_(m.weight)
+            if REGULARIZATION == 'adversarial':
+                optimizers['discriminator_regularization'] = torch.optim.Adam(
+                    modules['discriminator_regularization'].parameters(), lr=LR)
 
-        for module in modules.values():
-            if WEIGHTS_INIT == 'xavier':
-                module.apply(init_xavier_normal)
-            elif WEIGHTS_INIT == 'kaiming':
-                module.apply(init_kaiming_normal)
-            else:
-                raise NotImplementedError(
-                    'This weight initialization is not implemented.')
+            def init_xavier_normal(m):
+                if type(m) == tnn.Linear:
+                    tnn.init.xavier_normal_(m.weight)
+                if type(m) == tnn.Conv2d:
+                    tnn.init.xavier_normal_(m.weight)
 
-        train_losses_all_epochs = []
-        test_losses_all_epochs = []
-        for epoch in range(N_EPOCHS):
-            train_losses = self.train(
-                epoch, train_loader, modules, optimizers,
-                RECONSTRUCTION, REGULARIZATION)
-            test_losses = self.test(
-                epoch, test_loader, modules,
-                RECONSTRUCTION, REGULARIZATION)
+            def init_kaiming_normal(m):
+                if type(m) == tnn.Linear:
+                    tnn.init.kaiming_normal_(m.weight)
+                if type(m) == tnn.Conv2d:
+                    tnn.init.kaiming_normal_(m.weight)
 
-            for module_name, module in modules.items():
-                module_path = os.path.join(
-                    self.models_path,
-                    'epoch_{}_{}_'
-                    'train_loss_{:.4f}_test_loss_{:.4f}.pth'.format(
-                        epoch, module_name,
-                        train_losses['loss'], test_losses['loss']))
-                torch.save(module, module_path)
+            for module in modules.values():
+                if WEIGHTS_INIT == 'xavier':
+                    module.apply(init_xavier_normal)
+                elif WEIGHTS_INIT == 'kaiming':
+                    module.apply(init_kaiming_normal)
+                else:
+                    raise NotImplementedError(
+                        'This weight initialization is not implemented.')
 
-            train_test_path = os.path.join(
-                self.losses_path, 'epoch_{}.pkl'.format(epoch))
-            with open(train_test_path, 'wb') as pkl:
-                pickle.dump(
-                    {'train_losses': train_losses, 'test_losses': test_losses},
-                    pkl)
+            train_losses_all_epochs = []
+            test_losses_all_epochs = []
+            for epoch in range(N_EPOCHS):
+                train_losses = self.train(
+                    epoch, train_loader, modules, optimizers,
+                    RECONSTRUCTION, REGULARIZATION)
+                test_losses = self.test(
+                    epoch, test_loader, modules,
+                    RECONSTRUCTION, REGULARIZATION)
 
-            train_losses_all_epochs.append(train_losses)
-            test_losses_all_epochs.append(test_losses)
+                for module_name, module in modules.items():
+                    module_path = os.path.join(
+                        self.models_path,
+                        'epoch_{}_{}_'
+                        'train_loss_{:.4f}_test_loss_{:.4f}.pth'.format(
+                            epoch, module_name,
+                            train_losses['loss'], test_losses['loss']))
+                    torch.save(module, module_path)
 
-        with open(self.output()['train_losses'].path, 'wb') as pkl:
-            pickle.dump(train_losses_all_epochs, pkl)
+                train_test_path = os.path.join(
+                    self.losses_path, 'epoch_{}.pkl'.format(epoch))
+                with open(train_test_path, 'wb') as pkl:
+                    pickle.dump(
+                        {'train_losses': train_losses,
+                         'test_losses': test_losses},
+                        pkl)
 
-        with open(self.output()['test_losses'].path, 'wb') as pkl:
-            pickle.dump(test_losses_all_epochs, pkl)
+                train_losses_all_epochs.append(train_losses)
+                test_losses_all_epochs.append(test_losses)
+
+            with open(self.output()['train_losses'].path, 'wb') as pkl:
+                pickle.dump(train_losses_all_epochs, pkl)
+
+            with open(self.output()['test_losses'].path, 'wb') as pkl:
+                pickle.dump(test_losses_all_epochs, pkl)
+
+        elif method == 'vaegan':
+            dataset = np.load('/scratch/users/nmiolane/train_128x128.npy')
+            dataset[dataset > 1] = 1
+            dataset = (dataset * 0.5) - 0.5
+            dataset = torch.Tensor(dataset)
+            dataset = torch.utils.data.TensorDataset(dataset)
+            assert dataset
+            dataloader = torch.utils.data.DataLoader(
+                dataset,
+                batch_size=nn.batchSize,
+                shuffle=True,
+                num_workers=int(nn.workers))
+
+            # custom weights initialization called on netG and netD
+            def weights_init(m):
+                classname = m.__class__.__name__
+                if classname.find('Conv') != -1:
+                    m.weight.data.normal_(0.0, 0.02)
+                elif classname.find('BatchNorm') != -1:
+                    m.weight.data.normal_(1.0, 0.02)
+                    m.bias.data.fill_(0)
+
+            netG = nn._netG(nn.imageSize, nn.ngpu)  # image size, ngpu
+            netG.apply(weights_init)
+            print(netG)
+
+            netD = nn._netD(nn.imageSize, nn.ngpu)
+            netD.apply(weights_init)
+            print(netD)
+
+            criterion = torch.nn.BCELoss()
+            MSECriterion = torch.nn.MSELoss()
+
+            input = torch.FloatTensor(nn.batchSize, 3, nn.imageSize, nn.imageSize)
+            noise = torch.FloatTensor(nn.batchSize, nn.nz, 1, 1)
+            fixed_noise = torch.FloatTensor(nn.batchSize, nn.nz, 1, 1).normal_(0, 1)
+            label = torch.FloatTensor(nn.batchSize)
+            real_label = 1
+            fake_label = 0
+
+            if CUDA:
+                netD.cuda()
+                netG.make_cuda()
+                criterion.cuda()
+                MSECriterion.cuda()
+                input, label = input.cuda(), label.cuda()
+                noise, fixed_noise = noise.cuda(), fixed_noise.cuda()
+
+            input = torch.autograd.Variable(input)
+            label = torch.autograd.Variable(label)
+            noise = torch.autograd.Variable(noise)
+            fixed_noise = torch.autograd.Variable(fixed_noise)
+
+            # setup optimizer
+            optimizerD = torch.optim.Adam(netD.parameters(), lr=nn.lr, betas=(nn.beta1, 0.999))
+            optimizerG = torch.optim.Adam(netG.parameters(), lr=nn.lr, betas=(nn.beta1, 0.999))
+
+            for epoch in range(nn.niter):
+                for i, data in enumerate(dataloader, 0):
+                    ############################
+                    # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
+                    ###########################
+                    # train with real
+                    netD.zero_grad()
+                    real_cpu = data[0]
+
+                    batch_size = real_cpu.size(0)
+                    input.data.resize_(real_cpu.size()).copy_(real_cpu)
+                    label.data.resize_(real_cpu.size(0)).fill_(real_label)
+
+                    output = netD(input)
+                    errD_real = criterion(output, label)
+                    errD_real.backward()
+                    D_x = output.data.mean()
+
+                    # train with fake
+                    noise.data.resize_(batch_size, nn.nz, 1, 1)
+                    noise.data.normal_(0, 1)
+                    gen = netG.decoder(noise)
+                    label.data.fill_(fake_label)
+                    output = netD(gen.detach())
+                    errD_fake = criterion(output, label)
+                    errD_fake.backward()
+                    D_G_z1 = output.data.mean()
+                    errD = errD_real + errD_fake
+                    optimizerD.step()
+
+                    ############################
+                    # (2) Update G network: VAE
+                    ###########################
+
+                    netG.zero_grad()
+
+                    encoded = netG.encoder(input)
+                    mu = encoded[0]
+                    logvar = encoded[1]
+
+                    KLD_element = mu.pow(2).add_(logvar.exp()).mul_(-1).add_(1).add_(logvar)
+                    KLD = torch.sum(KLD_element).mul_(-0.5)
+
+                    sampled = netG.sampler(encoded)
+                    rec = netG.decoder(sampled)
+
+                    MSEerr = MSECriterion(rec, input)
+
+                    # TODO(johmathe): Statistician needed. HACK alert.
+                    VAEerr = (KLD + MSEerr)
+                    VAEerr.backward()
+                    optimizerG.step()
+
+                    ############################
+                    # (3) Update G network: maximize log(D(G(z)))
+                    ###########################
+
+                    label.data.fill_(real_label)  # fake labels are real for generator cost
+
+                    rec = netG(input)  # this tensor is freed from mem at this point
+                    output = netD(rec)
+                    errG = criterion(output, label)
+                    errG.backward()
+                    D_G_z2 = output.data.mean()
+                    optimizerG.step()
+
+                    print('[%d/%d][%d/%d] Loss_VAE: %.4f Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
+                          % (epoch, nn.niter, i, len(dataloader),
+                             VAEerr.data.item(), errD.data.item(), errG.data.item(), D_x, D_G_z1, D_G_z2))
+
+                    torch.save(netG.state_dict(), '%s/netG_epoch_%d.pth' % (nn.outf, epoch))
+                    torch.save(netD.state_dict(), '%s/netD_epoch_%d.pth' % (nn.outf, epoch))
+
 
     def output(self):
         return {'train_losses': luigi.LocalTarget(self.train_losses_path),
