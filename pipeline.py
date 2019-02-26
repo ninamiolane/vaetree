@@ -33,7 +33,7 @@ OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
 TRAIN_DIR = os.path.join(OUTPUT_DIR, 'training')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
-DEBUG = True
+DEBUG = False
 
 CUDA = torch.cuda.is_available()
 SEED = 12345
@@ -64,6 +64,8 @@ REAL_LABELS = torch.full((BATCH_SIZE,), 1, device=DEVICE)
 FAKE_LABELS = torch.full((BATCH_SIZE,), 0, device=DEVICE)
 
 IMAGE_SIZE = (64, 64)
+IMAGE_WIDTH = IMAGE_SIZE[0]
+IMAGE_HEIGHT = IMAGE_SIZE[1]
 
 TARGET = '/neuro/'
 
@@ -239,8 +241,8 @@ class Train(luigi.Task):
                          epoch,
                          batch_idx, n_batches, n_data, n_batch_data,
                          loss,
-                         loss_reconstruction,
-                         loss_regularization):
+                         loss_reconstruction, loss_regularization,
+                         loss_discriminator=0, loss_generator=0):
 
         loss = loss.item() / n_batch_data
         loss_reconstruction = loss_reconstruction.item() / n_batch_data
@@ -249,13 +251,17 @@ class Train(luigi.Task):
         logging.info(
             'Train Epoch: {} [{}/{} ({:.0f}%)]'
             '\tLoss: {:.6f}'
-            '\t(Reconstruction: {:.0f}%'
+            '\n(Reconstruction: {:.0f}%'
             ', Regularization: {:.0f}%)'.format(
                 epoch,
                 batch_idx * n_batch_data, n_data, 100. * batch_idx / n_batches,
                 loss,
                 100. * loss_reconstruction / loss,
                 100. * loss_regularization / loss))
+        if 'adversarial' in RECONSTRUCTIONS:
+            logging.info(
+                'Discriminator: {:.6f}; Generator: {:.6f}'.format(
+                    loss_discriminator, loss_generator))
 
     def train(self, epoch, train_loader,
               modules, optimizers,
@@ -395,7 +401,8 @@ class Train(luigi.Task):
                     self.print_train_logs(
                         epoch,
                         batch_idx, n_batches, n_data, n_batch_data,
-                        loss, loss_reconstruction, loss_regularization)
+                        loss, loss_reconstruction, loss_regularization,
+                        loss_discriminator, loss_generator)
                 else:
                     self.print_train_logs(
                         epoch,
@@ -547,19 +554,30 @@ class Train(luigi.Task):
                     total_loss_generator += loss_generator.item()
                 total_loss += loss.item()
 
+        # TODO(nina): Understand why batch_data is a list of 1 element
+        batch_data = batch_data[0].cpu()
+        batch_recon = batch_recon.cpu()
+        batch_recon_from_prior = batch_recon_from_prior.cpu()
+
         # Visdom first images of last batch
         data_win = vis.image(
-            batch_data[0].cpu()[0],
+            batch_data[0],
             win=data_win,
-            opts=dict(title='Epoch {}: Real data'.format(epoch)))
+            opts=dict(
+                title='Epoch {}: Real data'.format(epoch),
+                width=150*IMAGE_WIDTH/64, height=150*IMAGE_HEIGHT/64))
         recon_win = vis.image(
-            batch_recon[0].cpu()[0],
+            batch_recon[0],
             win=recon_win,
-            opts=dict(title='Epoch {}: Reconstructed image'.format(epoch)))
+            opts=dict(
+                title='Epoch {}: Reconstructed image'.format(epoch),
+                width=150*IMAGE_WIDTH/64, height=150*IMAGE_HEIGHT/64))
         recon_from_prior_win = vis.image(
-            batch_recon_from_prior[0].cpu()[0],
+            batch_recon_from_prior[0],
             win=recon_from_prior_win,
-            opts=dict(title='Epoch {}: Image generated from prior'.format(epoch)))
+            opts=dict(
+                title='Epoch {}: Image generated from prior'.format(epoch),
+                width=150*IMAGE_WIDTH/64, height=150*IMAGE_HEIGHT/64))
 
         # Save only last batch
         data_path = os.path.join(
@@ -569,10 +587,10 @@ class Train(luigi.Task):
         recon_from_prior_path = os.path.join(
             self.imgs_path, 'epoch_{}_recon_from_prior.npy'.format(epoch))
 
-        np.save(data_path, batch_data[0].data.cpu().numpy())
-        np.save(recon_path, batch_recon[0].data.cpu().numpy())
+        np.save(data_path, batch_data.numpy())
+        np.save(recon_path, batch_recon.numpy())
         np.save(recon_from_prior_path,
-                batch_recon_from_prior[0].data.cpu().numpy())
+                batch_recon_from_prior.numpy())
 
         average_loss_reconstruction = total_loss_reconstruction / n_data
         average_loss_regularization = total_loss_regularization / n_data
@@ -700,8 +718,8 @@ class Train(luigi.Task):
                 X=torch.zeros((1,)).cpu(),
                 Y=torch.zeros((1)).cpu(),
                 opts=dict(xlabel='Epochs',
-                          ylabel='Train loss',
-                          title='Train loss',
+                          ylabel='Test loss',
+                          title='Test loss',
                           legend=['loss']))
 
             for epoch in range(N_EPOCHS):
