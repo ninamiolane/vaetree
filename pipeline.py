@@ -433,7 +433,7 @@ class Train(luigi.Task):
              regularizations=REGULARIZATIONS):
 
         vis = visdom.Visdom()
-        vis.env = 'vae'
+        vis.env = 'images'
         data_win = None
         recon_win = None
         recon_from_prior_win = None
@@ -547,20 +547,21 @@ class Train(luigi.Task):
                     total_loss_generator += loss_generator.item()
                 total_loss += loss.item()
 
-        # Visdom and save only last batch
+        # Visdom first images of last batch
         data_win = vis.image(
-            batch_data[0].cpu(),
-            win = data_win,
-            opts=dict(title='Real data'))
+            batch_data[0].cpu()[0],
+            win=data_win,
+            opts=dict(title='Epoch {}: Real data'.format(epoch)))
         recon_win = vis.image(
-            batch_recon[0].cpu(),
-            win = recon_win,
-            opts=dict(title='Reconstructed image'))
+            batch_recon[0].cpu()[0],
+            win=recon_win,
+            opts=dict(title='Epoch {}: Reconstructed image'.format(epoch)))
         recon_from_prior_win = vis.image(
-            batch_recon_from_prior[0].cpu(),
-            win = recon_from_prior_win,
-            opts=dict(title='Image generated from prior'))
+            batch_recon_from_prior[0].cpu()[0],
+            win=recon_from_prior_win,
+            opts=dict(title='Epoch {}: Image generated from prior'.format(epoch)))
 
+        # Save only last batch
         data_path = os.path.join(
             self.imgs_path, 'epoch_{}_data.npy'.format(epoch))
         recon_path = os.path.join(
@@ -568,10 +569,10 @@ class Train(luigi.Task):
         recon_from_prior_path = os.path.join(
             self.imgs_path, 'epoch_{}_recon_from_prior.npy'.format(epoch))
 
-        np.save(data_path, batch_data.data.cpu().numpy())
-        np.save(recon_path, batch_recon.data.cpu().numpy())
+        np.save(data_path, batch_data[0].data.cpu().numpy())
+        np.save(recon_path, batch_recon[0].data.cpu().numpy())
         np.save(recon_from_prior_path,
-                batch_recon_from_prior.data.cpu().numpy())
+                batch_recon_from_prior[0].data.cpu().numpy())
 
         average_loss_reconstruction = total_loss_reconstruction / n_data
         average_loss_regularization = total_loss_regularization / n_data
@@ -685,6 +686,24 @@ class Train(luigi.Task):
 
             train_losses_all_epochs = []
             test_losses_all_epochs = []
+
+            vis2 = visdom.Visdom()
+            vis2.env = 'losses'
+            train_loss_window = vis2.line(
+                X=torch.zeros((1,)).cpu(),
+                Y=torch.zeros((1)).cpu(),
+                opts=dict(xlabel='Epochs',
+                          ylabel='Train loss',
+                          title='Train loss',
+                          legend=['loss']))
+            test_loss_window = vis2.line(
+                X=torch.zeros((1,)).cpu(),
+                Y=torch.zeros((1)).cpu(),
+                opts=dict(xlabel='Epochs',
+                          ylabel='Train loss',
+                          title='Train loss',
+                          legend=['loss']))
+
             for epoch in range(N_EPOCHS):
                 train_losses = self.train(
                     epoch, train_loader, modules, optimizers,
@@ -692,6 +711,19 @@ class Train(luigi.Task):
                 test_losses = self.test(
                     epoch, test_loader, modules,
                     RECONSTRUCTIONS, REGULARIZATIONS)
+
+                train_loss = train_losses['loss']
+                test_loss = test_losses['loss']
+                vis2.line(
+                    X=torch.ones((1, 1)).cpu()*epoch,
+                    Y=torch.Tensor([train_loss]).unsqueeze(0).cpu(),
+                    win=train_loss_window,
+                    update='append')
+                vis2.line(
+                    X=torch.ones((1, 1)).cpu()*epoch,
+                    Y=torch.Tensor([test_loss]).unsqueeze(0).cpu(),
+                    win=test_loss_window,
+                    update='append')
 
                 for module_name, module in modules.items():
                     module_path = os.path.join(
