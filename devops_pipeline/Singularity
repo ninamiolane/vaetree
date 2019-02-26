@@ -25,7 +25,8 @@ From: ../../simgs/base.simg
                  torchvision \
                  nilearn \
                  jinja2 \
-                 joblib
+                 joblib \
+                 visdom
 
 %runscript
     exec /usr/bin/python3 -u pipeline.py

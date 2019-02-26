@@ -271,12 +271,23 @@ class Train(luigi.Task):
 
         n_data = len(train_loader.dataset)
         n_batches = len(train_loader)
+
+        vis = visdom.Visdom()
+        vis.env = 'vae'
+        data_win = None
+        gen_win = None
+        rec_win = None
+
         for batch_idx, batch_data in enumerate(train_loader):
             if DEBUG:
                 if batch_idx > 1:
                     break
             batch_data = batch_data[0].to(DEVICE)
             n_batch_data = len(batch_data)
+            data_win = vis.image(
+                batch_data[0].cpu(),
+                win = data_win,
+                opts=dict(title='Real data'))
 
             for optimizer in optimizers.values():
                 optimizer.zero_grad()
@@ -649,20 +660,8 @@ class Train(luigi.Task):
                           title='vae err',
                           legend=['loss']))
 
-            dataset = np.load('/scratch/users/nmiolane/train_128x128.npy')
-            dataset[dataset > 1] = 1
-            dataset = (dataset * 0.5) - 0.5
-            dataset = torch.Tensor(dataset)
-            dataset = torch.utils.data.TensorDataset(dataset)
-            assert dataset
-            dataloader = torch.utils.data.DataLoader(
-                dataset,
-                batch_size=nn.batchSize,
-                shuffle=True,
-                num_workers=int(nn.workers))
-
             # custom weights initialization called on netG and netD
-            def weights_init(m):
+            def init_custom(m):
                 classname = m.__class__.__name__
                 if classname.find('Conv') != -1:
                     m.weight.data.normal_(0.0, 0.02)
@@ -671,11 +670,11 @@ class Train(luigi.Task):
                     m.bias.data.fill_(0)
 
             netG = nn._netG(nn.imageSize, nn.ngpu)  # image size, ngpu
-            netG.apply(weights_init)
+            netG.apply(init_custom)
             print(netG)
 
             netD = nn._netD(nn.imageSize, nn.ngpu)
-            netD.apply(weights_init)
+            netD.apply(init_custom)
             print(netD)
 
             criterion = torch.nn.BCELoss()
@@ -710,7 +709,7 @@ class Train(luigi.Task):
             rec_win = None
 
             for epoch in range(nn.niter):
-                for i, data in enumerate(dataloader, 0):
+                for i, data in enumerate(train_loader):
                     ############################
                     # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
                     ###########################
@@ -722,7 +721,11 @@ class Train(luigi.Task):
                     input.data.resize_(real_cpu.size()).copy_(real_cpu)
                     label.data.resize_(real_cpu.size(0)).fill_(real_label)
 
-                    data_win = vis.image(input.data[0].cpu()*0.5+0.5, win = data_win)
+                    data_win = vis.image(
+                        input.data[0].cpu(),
+                        win = data_win,
+                        opts=dict(title='Real data')
+                        )
 
                     output = netD(input)
                     errD_real = criterion(output, label)
@@ -781,7 +784,7 @@ class Train(luigi.Task):
                     optimizerG.step()
 
                     print('[%d/%d][%d/%d] Loss_VAE: %.4f Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
-                          % (epoch, nn.niter, i, len(dataloader),
+                          % (epoch, nn.niter, i, len(train_loader),
                              VAEerr.data.item(), errD.data.item(), errG.data.item(), D_x, D_G_z1, D_G_z2))
 
                 vis.line(X=torch.ones((1, 1)).cpu()*epoch,
@@ -789,8 +792,8 @@ class Train(luigi.Task):
                          win=loss_window,
                          update='append')
 
-		torch.save(netG.state_dict(), '%s/netG_epoch_%d.pth' % (nn.outf, epoch))
-		torch.save(netD.state_dict(), '%s/netD_epoch_%d.pth' % (nn.outf, epoch))
+                torch.save(netG.state_dict(), '%s/netG_epoch_%d.pth' % (nn.outf, epoch))
+                torch.save(netD.state_dict(), '%s/netD_epoch_%d.pth' % (nn.outf, epoch))
 
 
     def output(self):
