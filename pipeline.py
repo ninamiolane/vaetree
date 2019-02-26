@@ -279,12 +279,6 @@ class Train(luigi.Task):
         n_data = len(train_loader.dataset)
         n_batches = len(train_loader)
 
-        vis = visdom.Visdom()
-        vis.env = 'vae'
-        data_win = None
-        gen_win = None
-        rec_win = None
-
         for batch_idx, batch_data in enumerate(train_loader):
             if DEBUG:
                 if batch_idx > 1:
@@ -292,11 +286,6 @@ class Train(luigi.Task):
             batch_data = batch_data[0].to(DEVICE)
             n_batch_data = len(batch_data)
             assert n_batch_data == BATCH_SIZE
-
-            data_win = vis.image(
-                batch_data[0].cpu(),
-                win = data_win,
-                opts=dict(title='Real data'))
 
             for optimizer in optimizers.values():
                 optimizer.zero_grad()
@@ -442,12 +431,22 @@ class Train(luigi.Task):
     def test(self, epoch, test_loader, modules,
              reconstructions=RECONSTRUCTIONS,
              regularizations=REGULARIZATIONS):
+
+        vis = visdom.Visdom()
+        vis.env = 'vae'
+        data_win = None
+        recon_win = None
+        recon_from_prior_win = None
+
         for module in modules.values():
             module.eval()
 
-        total_loss = 0
         total_loss_reconstruction = 0
-        total_weighted_loss_regularization = 0
+        total_loss_regularization = 0
+        if 'adversarial' in RECONSTRUCTIONS:
+            total_loss_discriminator = 0
+            total_loss_generator = 0
+        total_loss = 0
 
         n_data = len(test_loader.dataset)
         with torch.no_grad():
@@ -465,9 +464,10 @@ class Train(luigi.Task):
                 z = nn.sample_from_q(mu, logvar).to(DEVICE)
                 batch_recon, scale_b = decoder(z)
 
-                if 'bce_on_intensities' in reconstructions:
-                    loss_reconstruction = losses.bce_on_intensities(
-                        batch_data, batch_recon, scale_b)
+                z_from_prior = nn.sample_from_prior(
+                    LATENT_DIM, n_samples=n_batch_data).to(DEVICE)
+                batch_recon_from_prior, scale_b_from_prior = decoder(
+                    z_from_prior)
 
                 if 'adversarial' in reconstructions:
                     # From:
@@ -475,91 +475,118 @@ class Train(luigi.Task):
                     # similarity metric
                     # arXiv:1512.09300v2
                     discriminator = modules['discriminator_reconstruction']
-                    loss_dis_real, loss_dis_fake_recon, _ = losses.adversarial(
-                        discriminator=discriminator,
-                        real_recon_batch=batch_data,
-                        fake_recon_batch=batch_recon)
 
-                    z_from_prior = nn.sample_from_prior(
-                        LATENT_DIM, n_samples=n_batch_data).to(DEVICE)
-                    batch_recon_from_prior, scale_b_from_prior = decoder(
-                        z_from_prior)
+                    # -- Compute Discriminator Loss
+                    predicted_labels_data = discriminator(batch_data)
+                    predicted_labels_recon = discriminator(
+                        batch_recon.detach())
+                    predicted_labels_recon_from_prior = discriminator(
+                        batch_recon_from_prior.detach())
 
-                    _, loss_dis_fake_from_prior, _ = losses.adversarial(
-                        discriminator=discriminator,
-                        real_recon_batch=batch_data,
-                        fake_recon_batch=batch_recon_from_prior)
+                    loss_discriminator_data = F.binary_cross_entropy(
+                        predicted_labels_data,
+                        REAL_LABELS)
+                    loss_discriminator_recon = F.binary_cross_entropy(
+                        predicted_labels_recon,
+                        FAKE_LABELS)
+                    loss_discriminator_recon_from_prior = F.binary_cross_entropy(
+                        predicted_labels_recon_from_prior,
+                        FAKE_LABELS)
 
-                    # TODO(nina): Add L2 norm on discriminator's activations
-                    # discriminator_activations =
+                    # TODO(nina): add loss_discriminator_recon
+                    loss_discriminator = (
+                        loss_discriminator_data
+                        + loss_discriminator_recon_from_prior)
 
-                    loss_reconstruction = (
-                        loss_dis_real + loss_dis_fake_recon
-                        + loss_dis_fake_from_prior)
-                else:
-                    raise NotImplementedError(
-                        'This reconstruction loss is not implemented.')
+                    # -- Compute Generator/Decoder Loss
+                    # Note that we need to do a forward pass with detached vars
+                    # in order not to propagate gradients through the encoder
+                    batch_recon_detached, _ = decoder(z.detach())
+                    # Note that we don't need to do it for batch_recon_from_prior
+                    # as it doesn't come from the encoder
+
+                    predicted_labels_recon = discriminator(
+                        batch_recon_detached)
+                    predicted_labels_recon_from_prior = discriminator(
+                        batch_recon_from_prior)
+
+                    loss_generator_recon = F.binary_cross_entropy(
+                        predicted_labels_recon,
+                        REAL_LABELS)
+
+                    # TODO(nina): add loss_generator_recon_from_prior
+                    loss_generator = loss_generator_recon
+
+                if 'bce_on_intensities' in reconstructions:
+                    loss_reconstruction = losses.bce_on_intensities(
+                        batch_data, batch_recon, scale_b)
 
                 if 'kullbackleibler' in regularizations:
                     loss_regularization = losses.kullback_leibler(
                         mu, logvar)
 
                 if 'adversarial' in regularizations:
+                    # From: Adversarial autoencoders
+                    # https://arxiv.org/pdf/1511.05644.pdf
                     discriminator = modules['discriminator_regularization']
-
-                    z_from_prior = nn.sample_from_prior(
-                        LATENT_DIM, n_samples=n_batch_data).to(DEVICE)
-                    batch_recon_from_prior, scale_b_from_prior = decoder(
-                        z_from_prior)
-
-                    loss_real, loss_fake_from_prior, _ = losses.adversarial(
-                        discriminator=discriminator,
-                        real_recon_batch=batch_recon_from_prior,
-                        fake_recon_batch=batch_recon)
-                    loss_regularization = loss_real + loss_fake_from_prior
+                    raise NotImplementedError(
+                        'Adversarial regularization not implemented.')
 
                 if 'wasserstein' in regularizations:
                     raise NotImplementedError(
                         'Wasserstein regularization not implemented.')
-                else:
-                    raise NotImplementedError(
-                        'This regularization loss is not implemented.')
 
-                weighted_loss_regularization = (
-                    REGU_FACTOR * loss_regularization)
-                loss = loss_reconstruction + weighted_loss_regularization
+                loss = loss_reconstruction + loss_regularization
+                if 'adversarial' in RECONSTRUCTIONS:
+                    loss += loss_discriminator + loss_generator
 
                 total_loss_reconstruction += loss_reconstruction.item()
-                total_weighted_loss_regularization += (
-                    weighted_loss_regularization.item())
+                total_loss_regularization += loss_regularization.item()
+                if 'adversarial' in RECONSTRUCTIONS:
+                    total_loss_discriminator += loss_discriminator.item()
+                    total_loss_generator += loss_generator.item()
                 total_loss += loss.item()
 
-                data_path = os.path.join(
-                    self.imgs_path, 'epoch_{}_data.npy'.format(epoch))
-                recon_path = os.path.join(
-                    self.imgs_path, 'epoch_{}_recon.npy'.format(epoch))
+        # Visdom and save only last batch
+        data_win = vis.image(
+            batch_data[0].cpu(),
+            win = data_win,
+            opts=dict(title='Real data'))
+        recon_win = vis.image(
+            batch_recon[0].cpu(),
+            win = recon_win,
+            opts=dict(title='Reconstructed image'))
+        recon_from_prior_win = vis.image(
+            batch_recon_from_prior[0].cpu(),
+            win = recon_from_prior_win,
+            opts=dict(title='Image generated from prior'))
 
-                np.save(data_path, batch_data.data.cpu().numpy())
-                np.save(recon_path, batch_recon.data.cpu().numpy())
+        data_path = os.path.join(
+            self.imgs_path, 'epoch_{}_data.npy'.format(epoch))
+        recon_path = os.path.join(
+            self.imgs_path, 'epoch_{}_recon.npy'.format(epoch))
+        recon_from_prior_path = os.path.join(
+            self.imgs_path, 'epoch_{}_recon_from_prior.npy'.format(epoch))
 
-                if 'adversarial' in regularizations:
-                    recon_from_prior_path = os.path.join(
-                        self.imgs_path,
-                        'epoch_{}_recon_from_prior.npy'.format(epoch))
-                    np.save(
-                        recon_from_prior_path,
-                        batch_recon_from_prior.data.cpu().numpy())
+        np.save(data_path, batch_data.data.cpu().numpy())
+        np.save(recon_path, batch_recon.data.cpu().numpy())
+        np.save(recon_from_prior_path,
+                batch_recon_from_prior.data.cpu().numpy())
 
         average_loss_reconstruction = total_loss_reconstruction / n_data
-        average_weighted_loss_regularization = (
-            total_weighted_loss_regularization / n_data)
+        average_loss_regularization = total_loss_regularization / n_data
+        if 'adversarial' in RECONSTRUCTIONS:
+            average_loss_discriminator = total_loss_discriminator / n_data
+            average_loss_generator = total_loss_generator / n_data
         average_loss = total_loss / n_data
         print('====> Test set loss: {:.4f}'.format(average_loss))
 
         test_losses = {}
         test_losses['loss_reconstruction'] = average_loss_reconstruction
-        test_losses['weighted_loss_regularization'] = (
-            average_weighted_loss_regularization)
+        test_losses['loss_regularization'] = average_loss_regularization
+        if 'adversarial' in RECONSTRUCTIONS:
+            test_losses['loss_discriminator'] = average_loss_discriminator
+            test_losses['loss_generator'] = average_loss_generator
         test_losses['loss'] = average_loss
         return test_losses
 
@@ -631,7 +658,9 @@ class Train(luigi.Task):
 
             if 'adversarial' in REGULARIZATIONS:
                 optimizers['discriminator_regularization'] = torch.optim.Adam(
-                    modules['discriminator_regularization'].parameters(), lr=LR)
+                    modules['discriminator_regularization'].parameters(),
+                    lr=LR,
+                    betas=(nn.beta1, 0.999))
 
             def init_xavier_normal(m):
                 if type(m) == tnn.Linear:
@@ -660,35 +689,35 @@ class Train(luigi.Task):
                 train_losses = self.train(
                     epoch, train_loader, modules, optimizers,
                     RECONSTRUCTIONS, REGULARIZATIONS)
-                #test_losses = self.test(
-                #     epoch, test_loader, modules,
-                #    RECONSTRUCTIONS, REGULARIZATIONS)
+                test_losses = self.test(
+                    epoch, test_loader, modules,
+                    RECONSTRUCTIONS, REGULARIZATIONS)
 
-                #for module_name, module in modules.items():
-                #    module_path = os.path.join(
-                #        self.models_path,
-                #        'epoch_{}_{}_'
-                #        'train_loss_{:.4f}_test_loss_{:.4f}.pth'.format(
-                #            epoch, module_name,
-                #            train_losses['loss'], test_losses['loss']))
-                #    torch.save(module, module_path)
+                for module_name, module in modules.items():
+                    module_path = os.path.join(
+                        self.models_path,
+                        'epoch_{}_{}_'
+                        'train_loss_{:.4f}_test_loss_{:.4f}.pth'.format(
+                            epoch, module_name,
+                            train_losses['loss'], test_losses['loss']))
+                    torch.save(module, module_path)
 
-                #train_test_path = os.path.join(
-                #    self.losses_path, 'epoch_{}.pkl'.format(epoch))
-                #with open(train_test_path, 'wb') as pkl:
-                #    pickle.dump(
-                #        {'train_losses': train_losses,
-                #         'test_losses': test_losses},
-                #        pkl)
+                train_test_path = os.path.join(
+                    self.losses_path, 'epoch_{}.pkl'.format(epoch))
+                with open(train_test_path, 'wb') as pkl:
+                    pickle.dump(
+                        {'train_losses': train_losses,
+                         'test_losses': test_losses},
+                        pkl)
 
                 train_losses_all_epochs.append(train_losses)
-                #test_losses_all_epochs.append(test_losses)
+                test_losses_all_epochs.append(test_losses)
 
             with open(self.output()['train_losses'].path, 'wb') as pkl:
                 pickle.dump(train_losses_all_epochs, pkl)
 
-            #with open(self.output()['test_losses'].path, 'wb') as pkl:
-            #    pickle.dump(test_losses_all_epochs, pkl)
+            with open(self.output()['test_losses'].path, 'wb') as pkl:
+                pickle.dump(test_losses_all_epochs, pkl)
 
         elif method == 'vaegan':
             vis = visdom.Visdom()
@@ -839,10 +868,9 @@ class Train(luigi.Task):
                 torch.save(netG.state_dict(), '%s/netG_epoch_%d.pth' % (nn.outf, epoch))
                 torch.save(netD.state_dict(), '%s/netD_epoch_%d.pth' % (nn.outf, epoch))
 
-
     def output(self):
-        return {'train_losses': luigi.LocalTarget(self.train_losses_path)}
-                #'test_losses': luigi.LocalTarget(self.test_losses_path)}
+        return {'train_losses': luigi.LocalTarget(self.train_losses_path),
+                'test_losses': luigi.LocalTarget(self.test_losses_path)}
 
 
 class Report(luigi.Task):
