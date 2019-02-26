@@ -5,13 +5,6 @@ import torch.nn
 from torch.nn import functional as F
 
 
-CUDA = torch.cuda.is_available()
-DEVICE = torch.device("cuda" if CUDA else "cpu")
-
-REAL_LABEL = 1
-FAKE_LABEL = 0
-
-
 def bce_on_intensities(x, recon_x, scale_b):
     """BCE summed over the voxels intensities."""
     bce = torch.sum(
@@ -30,33 +23,3 @@ def vae_loss(x, recon_x, scale_b, mu, logvar):
     bce = bce_on_intensities(x, recon_x, scale_b)
     kld = kullback_leibler(mu, logvar)
     return bce + kld
-
-
-def adversarial(discriminator, real_recon_batch, fake_recon_batch):
-    batch_size = real_recon_batch.shape[0]
-    fake_batch_size = fake_recon_batch.shape[0]
-    assert batch_size == fake_batch_size
-
-    real_labels = torch.full(
-        (batch_size,), REAL_LABEL, device=DEVICE)
-    fake_labels = torch.full(
-        (batch_size,), FAKE_LABEL, device=DEVICE)
-
-    # discriminator - real
-    predicted_labels_real = discriminator(real_recon_batch)
-    loss_discriminator_real = F.binary_cross_entropy(
-        predicted_labels_real,
-        real_labels)
-
-    # discriminator - fake
-    predicted_labels_fake = discriminator(fake_recon_batch)
-    loss_discriminator_fake = F.binary_cross_entropy(
-        predicted_labels_fake,
-        fake_labels)
-
-    # generator/decoder - wants to fool the discriminator
-    loss_generator = F.binary_cross_entropy(
-        predicted_labels_fake,
-        real_labels)
-
-    return loss_discriminator_real, loss_discriminator_fake, loss_generator
