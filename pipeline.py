@@ -33,7 +33,7 @@ OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
 TRAIN_DIR = os.path.join(OUTPUT_DIR, 'training')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
-DEBUG = False
+DEBUG = True
 
 CUDA = torch.cuda.is_available()
 SEED = 12345
@@ -244,24 +244,28 @@ class Train(luigi.Task):
                          loss_reconstruction, loss_regularization,
                          loss_discriminator=0, loss_generator=0):
 
-        loss = loss.item() / n_batch_data
-        loss_reconstruction = loss_reconstruction.item() / n_batch_data
-        loss_regularization = (
-            loss_regularization.item() / n_batch_data)
+        assert loss == loss_reconstruction + loss_regularization + loss_discriminator + loss_generator
+        loss = loss / n_batch_data
+        loss_reconstruction = loss_reconstruction / n_batch_data
+        loss_regularization = loss_regularization / n_batch_data
+        loss_discriminator = loss_discriminator / n_batch_data
+        loss_generator = loss_generator / n_batch_data
+        assert loss == loss_reconstruction + loss_regularization + loss_discriminator + loss_generator
         logging.info(
             'Train Epoch: {} [{}/{} ({:.0f}%)]'
             '\tLoss: {:.6f}'
-            '\n(Reconstruction: {:.0f}%'
-            ', Regularization: {:.0f}%)'.format(
+            '\nReconstruction: {:.6f}'
+            ', Regularization: {:.6f}'.format(
                 epoch,
                 batch_idx * n_batch_data, n_data, 100. * batch_idx / n_batches,
                 loss,
-                100. * loss_reconstruction / loss,
-                100. * loss_regularization / loss))
+                loss_reconstruction,
+                loss_regularization))
         if 'adversarial' in RECONSTRUCTIONS:
             logging.info(
                 'Discriminator: {:.6f}; Generator: {:.6f}'.format(
                     loss_discriminator, loss_generator))
+        assert loss == loss_reconstruction + loss_regularization + loss_discriminator + loss_generator
 
     def train(self, epoch, train_loader,
               modules, optimizers,
@@ -394,16 +398,19 @@ class Train(luigi.Task):
             if 'adversarial' in RECONSTRUCTIONS:
                 loss += loss_discriminator + loss_generator
 
+            assert loss == loss_reconstruction + loss_regularization + loss_discriminator + loss_generator
             if batch_idx % PRINT_INTERVAL == 0:
                 # TODO(nina): Implement print logs
                 # of discriminator and generator
                 if 'adversarial' in RECONSTRUCTIONS:
+                    print('hello')
                     self.print_train_logs(
                         epoch,
                         batch_idx, n_batches, n_data, n_batch_data,
                         loss, loss_reconstruction, loss_regularization,
                         loss_discriminator, loss_generator)
                 else:
+                    print('nothello')
                     self.print_train_logs(
                         epoch,
                         batch_idx, n_batches, n_data, n_batch_data,
