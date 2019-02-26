@@ -20,6 +20,7 @@ import torch.autograd
 import torch.nn as tnn
 import torch.optim
 import torch.utils.data
+import visdom
 
 import losses
 import metrics
@@ -635,6 +636,19 @@ class Train(luigi.Task):
                 pickle.dump(test_losses_all_epochs, pkl)
 
         elif method == 'vaegan':
+            vis = visdom.Visdom()
+            vis.env = 'vae_dcgan'
+
+            vis2 = visdom.Visdom()
+            vis2.env = 'losses'
+            loss_window = vis2.line(
+                X=torch.zeros((1,)).cpu(),
+                Y=torch.zeros((1)).cpu(),
+                opts=dict(xlabel='item',
+                          ylabel='vae err',
+                          title='vae err',
+                          legend=['loss']))
+
             dataset = np.load('/scratch/users/nmiolane/train_128x128.npy')
             dataset[dataset > 1] = 1
             dataset = (dataset * 0.5) - 0.5
@@ -691,6 +705,10 @@ class Train(luigi.Task):
             optimizerD = torch.optim.Adam(netD.parameters(), lr=nn.lr, betas=(nn.beta1, 0.999))
             optimizerG = torch.optim.Adam(netG.parameters(), lr=nn.lr, betas=(nn.beta1, 0.999))
 
+            data_win = None
+            gen_win = None
+            rec_win = None
+
             for epoch in range(nn.niter):
                 for i, data in enumerate(dataloader, 0):
                     ############################
@@ -704,15 +722,19 @@ class Train(luigi.Task):
                     input.data.resize_(real_cpu.size()).copy_(real_cpu)
                     label.data.resize_(real_cpu.size(0)).fill_(real_label)
 
+                    data_win = vis.image(input.data[0].cpu()*0.5+0.5, win = data_win)
+
                     output = netD(input)
                     errD_real = criterion(output, label)
                     errD_real.backward()
                     D_x = output.data.mean()
 
-                    # train with fake
+                    # train with fake - decoding noise from prior
                     noise.data.resize_(batch_size, nn.nz, 1, 1)
                     noise.data.normal_(0, 1)
                     gen = netG.decoder(noise)
+                    gen_win = vis.image(gen.data[0].cpu()*0.5+0.5, win = gen_win)
+
                     label.data.fill_(fake_label)
                     output = netD(gen.detach())
                     errD_fake = criterion(output, label)
@@ -736,6 +758,7 @@ class Train(luigi.Task):
 
                     sampled = netG.sampler(encoded)
                     rec = netG.decoder(sampled)
+                    rec_win = vis.image(rec.data[0].cpu()*0.5+0.5,win = rec_win)
 
                     MSEerr = MSECriterion(rec, input)
 
@@ -761,8 +784,13 @@ class Train(luigi.Task):
                           % (epoch, nn.niter, i, len(dataloader),
                              VAEerr.data.item(), errD.data.item(), errG.data.item(), D_x, D_G_z1, D_G_z2))
 
-                    torch.save(netG.state_dict(), '%s/netG_epoch_%d.pth' % (nn.outf, epoch))
-                    torch.save(netD.state_dict(), '%s/netD_epoch_%d.pth' % (nn.outf, epoch))
+                vis.line(X=torch.ones((1, 1)).cpu()*epoch,
+                         Y=torch.Tensor([VAEerr.data.item()]).unsqueeze(0).cpu(),
+                         win=loss_window,
+                         update='append')
+
+		torch.save(netG.state_dict(), '%s/netG_epoch_%d.pth' % (nn.outf, epoch))
+		torch.save(netD.state_dict(), '%s/netD_epoch_%d.pth' % (nn.outf, epoch))
 
 
     def output(self):
