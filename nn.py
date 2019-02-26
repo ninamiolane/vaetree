@@ -379,6 +379,8 @@ lr = 0.0002
 beta1 = 0.5
 niter = 25
 workers = 2
+outf = '.'
+
 
 class _Sampler(nn.Module):
     def __init__(self):
@@ -473,3 +475,37 @@ class _netG(nn.Module):
         self.encoder.cuda()
         self.sampler.cuda()
         self.decoder.cuda()
+
+
+class _netD(nn.Module):
+    def __init__(self, imageSize, ngpu):
+        super(_netD, self).__init__()
+        self.ngpu = ngpu
+        n = math.log2(imageSize)
+
+        assert n==round(n),'imageSize must be a power of 2'
+        assert n>=3,'imageSize must be at least 8'
+        n=int(n)
+        self.main = nn.Sequential()
+
+        # input is (nc) x 64 x 64
+        self.main.add_module('input-conv', nn.Conv2d(nc, ndf, 4, 2, 1, bias=False))
+        self.main.add_module('relu', nn.LeakyReLU(0.2, inplace=True))
+
+        # state size. (ndf) x 32 x 32
+        for i in range(n-3):
+            self.main.add_module('pyramid_{0}-{1}_conv'.format(ngf*2**(i), ngf * 2**(i+1)), nn.Conv2d(ndf * 2 ** (i), ndf * 2 ** (i+1), 4, 2, 1, bias=False))
+            self.main.add_module('pyramid_{0}_batchnorm'.format(ngf * 2**(i+1)), nn.BatchNorm2d(ndf * 2 ** (i+1)))
+            self.main.add_module('pyramid_{0}_relu'.format(ngf * 2**(i+1)), nn.LeakyReLU(0.2, inplace=True))
+
+        self.main.add_module('output-conv', nn.Conv2d(ndf * 2**(n-3), 1, 4, 1, 0, bias=False))
+        self.main.add_module('output-sigmoid', nn.Sigmoid())
+
+
+    def forward(self, input):
+        if isinstance(input.data, torch.cuda.FloatTensor) and self.ngpu > 1:
+            output = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
+        else:
+            output = self.main(input)
+
+        return output.view(-1, 1)
