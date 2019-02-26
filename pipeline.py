@@ -33,7 +33,7 @@ OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
 TRAIN_DIR = os.path.join(OUTPUT_DIR, 'training')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
-DEBUG = False
+DEBUG = True
 
 CUDA = torch.cuda.is_available()
 SEED = 12345
@@ -41,7 +41,7 @@ DEVICE = torch.device("cuda" if CUDA else "cpu")
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
-BATCH_SIZE = 128
+BATCH_SIZE = 64
 PRINT_INTERVAL = 10
 torch.backends.cudnn.benchmark = True
 
@@ -74,7 +74,7 @@ TEMPLATE_ENVIRONMENT = jinja2.Environment(
 TEMPLATE_NAME = 'report.jinja2'
 
 
-method = 'vaegan'
+method = 'original'
 
 
 class FetchOpenNeuroDataset(luigi.Task):
@@ -373,7 +373,7 @@ class Train(luigi.Task):
                     batch_data, batch_recon, scale_b)
 
                 # Fill gradients on encoder and generator
-                loss_reconstruction.backward()
+                loss_reconstruction.backward(retain_graph=True)
 
             if 'kullbackleibler' in regularizations:
                 loss_regularization = losses.kullback_leibler(mu, logvar)
@@ -390,9 +390,6 @@ class Train(luigi.Task):
             if 'wasserstein' in regularizations:
                 raise NotImplementedError(
                     'Wasserstein regularization not implemented.')
-            else:
-                raise NotImplementedError(
-                    'Regularization not implemented.')
 
             optimizers['encoder'].step()
             optimizers['decoder'].step()
