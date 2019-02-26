@@ -59,7 +59,7 @@ LR = 15e-6
 if RECONSTRUCTION == 'adversarial':
     LR = 1e-6
 
-IMAGE_SIZE = (64, 64)
+IMAGE_SIZE = (128, 128)
 
 TARGET = '/neuro/'
 
