@@ -162,8 +162,8 @@ def process_file(path, output):
 class MakeDataSet(luigi.Task):
     train_path = os.path.join(OUTPUT_DIR, 'train.npy')
     test_path = os.path.join(OUTPUT_DIR, 'test.npy')
-    first_slice = 28
-    last_slice = 228
+    first_slice = 118
+    last_slice = 138
     test_fraction = 0.2
 
     def requires(self):
