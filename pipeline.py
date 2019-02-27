@@ -334,20 +334,21 @@ class Train(luigi.Task):
                 fake_labels = torch.full((n_batch_data,), 0, device=DEVICE)
 
                 # -- Update Discriminator
-                predicted_labels_data = discriminator(batch_data)
-                predicted_labels_recon = discriminator(
+                labels_data, h_data, _ = discriminator(
+                    batch_data)
+                labels_recon, h_recon, h_logvar_recon = discriminator(
                     batch_recon.detach())
-                predicted_labels_from_prior = discriminator(
+                labels_from_prior, _, _ = discriminator(
                     batch_from_prior.detach())
 
                 loss_dis_data = F.binary_cross_entropy(
-                    predicted_labels_data,
+                    labels_data,
                     real_labels)
                 loss_dis_recon = F.binary_cross_entropy(
-                    predicted_labels_recon,
+                    labels_recon,
                     fake_labels)
                 loss_dis_from_prior = F.binary_cross_entropy(
-                    predicted_labels_from_prior,
+                    labels_from_prior,
                     fake_labels)
 
                 # TODO(nina): add loss_dis_recon
@@ -358,6 +359,12 @@ class Train(luigi.Task):
                 # Fill gradients on discriminator only
                 loss_discriminator.backward()
 
+                # Need to do optimizer step here, as gradients
+                # of the reconstruction with discriminator features
+                # may fill the discriminator's weights and we do not
+                # update the discriminator with the reconstruction loss.
+                optimizers['discriminator_reconstruction'].step()
+
                 # -- Update Generator/Decoder
                 # Note that we need to do a forward pass with detached vars
                 # in order not to propagate gradients through the encoder
@@ -365,13 +372,13 @@ class Train(luigi.Task):
                 # Note that we don't need to do it for batch_from_prior
                 # as it doesn't come from the encoder
 
-                predicted_labels_recon = discriminator(
+                labels_recon, _, _ = discriminator(
                     batch_recon_detached)
-                predicted_labels_from_prior = discriminator(
+                labels_from_prior, _ = discriminator(
                     batch_from_prior)
 
                 loss_generator_recon = F.binary_cross_entropy(
-                    predicted_labels_recon,
+                    labels_recon,
                     real_labels)
 
                 # TODO(nina): add loss_generator_from_prior
@@ -380,10 +387,25 @@ class Train(luigi.Task):
                 # Fill gradients on generator only
                 loss_generator.backward()
 
+            if 'mse_on_intensities' in reconstructions:
+                loss_reconstruction = losses.mse_on_intensities(
+                    batch_data, batch_recon, scale_b)
+
+                # Fill gradients on encoder and generator
+                loss_reconstruction.backward(retain_graph=True)
+
             if 'bce_on_intensities' in reconstructions:
                 loss_reconstruction = losses.bce_on_intensities(
                     batch_data, batch_recon, scale_b)
 
+                # Fill gradients on encoder and generator
+                loss_reconstruction.backward(retain_graph=True)
+
+            if 'l2_discriminator' in reconstructions:
+                # TODO(nina): Investigate stat interpretation
+                # of using the logvar from the recon
+                loss_reconstruction = losses.mse_on_features(
+                    h_recon, h_data, h_logvar_recon)
                 # Fill gradients on encoder and generator
                 loss_reconstruction.backward(retain_graph=True)
 
@@ -405,8 +427,6 @@ class Train(luigi.Task):
 
             optimizers['encoder'].step()
             optimizers['decoder'].step()
-            if 'adversarial' in RECONSTRUCTIONS:
-                optimizers['discriminator_reconstruction'].step()
 
             loss = loss_reconstruction + loss_regularization
             if 'adversarial' in RECONSTRUCTIONS:
@@ -420,9 +440,9 @@ class Train(luigi.Task):
                         batch_idx, n_batches, n_data, n_batch_data,
                         loss, loss_reconstruction, loss_regularization,
                         loss_discriminator, loss_generator,
-                        predicted_labels_data.mean(),
-                        predicted_labels_recon.mean(),
-                        predicted_labels_from_prior.mean())
+                        labels_data.mean(),
+                        labels_recon.mean(),
+                        labels_from_prior.mean())
                 else:
                     self.print_train_logs(
                         epoch,
@@ -529,20 +549,20 @@ class Train(luigi.Task):
                     fake_labels = torch.full((n_batch_data,), 0, device=DEVICE)
 
                     # -- Compute Discriminator Loss
-                    predicted_labels_data = discriminator(batch_data)
-                    predicted_labels_recon = discriminator(
+                    labels_data, h_data, _ = discriminator(batch_data)
+                    labels_recon, h_recon, h_logvar_recon = discriminator(
                         batch_recon.detach())
-                    predicted_labels_from_prior = discriminator(
+                    labels_from_prior = discriminator(
                         batch_from_prior.detach())
 
                     loss_dis_data = F.binary_cross_entropy(
-                        predicted_labels_data,
+                        labels_data,
                         real_labels)
                     loss_dis_recon = F.binary_cross_entropy(
-                        predicted_labels_recon,
+                        labels_recon,
                         fake_labels)
                     loss_dis_from_prior = F.binary_cross_entropy(
-                        predicted_labels_from_prior,
+                        labels_from_prior,
                         fake_labels)
 
                     # TODO(nina): add loss_dis_recon
@@ -558,21 +578,31 @@ class Train(luigi.Task):
                     # batch_from_prior
                     # as it doesn't come from the encoder
 
-                    predicted_labels_recon = discriminator(
+                    labels_recon, _, _ = discriminator(
                         batch_recon_detached)
-                    predicted_labels_from_prior = discriminator(
+                    labels_from_prior = discriminator(
                         batch_from_prior)
 
                     loss_generator_recon = F.binary_cross_entropy(
-                        predicted_labels_recon,
+                        labels_recon,
                         real_labels)
 
                     # TODO(nina): add loss_generator_from_prior
                     loss_generator = loss_generator_recon
 
+                if 'mse_on_intensities' in reconstructions:
+                    loss_reconstruction = losses.mse_on_intensities(
+                        batch_data, batch_recon, scale_b)
+
                 if 'bce_on_intensities' in reconstructions:
                     loss_reconstruction = losses.bce_on_intensities(
                         batch_data, batch_recon, scale_b)
+
+                if 'l2_discriminator' in reconstructions:
+                    # TODO(nina): Investigate stat interpretation
+                    # of using the logvar from the recon
+                    loss_reconstruction = losses.mse_on_features(
+                        h_recon, h_data, h_logvar_recon)
 
                 if 'kullbackleibler' in regularizations:
                     loss_regularization = losses.kullback_leibler(

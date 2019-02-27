@@ -331,11 +331,17 @@ class Discriminator(nn.Module):
         self.fcs_infeatures = (
             self.dis4.out_channels * self.h_dis4 * self.w_dis4)
 
+        # Two layers to generate mu and log sigma2 of Gaussian
+        # Distribution of features
         self.fc1 = nn.Linear(
             in_features=self.fcs_infeatures,
             out_features=self.fcs_infeatures)
 
         self.fc2 = nn.Linear(
+            in_features=self.fcs_infeatures,
+            out_features=self.fcs_infeatures)
+
+        self.fc3 = nn.Linear(
             in_features=self.fcs_infeatures,
             out_features=1)
 
@@ -351,8 +357,9 @@ class Discriminator(nn.Module):
         h4 = self.leakyrelu(self.bn4(self.dis4(h3)))
         h4 = h4.view(-1, self.fcs_infeatures)
         h5_feature = self.fc1(h4)
+        h5_logvar = self.fc2(h4)
         h6 = self.fc2(h5_feature)
         prob = self.sigmoid(h6)
         prob = prob.view(-1, 1)
 
-        return prob, h5_feature
+        return prob, h5_feature, h5_logvar
