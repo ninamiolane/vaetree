@@ -41,7 +41,15 @@ DEVICE = torch.device("cuda" if CUDA else "cpu")
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
-BATCH_SIZE = 64
+
+IMAGE_WIDTH = 128
+IMAGE_HEIGHT = 128
+IMAGE_SIZE = (IMAGE_WIDTH, IMAGE_HEIGHT)
+if IMAGE_WIDTH == 64:
+    BATCH_SIZE = 64
+if IMAGE_WIDTH == 128:
+    BATCH_SIZE = 16
+
 PRINT_INTERVAL = 10
 torch.backends.cudnn.benchmark = True
 
@@ -59,10 +67,6 @@ LATENT_DIM = 50
 LR = 15e-6
 if 'adversarial' in RECONSTRUCTIONS:
     LR = 0.0002
-
-IMAGE_SIZE = (64, 64)
-IMAGE_WIDTH = IMAGE_SIZE[0]
-IMAGE_HEIGHT = IMAGE_SIZE[1]
 
 TARGET = '/neuro/'
 
@@ -258,6 +262,11 @@ class Train(luigi.Task):
                     100. * batch_idx / n_batches,
                     loss, loss_reconstruction, loss_regularization))
         else:
+            print(loss_discriminator)
+            print(loss_generator)
+            print(dx)
+            print(dgex)
+            print(dgz)
             logging.info(
                 string_base.format(
                     epoch, batch_idx * n_batch_data, n_data,
@@ -406,15 +415,16 @@ class Train(luigi.Task):
                 loss += loss_discriminator + loss_generator
 
             if batch_idx % PRINT_INTERVAL == 0:
+                # TODO(nina): Why didn't we need .mean() on 64x64?
                 if 'adversarial' in RECONSTRUCTIONS:
                     self.print_train_logs(
                         epoch,
                         batch_idx, n_batches, n_data, n_batch_data,
                         loss, loss_reconstruction, loss_regularization,
                         loss_discriminator, loss_generator,
-                        predicted_labels_data,
-                        predicted_labels_recon,
-                        predicted_labels_from_prior)
+                        predicted_labels_data.mean(),
+                        predicted_labels_recon.mean(),
+                        predicted_labels_from_prior.mean())
                 else:
                     self.print_train_logs(
                         epoch,
