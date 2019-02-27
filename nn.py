@@ -331,7 +331,7 @@ class Discriminator(nn.Module):
             in_channels=self.dis4.out_channels,
             out_channels=1,
             kernel_size=DIS_KS,
-            stride=DIS_STR * 2,
+            stride=DIS_STR * 2,  # Hack alert
             padding=DIS_PAD)
         self.bn5 = nn.BatchNorm2d(self.dis5.out_channels)
         self.w_dis5, self.h_dis5 = cnn_output_size(
