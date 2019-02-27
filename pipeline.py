@@ -262,11 +262,6 @@ class Train(luigi.Task):
                     100. * batch_idx / n_batches,
                     loss, loss_reconstruction, loss_regularization))
         else:
-            print(loss_discriminator)
-            print(loss_generator)
-            print(dx)
-            print(dgex)
-            print(dgz)
             logging.info(
                 string_base.format(
                     epoch, batch_idx * n_batch_data, n_data,
@@ -786,6 +781,7 @@ class Train(luigi.Task):
                 epoch, test_loader, modules,
                 RECONSTRUCTIONS, REGULARIZATIONS)
 
+            # TODO(nina): Fix bug that losses do not show on visdom.
             train_loss = train_losses['loss']
             test_loss = test_losses['loss']
             vis2.line(
