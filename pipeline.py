@@ -67,6 +67,9 @@ LATENT_DIM = 50
 LR = 15e-6
 if 'adversarial' in RECONSTRUCTIONS:
     LR = 0.0002
+BETA1 = 0.5
+BETA2 = 0.999
+
 
 TARGET = '/neuro/'
 
