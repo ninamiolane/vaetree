@@ -166,8 +166,6 @@ def process_file(path, output):
 class MakeDataSet(luigi.Task):
     train_path = os.path.join(OUTPUT_DIR, 'train.npy')
     test_path = os.path.join(OUTPUT_DIR, 'test.npy')
-    first_slice = 118
-    last_slice = 138
     test_fraction = 0.2
 
     def requires(self):
@@ -408,8 +406,6 @@ class Train(luigi.Task):
                 loss += loss_discriminator + loss_generator
 
             if batch_idx % PRINT_INTERVAL == 0:
-                # TODO(nina): Implement print logs
-                # of discriminator and generator
                 if 'adversarial' in RECONSTRUCTIONS:
                     self.print_train_logs(
                         epoch,
