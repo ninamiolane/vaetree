@@ -11,7 +11,7 @@ def bce_on_intensities(x, recon_x, scale_b):
     height = recon_x.shape[1]
     bce = torch.sum(
         F.binary_cross_entropy(recon_x, x) / scale_b.exp() + 2 * scale_b)
-    return bce / (width * height)
+    return bce
 
 
 def kullback_leibler(mu, logvar):
