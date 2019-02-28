@@ -1,20 +1,22 @@
 """Data processing pipeline."""
 
 import glob
+import jinja2
+from joblib import Parallel, delayed
 import logging
 import luigi
 import matplotlib
 matplotlib.use('Agg')  # NOQA
-import os
-import jinja2
-from joblib import Parallel, delayed
+import matplotlib.pyplot as plt
 import nibabel
 import numpy as np
+import os
 import pickle
 import random
 import skimage.transform
 import sklearn.model_selection
 import tempfile
+
 import torch
 import torch.autograd
 import torch.nn as tnn
@@ -489,12 +491,12 @@ class Train(luigi.Task):
             epoch, average_loss))
 
         train_losses = {}
-        train_losses['loss_reconstruction'] = average_loss_reconstruction
-        train_losses['loss_regularization'] = average_loss_regularization
+        train_losses['reconstruction'] = average_loss_reconstruction
+        train_losses['regularization'] = average_loss_regularization
         if 'adversarial' in RECONSTRUCTIONS:
-            train_losses['loss_discriminator'] = average_loss_discriminator
-            train_losses['loss_generator'] = average_loss_generator
-        train_losses['loss'] = average_loss
+            train_losses['discriminator'] = average_loss_discriminator
+            train_losses['generator'] = average_loss_generator
+        train_losses['total'] = average_loss
         return train_losses
 
     def test(self, epoch, test_loader, modules,
@@ -682,12 +684,12 @@ class Train(luigi.Task):
         print('====> Test set loss: {:.4f}'.format(average_loss))
 
         test_losses = {}
-        test_losses['loss_reconstruction'] = average_loss_reconstruction
-        test_losses['loss_regularization'] = average_loss_regularization
+        test_losses['reconstruction'] = average_loss_reconstruction
+        test_losses['regularization'] = average_loss_regularization
         if 'adversarial' in RECONSTRUCTIONS:
-            test_losses['loss_discriminator'] = average_loss_discriminator
-            test_losses['loss_generator'] = average_loss_generator
-        test_losses['loss'] = average_loss
+            test_losses['discriminator'] = average_loss_discriminator
+            test_losses['generator'] = average_loss_generator
+        test_losses['total'] = average_loss
         return test_losses
 
     def run(self):
@@ -766,7 +768,6 @@ class Train(luigi.Task):
             if type(m) == tnn.Conv2d:
                 tnn.init.kaiming_normal_(m.weight)
 
-        # custom weights initialization called on netG and netD
         def init_custom(m):
             classname = m.__class__.__name__
             if classname.find('Conv') != -1:
@@ -789,7 +790,7 @@ class Train(luigi.Task):
         train_losses_all_epochs = []
         test_losses_all_epochs = []
 
-        vis2 = visdom.Visdom()
+        vis2 = visdom.isdom()
         vis2.env = 'losses'
         train_loss_window = vis2.line(
             X=torch.zeros((1,)).cpu(),
@@ -815,8 +816,8 @@ class Train(luigi.Task):
                 RECONSTRUCTIONS, REGULARIZATIONS)
 
             # TODO(nina): Fix bug that losses do not show on visdom.
-            train_loss = train_losses['loss']
-            test_loss = test_losses['loss']
+            train_loss = train_losses['total']
+            test_loss = test_losses['total']
             vis2.line(
                 X=torch.ones((1, 1)).cpu()*epoch,
                 Y=torch.Tensor([train_loss]).unsqueeze(0).cpu(),
@@ -841,8 +842,8 @@ class Train(luigi.Task):
                 self.losses_path, 'epoch_{}.pkl'.format(epoch))
             with open(train_test_path, 'wb') as pkl:
                 pickle.dump(
-                    {'train_losses': train_losses,
-                     'test_losses': test_losses},
+                    {'train': train_losses,
+                     'test': test_losses},
                     pkl)
 
         train_losses_all_epochs.append(train_losses)
@@ -865,15 +866,180 @@ class Report(luigi.Task):
     def requires(self):
         return Train()
 
-    def run(self):
+    def get_last_epoch(self):
+        # Placeholder
         epoch_id = N_EPOCHS - 1
+        return epoch_id
 
+    def get_loss_history(self):
+        last_epoch = self.get_last_epoch()
+        loss_history = []
+        for epoch_id in range(last_epoch):
+            path = os.path.join(
+                TRAIN_DIR, 'losses', 'epoch_%d' % epoch_id)
+            loss = np.load(path)
+            loss_history.append(loss)
+        return loss_history
+
+    def load_data(self, epoch_id):
         data_path = os.path.join(
             TRAIN_DIR, 'imgs', 'epoch_%d_data.npy' % epoch_id)
+        data = np.load(data_path)
+        return data
+
+    def load_recon(self, epoch_id):
         recon_path = os.path.join(
             TRAIN_DIR, 'imgs', 'epoch_%d_recon.npy' % epoch_id)
-        data = np.load(data_path)
         recon = np.load(recon_path)
+        return recon
+
+    def load_from_prior(self, epoch_id):
+        from_prior_path = os.path.join(
+            TRAIN_DIR, 'imgs', 'epoch_%d_from_prior.npy' % epoch_id)
+        from_prior = np.load(from_prior_path)
+        return from_prior
+
+    def plot_losses(self, loss_types=['total']):
+        n_epoch = 94
+
+        loss_types = [
+            'loss',
+            'loss_reconstruction', 'loss_regularization',
+            'loss_discriminator', 'loss_generator']
+        train_losses = {loss_type: [] for loss_type in loss_types}
+        test_losses = {loss_type: [] for loss_type in loss_types}
+
+        for i in range(n_epoch+1):
+            path = os.path.join(TRAIN_DIR, 'losses', 'epoch_%d.pkl' % i)
+            train_test = pickle.load(open(path, 'rb'))
+            train = train_test['train_losses']
+            test = train_test['test_losses']
+
+            for loss_type in loss_types:
+                loss = train[loss_type]
+                train_losses[loss_type].append(loss)
+
+                loss = test[loss_type]
+                test_losses[loss_type].append(loss)
+
+        n_rows = 3
+        n_cols = 2
+        fig = plt.figure(figsize=(24, 24))
+
+        # Total
+        plt.subplot(n_rows, n_cols, 1)
+        plt.plot(train_losses['loss'])
+        plt.title('Train Loss')
+
+        plt.subplot(n_rows, n_cols, 2)
+        plt.plot(test_losses['loss'])
+        plt.title('Test Loss')
+
+        # Decomposed in sublosses
+        epochs = range(n_epoch+1)
+
+        plt.subplot(n_rows, n_cols, 3)
+        plt.plot(
+            epochs,
+            train_losses['loss_reconstruction'],
+            train_losses['loss_regularization'],
+            train_losses['loss_discriminator'],
+            train_losses['loss_generator'])
+        plt.title('Train Loss Decomposed')
+        plt.legend(
+            [loss_type for loss_type in loss_types if loss_type != 'loss'],
+            loc='upper right')
+
+        plt.subplot(n_rows, n_cols, 4)
+        plt.plot(
+            epochs,
+            test_losses['loss_reconstruction'],
+            test_losses['loss_regularization'],
+            test_losses['loss_discriminator'],
+            test_losses['loss_generator'])
+        plt.title('Test Loss Decomposed')
+        plt.legend(
+            [loss_type for loss_type in loss_types if loss_type != 'loss'],
+            loc='upper right')
+
+        # Only Discriminator and Generator
+        plt.subplot(n_rows, n_cols, 5)
+        plt.plot(
+            epochs,
+            train_losses['loss_discriminator'],
+            train_losses['loss_generator'])
+        plt.title('Train Loss: Discriminator and Generator only')
+        plt.legend(
+            [loss_type for loss_type in loss_types
+             if (loss_type == 'loss_discriminator'
+                 or loss_type == 'loss_generator')],
+            loc='upper right')
+
+        plt.subplot(n_rows, n_cols, 6)
+        plt.plot(
+            epochs,
+            test_losses['loss_discriminator'],
+            test_losses['loss_generator'])
+        plt.title('Test Loss: Discriminator and Generator only')
+        plt.legend(
+            [loss_type for loss_type in loss_types
+             if (loss_type == 'loss_discriminator'
+                 or loss_type == 'loss_generator')],
+            loc='upper right')
+
+        fname = os.path.join(REPORT_DIR, 'losses.png')
+        fig.savefig(fname, pad_inches=1.)
+        plt.clf()
+        return os.path.basename(fname)
+
+    def plot_images(self,
+                    last_epoch=N_EPOCHS-1,
+                    n_plot_epochs=4,
+                    n_imgs_per_epoch=6):
+        n_plot_epochs = np.gcd(n_plot_epochs-1, last_epoch)
+        n_imgs_type = 3
+        by = last_epoch / (n_plot_epochs-1)
+
+        fig = plt.figure(
+            figsize=(8*n_plot_epochs, 16*n_plot_epochs))
+        n_rows = n_imgs_type * n_plot_epochs
+        n_cols = n_imgs_per_epoch
+
+        for epoch_id in range(0, last_epoch+1, by):
+            data = self.load_data(epoch_id)
+            recon = self.load_recon(epoch_id)
+            from_prior = self.load_from_prior(epoch_id)
+
+            for id in range(n_imgs_per_epoch):
+                subplot_epoch_id = (
+                    n_imgs_type * n_imgs_per_epoch * epoch_id / by)
+
+                subplot_id = subplot_epoch_id + id + 1
+                plt.subplot(n_rows, n_cols, subplot_id)
+                plt.imshow(data[id][0], cmap='gray')
+                plt.axis('off')
+
+                subplot_id = subplot_epoch_id + n_imgs_per_epoch + id + 1
+                plt.subplot(n_rows, n_cols, subplot_id)
+                plt.imshow(recon[id][0], cmap='gray')
+                plt.axis('off')
+
+                subplot_id = subplot_epoch_id + 2 * n_imgs_per_epoch + id + 1
+                plt.subplot(n_rows, n_cols, subplot_id)
+                plt.imshow(from_prior[id][0], cmap='gray')
+                plt.axis('off')
+
+                plt.tight_layout()
+
+        fname = os.path.join(REPORT_DIR, 'images.png')
+        fig.savefig(fname, pad_inches=1.)
+        plt.clf()
+        return os.path.basename(fname)
+
+    def compute_reconstruction_metrics(self):
+        epoch_id = self.get_last_epoch()
+        data = self.load_data(epoch_id)
+        recon = self.load_recon(epoch_id)
 
         # TODO(nina): Rewrite mi and fid in pytorch
         mutual_information = metrics.mutual_information(recon, data)
@@ -885,6 +1051,25 @@ class Report(luigi.Task):
         bce = metrics.binary_cross_entropy(recon, data)
         mse = metrics.mse(recon, data)
         l1_norm = metrics.l1_norm(recon, data)
+
+        # Placeholder
+        return mutual_information
+
+    def run(self):
+        last_epoch = self.get_last_epoch()
+        epoch_id = last_epoch
+
+        # Loss functions
+        loss_basename = self.plot_losses()
+
+        # Sample of Data, Reconstruction, Generated from Prior
+        imgs_basename = self.plot_images()
+
+        # Table of Reconstruction Metrics
+
+        # PCA on latent space - 5 first components
+
+        # K-means on latent space - 4 clusters
 
         context = {
             'title': 'Vaetree Report',
