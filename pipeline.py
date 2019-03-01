@@ -31,6 +31,9 @@ import losses
 import metrics
 import nn
 
+import warnings
+warnings.filterwarnings("ignore")
+
 HOME_DIR = '/scratch/users/nmiolane'
 
 OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
@@ -45,12 +48,12 @@ DEVICE = torch.device("cuda" if CUDA else "cpu")
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
-
-IMAGE_WIDTH = 128
-IMAGE_HEIGHT = 128
-IMAGE_SIZE = (IMAGE_WIDTH, IMAGE_HEIGHT)
+IMG_WIDTH = 128
+IMG_HEIGHT = 128
+IMG_SIZE = (IMG_WIDTH, IMG_HEIGHT)
+IMG_DIM = len(IMG_SIZE)
 BATCH_SIZES = {64: 64, 128: 16}
-BATCH_SIZE = BATCH_SIZES[IMAGE_WIDTH]
+BATCH_SIZE = BATCH_SIZES[IMG_WIDTH]
 
 PRINT_INTERVAL = 10
 torch.backends.cudnn.benchmark = True
@@ -128,7 +131,7 @@ def affine_matrix_permutes_axes(affine_matrix):
     return False
 
 
-def process_file(path, output):
+def process_file(path, img_dim, output):
     logging.info('loading and resizing image %s', path)
     img = nibabel.load(path)
     if affine_matrix_permutes_axes(img.affine):
@@ -149,7 +152,21 @@ def process_file(path, output):
     # os.system('/usr/lib/ants/N4BiasFieldCorrection -i %s -o %s -s 6' %
     #          (path, processed_file))
     # Uncomment to skip N4 Bias Field Correction:
-    os.system('cp %s %s' % (path, processed_file))
+
+    print(processed_file)
+    prefix = os.path.splitext(os.path.splitext(processed_file)[0])[0]
+    print(IMG_SIZE)
+    print(path)
+    print(prefix)
+    brain_template_with_skull = os.path.join(
+        HOME_DIR, 'T_template0.nii.gz')
+    brain_prior = os.path.join(
+        HOME_DIR, 'T_template0_BrainCerebellumProbabilityMask.nii.gz')
+    os.system(
+        '/usr/lib/ants/antsBrainExtraction.sh'
+        ' -d {} -a {} -e {} -m {} -o {}'.format(
+            3, path, brain_template_with_skull, brain_prior, prefix))
+    #os.system('cp %s %s' % (path, processed_file))
     img = nibabel.load(processed_file)
 
     array = img.get_fdata()
@@ -158,17 +175,23 @@ def process_file(path, output):
     # No centering because we're using cross-entropy loss.
     # Another HACK ALERT - statisticians please intervene.
     array = array / (4 * std)
-    z_size = array.shape[2]
-    z_start = int(0.45 * z_size)
-    z_end = int(0.55 * z_size)
-    logging.info(
-        '-- Selecting 2D slices on dim 1 from slide %d to slice %d'
-        % (z_start, z_end))
 
-    for k in range(z_start, z_end):
-        img_slice = array[:, :, k]
-        img = skimage.transform.resize(img_slice, IMAGE_SIZE)
-        output.append(img)
+    if img_dim == 2:
+        z_size = array.shape[2]
+        z_start = int(0.45 * z_size)
+        z_end = int(0.55 * z_size)
+        logging.info(
+            '-- Selecting 2D slices on dim 1 from slide %d to slice %d'
+            % (z_start, z_end))
+
+        for k in range(z_start, z_end):
+            img_slice = array[:, :, k]
+            img = skimage.transform.resize(img_slice, IMG_SIZE)
+            output.append(img)
+    elif img_dim == 3:
+        output.append(array)
+    else:
+        raise ValueError('Dimension of the image must be 2D or 3D.')
     os.remove(processed_file)
 
 
@@ -184,8 +207,11 @@ class MakeDataSet(luigi.Task):
         path = self.input()['dataset'].path
         filepaths = glob.glob(path + '**/*.nii.gz', recursive=True)
         random.shuffle(filepaths)
-        n_vols = len(filepaths)
-        logging.info('----- 3D images: %d' % n_vols)
+
+        logging.info('----- 3D nii filepaths: %d' % len(filepaths))
+        if DEBUG:
+            logging.info('DEBUG mode: Selecting only 8 filepaths.')
+            filepaths = filepaths[:8]
 
         first_filepath = filepaths[0]
         first_img = nibabel.load(first_filepath)
@@ -195,22 +221,18 @@ class MakeDataSet(luigi.Task):
         logging.info(
             '----- First volume shape: (%d, %d, %d)' % first_array.shape)
 
-        if DEBUG:
-            filepaths = filepaths[:16]
-
         imgs = []
         Parallel(
             backend="threading",
-            n_jobs=4)(delayed(process_file)(f, imgs) for f in filepaths)
+            n_jobs=4)(
+                delayed(process_file)(f, IMG_DIM, imgs) for f in filepaths)
         imgs = np.asarray(imgs)
         imgs = torch.Tensor(imgs)
 
         new_shape = (imgs.shape[0],) + (1,) + imgs.shape[1:]
         imgs = imgs.reshape(new_shape)
 
-        logging.info(
-            '----- 2D images:'
-            'training set shape: (%d, %d, %d, %d)' % imgs.shape)
+        logging.info('--Dataset: (%d, %d, %d, %d)' % imgs.shape)
 
         logging.info('-- Split into train and test sets')
         split = sklearn.model_selection.train_test_split(
@@ -221,6 +243,7 @@ class MakeDataSet(luigi.Task):
 
         np.save(self.output()['train'].path, train)
         np.save(self.output()['test'].path, test)
+        raise NotImplementedError()
 
     def output(self):
         return {'train': luigi.LocalTarget(self.train_path),
@@ -460,19 +483,19 @@ class Train(luigi.Task):
                     win=data_win,
                     opts=dict(
                         title='Train Epoch {}: Data'.format(epoch),
-                        width=150*IMAGE_WIDTH/64, height=150*IMAGE_HEIGHT/64))
+                        width=150*IMG_WIDTH/64, height=150*IMG_HEIGHT/64))
                 recon_win = train_vis.image(
                     batch_recon[0],
                     win=recon_win,
                     opts=dict(
                         title='Train Epoch {}: Reconstruction'.format(epoch),
-                        width=150*IMAGE_WIDTH/64, height=150*IMAGE_HEIGHT/64))
+                        width=150*IMG_WIDTH/64, height=150*IMG_HEIGHT/64))
                 from_prior_win = train_vis.image(
                     batch_from_prior[0],
                     win=from_prior_win,
                     opts=dict(
                         title='Train Epoch {}: From prior'.format(epoch),
-                        width=150*IMAGE_WIDTH/64, height=150*IMAGE_HEIGHT/64))
+                        width=150*IMG_WIDTH/64, height=150*IMG_HEIGHT/64))
 
             total_loss_reconstruction += loss_reconstruction.item()
             total_loss_regularization += loss_regularization.item()
@@ -645,23 +668,23 @@ class Train(luigi.Task):
                         win=data_win,
                         opts=dict(
                             title='Test Epoch {}: Data'.format(epoch),
-                            width=150*IMAGE_WIDTH/64,
-                            height=150*IMAGE_HEIGHT/64))
+                            width=150*IMG_WIDTH/64,
+                            height=150*IMG_HEIGHT/64))
                     recon_win = vis.image(
                         batch_recon[0][0],
                         win=recon_win,
                         opts=dict(
                             title='Test Epoch {}: Reconstruction'.format(
                                 epoch),
-                            width=150*IMAGE_WIDTH/64,
-                            height=150*IMAGE_HEIGHT/64))
+                            width=150*IMG_WIDTH/64,
+                            height=150*IMG_HEIGHT/64))
                     from_prior_win = vis.image(
                         batch_from_prior[0][0],
                         win=from_prior_win,
                         opts=dict(
                             title='Test Epoch {}: From prior'.format(epoch),
-                            width=150*IMAGE_WIDTH/64,
-                            height=150*IMAGE_HEIGHT/64))
+                            width=150*IMG_WIDTH/64,
+                            height=150*IMG_HEIGHT/64))
 
                     # Save only last batch
                     data_path = os.path.join(
