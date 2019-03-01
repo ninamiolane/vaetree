@@ -31,8 +31,8 @@ def mse_on_features(feature, recon_feature, logvar):
     MSE over features of FC layer of Discriminator.
     sigma2: plays role of loss' weighting factor.
     """
-    mse = F.mse_loss(
-        recon_feature, feature, reduction='mean') / (2 * logvar.exp())
+    mse = F.mse_loss(recon_feature, feature) / (2 * logvar.exp())
+    mse = torch.mean(mse)
     return mse
 
 

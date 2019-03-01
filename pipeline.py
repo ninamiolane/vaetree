@@ -5,9 +5,11 @@ import jinja2
 from joblib import Parallel, delayed
 import logging
 import luigi
+import math
 import matplotlib
 matplotlib.use('Agg')  # NOQA
 import matplotlib.pyplot as plt
+import matplotlib.pylab as pylab
 import nibabel
 import numpy as np
 import os
@@ -35,7 +37,7 @@ OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
 TRAIN_DIR = os.path.join(OUTPUT_DIR, 'training')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
-DEBUG = False
+DEBUG = True
 
 CUDA = torch.cuda.is_available()
 SEED = 12345
@@ -47,15 +49,13 @@ torch.manual_seed(SEED)
 IMAGE_WIDTH = 128
 IMAGE_HEIGHT = 128
 IMAGE_SIZE = (IMAGE_WIDTH, IMAGE_HEIGHT)
-if IMAGE_WIDTH == 64:
-    BATCH_SIZE = 64
-if IMAGE_WIDTH == 128:
-    BATCH_SIZE = 16
+BATCH_SIZES = {64: 64, 128: 16}
+BATCH_SIZE = BATCH_SIZES[IMAGE_WIDTH]
 
 PRINT_INTERVAL = 10
 torch.backends.cudnn.benchmark = True
 
-RECONSTRUCTIONS = ('bce_on_intensities', 'adversarial')
+RECONSTRUCTIONS = ('mse_on_features', 'adversarial')
 REGULARIZATIONS = ('kullbackleibler',)
 WEIGHTS_INIT = 'custom'
 REGU_FACTOR = 0.003
@@ -359,7 +359,7 @@ class Train(luigi.Task):
                     + loss_dis_from_prior)
 
                 # Fill gradients on discriminator only
-                loss_discriminator.backward()
+                loss_discriminator.backward(retain_graph=True)
 
                 # Need to do optimizer step here, as gradients
                 # of the reconstruction with discriminator features
@@ -376,7 +376,7 @@ class Train(luigi.Task):
 
                 labels_recon, _, _ = discriminator(
                     batch_recon_detached)
-                labels_from_prior, _ = discriminator(
+                labels_from_prior, _, _ = discriminator(
                     batch_from_prior)
 
                 loss_generator_recon = F.binary_cross_entropy(
@@ -403,12 +403,13 @@ class Train(luigi.Task):
                 # Fill gradients on encoder and generator
                 loss_reconstruction.backward(retain_graph=True)
 
-            if 'l2_discriminator' in reconstructions:
+            if 'mse_on_features' in reconstructions:
                 # TODO(nina): Investigate stat interpretation
                 # of using the logvar from the recon
                 loss_reconstruction = losses.mse_on_features(
                     h_recon, h_data, h_logvar_recon)
                 # Fill gradients on encoder and generator
+                # but not on discriminator
                 loss_reconstruction.backward(retain_graph=True)
 
             if 'kullbackleibler' in regularizations:
@@ -554,7 +555,7 @@ class Train(luigi.Task):
                     labels_data, h_data, _ = discriminator(batch_data)
                     labels_recon, h_recon, h_logvar_recon = discriminator(
                         batch_recon.detach())
-                    labels_from_prior = discriminator(
+                    labels_from_prior, _, _ = discriminator(
                         batch_from_prior.detach())
 
                     loss_dis_data = F.binary_cross_entropy(
@@ -582,7 +583,7 @@ class Train(luigi.Task):
 
                     labels_recon, _, _ = discriminator(
                         batch_recon_detached)
-                    labels_from_prior = discriminator(
+                    labels_from_prior, _, _ = discriminator(
                         batch_from_prior)
 
                     loss_generator_recon = F.binary_cross_entropy(
@@ -600,7 +601,7 @@ class Train(luigi.Task):
                     loss_reconstruction = losses.bce_on_intensities(
                         batch_data, batch_recon, scale_b)
 
-                if 'l2_discriminator' in reconstructions:
+                if 'mse_on_features' in reconstructions:
                     # TODO(nina): Investigate stat interpretation
                     # of using the logvar from the recon
                     loss_reconstruction = losses.mse_on_features(
@@ -742,19 +743,19 @@ class Train(luigi.Task):
         optimizers['encoder'] = torch.optim.Adam(
             modules['encoder'].parameters(), lr=LR)
         optimizers['decoder'] = torch.optim.Adam(
-            modules['decoder'].parameters(), lr=LR, betas=(nn.beta1, 0.999))
+            modules['decoder'].parameters(), lr=LR, betas=(BETA1, BETA2))
 
         if 'adversarial' in RECONSTRUCTIONS:
             optimizers['discriminator_reconstruction'] = torch.optim.Adam(
                 modules['discriminator_reconstruction'].parameters(),
                 lr=LR,
-                betas=(nn.beta1, 0.999))
+                betas=(BETA1, BETA2))
 
         if 'adversarial' in REGULARIZATIONS:
             optimizers['discriminator_regularization'] = torch.optim.Adam(
                 modules['discriminator_regularization'].parameters(),
                 lr=LR,
-                betas=(nn.beta1, 0.999))
+                betas=(BETA1, BETA2))
 
         def init_xavier_normal(m):
             if type(m) == tnn.Linear:
@@ -790,7 +791,7 @@ class Train(luigi.Task):
         train_losses_all_epochs = []
         test_losses_all_epochs = []
 
-        vis2 = visdom.isdom()
+        vis2 = visdom.Visdom()
         vis2.env = 'losses'
         train_loss_window = vis2.line(
             X=torch.zeros((1,)).cpu(),
@@ -835,7 +836,7 @@ class Train(luigi.Task):
                     'epoch_{}_{}_'
                     'train_loss_{:.4f}_test_loss_{:.4f}.pth'.format(
                         epoch, module_name,
-                        train_losses['loss'], test_losses['loss']))
+                        train_losses['total'], test_losses['total']))
                 torch.save(module, module_path)
 
             train_test_path = os.path.join(
@@ -900,20 +901,21 @@ class Report(luigi.Task):
         return from_prior
 
     def plot_losses(self, loss_types=['total']):
-        n_epoch = 94
+        last_epoch = self.get_last_epoch()
+        epochs = range(last_epoch+1)
 
         loss_types = [
-            'loss',
-            'loss_reconstruction', 'loss_regularization',
-            'loss_discriminator', 'loss_generator']
+            'total',
+            'discriminator', 'generator',
+            'reconstruction', 'regularization']
         train_losses = {loss_type: [] for loss_type in loss_types}
         test_losses = {loss_type: [] for loss_type in loss_types}
 
-        for i in range(n_epoch+1):
+        for i in epochs:
             path = os.path.join(TRAIN_DIR, 'losses', 'epoch_%d.pkl' % i)
             train_test = pickle.load(open(path, 'rb'))
-            train = train_test['train_losses']
-            test = train_test['test_losses']
+            train = train_test['train']
+            test = train_test['test']
 
             for loss_type in loss_types:
                 loss = train[loss_type]
@@ -922,69 +924,70 @@ class Report(luigi.Task):
                 loss = test[loss_type]
                 test_losses[loss_type].append(loss)
 
+        # Total
+        params = {
+            'legend.fontsize': 'xx-large',
+            'figure.figsize': (40, 60),
+            'axes.labelsize': 'xx-large',
+            'axes.titlesize': 'xx-large',
+            'xtick.labelsize': 'xx-large',
+            'ytick.labelsize': 'xx-large'}
+        pylab.rcParams.update(params)
+
         n_rows = 3
         n_cols = 2
-        fig = plt.figure(figsize=(24, 24))
+        fig = plt.figure(figsize=(20, 22))
 
         # Total
         plt.subplot(n_rows, n_cols, 1)
-        plt.plot(train_losses['loss'])
+        plt.plot(train_losses['total'])
         plt.title('Train Loss')
 
         plt.subplot(n_rows, n_cols, 2)
-        plt.plot(test_losses['loss'])
+        plt.plot(test_losses['total'])
         plt.title('Test Loss')
 
         # Decomposed in sublosses
-        epochs = range(n_epoch+1)
 
         plt.subplot(n_rows, n_cols, 3)
-        plt.plot(
-            epochs,
-            train_losses['loss_reconstruction'],
-            train_losses['loss_regularization'],
-            train_losses['loss_discriminator'],
-            train_losses['loss_generator'])
+        plt.plot(epochs, train_losses['discriminator'])
+        plt.plot(epochs, train_losses['generator'])
+        plt.plot(epochs, train_losses['reconstruction'])
+        plt.plot(epochs, train_losses['regularization'])
         plt.title('Train Loss Decomposed')
         plt.legend(
-            [loss_type for loss_type in loss_types if loss_type != 'loss'],
+            [loss_type for loss_type in loss_types if loss_type != 'total'],
             loc='upper right')
 
         plt.subplot(n_rows, n_cols, 4)
-        plt.plot(
-            epochs,
-            test_losses['loss_reconstruction'],
-            test_losses['loss_regularization'],
-            test_losses['loss_discriminator'],
-            test_losses['loss_generator'])
+        plt.plot(epochs, test_losses['discriminator'])
+        plt.plot(epochs, test_losses['generator'])
+        plt.plot(epochs, test_losses['reconstruction'])
+        plt.plot(epochs, test_losses['regularization'])
         plt.title('Test Loss Decomposed')
         plt.legend(
-            [loss_type for loss_type in loss_types if loss_type != 'loss'],
+            [loss_type for loss_type in loss_types if loss_type != 'total'],
             loc='upper right')
 
         # Only Discriminator and Generator
         plt.subplot(n_rows, n_cols, 5)
-        plt.plot(
-            epochs,
-            train_losses['loss_discriminator'],
-            train_losses['loss_generator'])
+        plt.plot(epochs, train_losses['discriminator'])
+        plt.plot(epochs, train_losses['generator'])
         plt.title('Train Loss: Discriminator and Generator only')
         plt.legend(
             [loss_type for loss_type in loss_types
-             if (loss_type == 'loss_discriminator'
-                 or loss_type == 'loss_generator')],
+             if (loss_type == 'discriminator'
+                 or loss_type == 'generator')],
             loc='upper right')
 
         plt.subplot(n_rows, n_cols, 6)
-        plt.plot(
-            epochs,
-            test_losses['loss_discriminator'],
-            test_losses['loss_generator'])
+        plt.plot(epochs, test_losses['discriminator'])
+        plt.plot(epochs, test_losses['generator'])
         plt.title('Test Loss: Discriminator and Generator only')
         plt.legend(
             [loss_type for loss_type in loss_types
-             if (loss_type == 'loss_discriminator'
-                 or loss_type == 'loss_generator')],
+             if (loss_type == 'discriminator'
+                 or loss_type == 'generator')],
             loc='upper right')
 
         fname = os.path.join(REPORT_DIR, 'losses.png')
@@ -993,40 +996,40 @@ class Report(luigi.Task):
         return os.path.basename(fname)
 
     def plot_images(self,
-                    last_epoch=N_EPOCHS-1,
                     n_plot_epochs=4,
-                    n_imgs_per_epoch=6):
-        n_plot_epochs = np.gcd(n_plot_epochs-1, last_epoch)
+                    n_imgs_per_epoch=12):
+        last_epoch = self.get_last_epoch()
+        n_plot_epochs = math.gcd(n_plot_epochs-1, last_epoch) + 1
         n_imgs_type = 3
-        by = last_epoch / (n_plot_epochs-1)
+        by = int(last_epoch / (n_plot_epochs - 1))
 
-        fig = plt.figure(
-            figsize=(8*n_plot_epochs, 16*n_plot_epochs))
         n_rows = n_imgs_type * n_plot_epochs
         n_cols = n_imgs_per_epoch
+        fig = plt.figure(figsize=(20*n_cols, 20*n_rows))
 
         for epoch_id in range(0, last_epoch+1, by):
             data = self.load_data(epoch_id)
             recon = self.load_recon(epoch_id)
             from_prior = self.load_from_prior(epoch_id)
 
-            for id in range(n_imgs_per_epoch):
+            for img_id in range(n_imgs_per_epoch):
                 subplot_epoch_id = (
-                    n_imgs_type * n_imgs_per_epoch * epoch_id / by)
+                    epoch_id * n_imgs_type * n_imgs_per_epoch / by)
 
-                subplot_id = subplot_epoch_id + id + 1
+                subplot_id = subplot_epoch_id + img_id + 1
                 plt.subplot(n_rows, n_cols, subplot_id)
-                plt.imshow(data[id][0], cmap='gray')
+                plt.imshow(data[img_id][0], cmap='gray')
                 plt.axis('off')
 
-                subplot_id = subplot_epoch_id + n_imgs_per_epoch + id + 1
+                subplot_id = subplot_epoch_id + n_imgs_per_epoch + img_id + 1
                 plt.subplot(n_rows, n_cols, subplot_id)
-                plt.imshow(recon[id][0], cmap='gray')
+                plt.imshow(recon[img_id][0], cmap='gray')
                 plt.axis('off')
 
-                subplot_id = subplot_epoch_id + 2 * n_imgs_per_epoch + id + 1
+                subplot_id = (
+                    subplot_epoch_id + 2 * n_imgs_per_epoch + img_id + 1)
                 plt.subplot(n_rows, n_cols, subplot_id)
-                plt.imshow(from_prior[id][0], cmap='gray')
+                plt.imshow(from_prior[img_id][0], cmap='gray')
                 plt.axis('off')
 
                 plt.tight_layout()
@@ -1052,25 +1055,6 @@ class Report(luigi.Task):
         mse = metrics.mse(recon, data)
         l1_norm = metrics.l1_norm(recon, data)
 
-        # Placeholder
-        return mutual_information
-
-    def run(self):
-        last_epoch = self.get_last_epoch()
-        epoch_id = last_epoch
-
-        # Loss functions
-        loss_basename = self.plot_losses()
-
-        # Sample of Data, Reconstruction, Generated from Prior
-        imgs_basename = self.plot_images()
-
-        # Table of Reconstruction Metrics
-
-        # PCA on latent space - 5 first components
-
-        # K-means on latent space - 4 clusters
-
         context = {
             'title': 'Vaetree Report',
             'bce': bce,
@@ -1079,6 +1063,22 @@ class Report(luigi.Task):
             'mutual_information': mutual_information,
             'fid': fid,
             }
+        # Placeholder
+        return context
+
+    def run(self):
+        # Loss functions
+        loss_basename = self.plot_losses()
+
+        # Sample of Data, Reconstruction, Generated from Prior
+        imgs_basename = self.plot_images()
+
+        # Table of Reconstruction Metrics
+        context = self.compute_reconstruction_metrics()
+
+        # PCA on latent space - 5 first components
+
+        # K-means on latent space - 4 clusters
 
         with open(self.output().path, 'w') as f:
             template = TEMPLATE_ENVIRONMENT.get_template(TEMPLATE_NAME)

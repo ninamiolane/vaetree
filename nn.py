@@ -358,7 +358,7 @@ class Discriminator(nn.Module):
         h4 = h4.view(-1, self.fcs_infeatures)
         h5_feature = self.fc1(h4)
         h5_logvar = self.fc2(h4)
-        h6 = self.fc2(h5_feature)
+        h6 = self.fc3(h5_feature)
         prob = self.sigmoid(h6)
         prob = prob.view(-1, 1)
 
