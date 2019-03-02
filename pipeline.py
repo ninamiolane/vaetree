@@ -35,10 +35,11 @@ import warnings
 warnings.filterwarnings("ignore")
 
 HOME_DIR = '/scratch/users/nmiolane'
-
 OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
 TRAIN_DIR = os.path.join(OUTPUT_DIR, 'training')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
+
+os.environ['ANTSPATH'] = '/usr/lib/ants/'
 
 DEBUG = True
 
@@ -66,6 +67,7 @@ REGU_FACTOR = 0.003
 N_EPOCHS = 200
 if DEBUG:
     N_EPOCHS = 2
+    N_FILEPATHS = 4
 
 LATENT_DIM = 50
 
@@ -148,12 +150,14 @@ def process_file(path, img_dim, output):
         print('mean too high: %s' % mean)
         return
 
-    processed_file = get_tempfile_name()
+    tempfile_name = get_tempfile_name()
+    print(tempfile_name)
     # os.system('/usr/lib/ants/N4BiasFieldCorrection -i %s -o %s -s 6' %
     #          (path, processed_file))
     # Uncomment to skip N4 Bias Field Correction:
 
-    out_prefix = os.path.splitext(os.path.splitext(processed_file)[0])[0]
+    out_prefix = os.path.splitext(os.path.splitext(tempfile_name)[0])[0]
+    print(out_prefix)
     brain_template_with_skull = os.path.join(
         HOME_DIR, 'T_template0.nii.gz')
     brain_prior = os.path.join(
@@ -166,7 +170,9 @@ def process_file(path, img_dim, output):
             3, path,
             brain_template_with_skull, brain_prior, registration_mask,
             out_prefix))
+    processed_file = out_prefix + 'BrainExtractionBrain.nii.gz'
     #os.system('cp %s %s' % (path, processed_file))
+    print(processed_file)
     img = nibabel.load(processed_file)
 
     array = img.get_fdata()
@@ -210,8 +216,8 @@ class MakeDataSet(luigi.Task):
 
         logging.info('----- 3D nii filepaths: %d' % len(filepaths))
         if DEBUG:
-            logging.info('DEBUG mode: Selecting only 8 filepaths.')
-            filepaths = filepaths[:8]
+            logging.info('DEBUG mode: Selecting only %d filepaths.' % N_FILEPATHS)
+            filepaths = filepaths[:N_FILEPATHS]
 
         first_filepath = filepaths[0]
         first_img = nibabel.load(first_filepath)
@@ -243,7 +249,6 @@ class MakeDataSet(luigi.Task):
 
         np.save(self.output()['train'].path, train)
         np.save(self.output()['test'].path, test)
-        raise NotImplementedError()
 
     def output(self):
         return {'train': luigi.LocalTarget(self.train_path),
