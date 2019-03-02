@@ -153,19 +153,19 @@ def process_file(path, img_dim, output):
     #          (path, processed_file))
     # Uncomment to skip N4 Bias Field Correction:
 
-    print(processed_file)
-    prefix = os.path.splitext(os.path.splitext(processed_file)[0])[0]
-    print(IMG_SIZE)
-    print(path)
-    print(prefix)
+    out_prefix = os.path.splitext(os.path.splitext(processed_file)[0])[0]
     brain_template_with_skull = os.path.join(
         HOME_DIR, 'T_template0.nii.gz')
     brain_prior = os.path.join(
         HOME_DIR, 'T_template0_BrainCerebellumProbabilityMask.nii.gz')
+    registration_mask = os.path.join(
+        HOME_DIR, 'T_template0_BrainCerebellumRegistrationMask.nii.gz')
     os.system(
         '/usr/lib/ants/antsBrainExtraction.sh'
-        ' -d {} -a {} -e {} -m {} -o {}'.format(
-            3, path, brain_template_with_skull, brain_prior, prefix))
+        ' -d {} -a {} -e {} -m {} -f {} -o {}'.format(
+            3, path,
+            brain_template_with_skull, brain_prior, registration_mask,
+            out_prefix))
     #os.system('cp %s %s' % (path, processed_file))
     img = nibabel.load(processed_file)
 
