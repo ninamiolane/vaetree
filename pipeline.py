@@ -39,6 +39,7 @@ OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
 TRAIN_DIR = os.path.join(OUTPUT_DIR, 'training')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
+# TODO(nina): Put this in Singularity receipe
 os.environ['ANTSPATH'] = '/usr/lib/ants/'
 
 DEBUG = True
@@ -67,7 +68,7 @@ REGU_FACTOR = 0.003
 N_EPOCHS = 200
 if DEBUG:
     N_EPOCHS = 2
-    N_FILEPATHS = 4
+    N_FILEPATHS = 1
 
 LATENT_DIM = 50
 
@@ -78,7 +79,7 @@ BETA1 = 0.5
 BETA2 = 0.999
 
 
-TARGET = '/neuro/'
+NEURO_DIR = 'neuro'
 
 LOADER = jinja2.FileSystemLoader('./templates/')
 TEMPLATE_ENVIRONMENT = jinja2.Environment(
@@ -89,11 +90,11 @@ TEMPLATE_NAME = 'report.jinja2'
 
 class FetchOpenNeuroDataset(luigi.Task):
     file_list_path = './datasets/openneuro_files.txt'
-    target_dir = '/neuro/'
+    target_dir = os.path.join(NEURO_DIR, 't1scans')
 
     def dl_file(self, path):
         path = path.strip()
-        target_path = TARGET + os.path.dirname(path)
+        target_path = self.target_dir + os.path.dirname(path)
         if not os.path.exists(target_path):
             os.makedirs(target_path)
         os.system("aws --no-sign-request s3 cp  s3://openneuro.org/%s %s" %
@@ -116,10 +117,10 @@ def is_diag(M):
     return np.all(M == np.diag(np.diagonal(M)))
 
 
-def get_tempfile_name(some_id='def'):
+def get_tmpfile_prefix(some_id='gne'):
     return os.path.join(
         tempfile.gettempdir(),
-        next(tempfile._get_candidate_names()) + "_" + some_id + ".nii.gz")
+        next(tempfile._get_candidate_names()) + "_" + some_id)
 
 
 def affine_matrix_permutes_axes(affine_matrix):
@@ -133,48 +134,8 @@ def affine_matrix_permutes_axes(affine_matrix):
     return False
 
 
-def process_file(path, img_dim, output):
-    logging.info('loading and resizing image %s', path)
+def extract_and_resize(path, img_dim, output):
     img = nibabel.load(path)
-    if affine_matrix_permutes_axes(img.affine):
-        return
-
-    array = img.get_fdata()
-    array = np.nan_to_num(array)
-    std = np.std(array.reshape(-1))
-
-    array = array / std
-    mean = np.mean(array.reshape(-1))
-    # HACK Alert - This is a way to check if the backgound is a white noise.
-    if mean > 1.0:
-        print('mean too high: %s' % mean)
-        return
-
-    tempfile_name = get_tempfile_name()
-    print(tempfile_name)
-    # os.system('/usr/lib/ants/N4BiasFieldCorrection -i %s -o %s -s 6' %
-    #          (path, processed_file))
-    # Uncomment to skip N4 Bias Field Correction:
-
-    out_prefix = os.path.splitext(os.path.splitext(tempfile_name)[0])[0]
-    print(out_prefix)
-    brain_template_with_skull = os.path.join(
-        HOME_DIR, 'T_template0.nii.gz')
-    brain_prior = os.path.join(
-        HOME_DIR, 'T_template0_BrainCerebellumProbabilityMask.nii.gz')
-    registration_mask = os.path.join(
-        HOME_DIR, 'T_template0_BrainCerebellumRegistrationMask.nii.gz')
-    os.system(
-        '/usr/lib/ants/antsBrainExtraction.sh'
-        ' -d {} -a {} -e {} -m {} -f {} -o {}'.format(
-            3, path,
-            brain_template_with_skull, brain_prior, registration_mask,
-            out_prefix))
-    processed_file = out_prefix + 'BrainExtractionBrain.nii.gz'
-    #os.system('cp %s %s' % (path, processed_file))
-    print(processed_file)
-    img = nibabel.load(processed_file)
-
     array = img.get_fdata()
     array = np.nan_to_num(array)
     std = np.std(array.reshape(-1))
@@ -198,7 +159,112 @@ def process_file(path, img_dim, output):
         output.append(array)
     else:
         raise ValueError('Dimension of the image must be 2D or 3D.')
-    os.remove(processed_file)
+
+
+class Process3D(luigi.Task):
+    target_dir = os.path.join(NEURO_DIR, 'processed')
+    brain_template_with_skull = os.path.join(
+        NEURO_DIR, 'T_template0.nii.gz')
+    brain_prior = os.path.join(
+        NEURO_DIR, 'T_template0_BrainCerebellumProbabilityMask.nii.gz')
+    registration_mask = os.path.join(
+        NEURO_DIR, 'T_template0_BrainCerebellumRegistrationMask.nii.gz')
+
+    def requires(self):
+        return {'dataset': FetchOpenNeuroDataset()}
+
+    def process_file(self, path, i, output):
+        logging.info('Loading image %s...', path)
+        img = nibabel.load(path)
+
+        if affine_matrix_permutes_axes(img.affine):
+            print('Skip image %s - bad affine orientation' % path)
+            return
+
+        array = img.get_fdata()
+        array = np.nan_to_num(array)
+        std = np.std(array.reshape(-1))
+        array = array / std
+        mean = np.mean(array.reshape(-1))
+        # HACK Alert
+        # This is a way to check if the backgound is a white noise.
+        if mean > 1.0:
+            print('Skip image %s - mean too high: %s' % (path, mean))
+            return
+
+        tmp_prefix = get_tmpfile_prefix()
+        print(tmp_prefix)
+
+        os.system(
+            '/usr/lib/ants/antsBrainExtraction.sh'
+            ' -d {} -a {} -e {} -m {} -f {} -o {}'.format(
+                3, path,
+                self.brain_template_with_skull,
+                self.brain_prior,
+                self.registration_mask,
+                tmp_prefix))
+
+        processed_path = temp_prefix + 'BrainExtractionBrain.nii.gz'
+        out_path = os.path.join(self.target_dir, '%d.nii.gz' % i)
+        print(processed_path)
+        print(out_path)
+
+        os.system('mv %s %s' % (processed_path, out_path))
+        output.append(out_path)
+
+        tmp_paths = glob.glob(tmp_prefix + '*.nii.gz')
+        for path in tmp_paths:
+            print('Removing %s...' % path)
+            os.remove(path)
+
+    def run(self):
+        path = self.input()['dataset'].path
+        filepaths = glob.glob(path + '**/*.nii.gz', recursive=True)
+
+        if not DEBUG:
+            random.shuffle(filepaths)
+
+        if DEBUG:
+            logging.info(
+                'DEBUG mode: Selecting only %d filepaths.' % N_FILEPATHS)
+            filepaths = filepaths[:N_FILEPATHS]
+
+        n_filepaths = len(filepaths)
+        logging.info('----- Found %d 3D nii filepaths' % n_filepaths)
+
+        first_filepath = filepaths[0]
+        logging.info('----- First filepath: %s' % first_filepath)
+
+        processed_filepaths = []
+        Parallel(
+            backend="threading",
+            n_jobs=4)(
+                delayed(self.process_file)(f, i, processed_filepaths)
+                for i, f in enumerate(filepaths))
+
+        logging.info('-- Processing DONE: %d/%d nii processed.' % (
+            len(processed_filepaths), n_filepaths))
+
+    def output(self):
+        return luigi.LocalTarget(self.target_dir)
+
+
+class Segment3D(luigi.Task):
+    target_dir = os.path.join(NEURO_DIR, 'segmented')
+
+    def requires(self):
+        return {'dataset': Process3D()}
+
+    def run(self):
+        path = self.input()['dataset'].path
+        filepaths = glob.glob(path + '**/*.nii.gz', recursive=True)
+        random.shuffle(filepaths)
+
+        if DEBUG:
+            raise NotImplementedError()
+
+    def output(self):
+        return luigi.LocalTarget(self.target_dir)
 
 
 class MakeDataSet(luigi.Task):
@@ -207,7 +273,7 @@ class MakeDataSet(luigi.Task):
     test_fraction = 0.2
 
     def requires(self):
-        return {'dataset': FetchOpenNeuroDataset()}
+        return {'dataset': Segment3D()}
 
     def run(self):
         path = self.input()['dataset'].path
