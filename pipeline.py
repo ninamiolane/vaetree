@@ -161,7 +161,7 @@ def extract_and_resize(path, img_dim, output):
         raise ValueError('Dimension of the image must be 2D or 3D.')
 
 
-class Process3D(luigi.Task):
+class Preprocess3D(luigi.Task):
     """
     Performs the following:
     - N4BiasFieldCorrection
@@ -172,7 +172,7 @@ class Process3D(luigi.Task):
     https://github.com/ANTsX/ANTs/blob/master/Scripts/antsBrainExtraction.sh
     """
 
-    target_dir = os.path.join(NEURO_DIR, 'processed')
+    target_dir = os.path.join(NEURO_DIR, 'preprocessed')
     brain_template_with_skull = os.path.join(
         NEURO_DIR, 'T_template0.nii.gz')
     brain_prior = os.path.join(
@@ -207,7 +207,7 @@ class Process3D(luigi.Task):
 
         os.system(
             '/usr/lib/ants/antsBrainExtraction.sh'
-            ' -d {} -a {} -e {} -m {} -f {} -o {} -k True'.format(
+            ' -d {} -a {} -e {} -m {} -f {} -o {} -k 1'.format(
                 3, path,
                 self.brain_template_with_skull,
                 self.brain_prior,
@@ -233,8 +233,8 @@ class Process3D(luigi.Task):
 
         for path, name in zip(seg_paths, new_names):
             out_path = os.path.join(
-                self.target_dir, '%d_' % i + name + 'nii.gz')
-            os.system('mv %s %s' % (path, out_path))
+                self.target_dir, name + '_%d.nii.gz' % i)
+            os.system('cp %s %s' % (path, out_path))
 
         tmp_paths = glob.glob(tmp_prefix + '*.nii.gz')
         for path in tmp_paths:
@@ -285,7 +285,7 @@ class MakeDataSet(luigi.Task):
     test_fraction = 0.2
 
     def requires(self):
-        return {'dataset': Process3D()}
+        return {'dataset': Preprocess3D()}
 
     def run(self):
         path = self.input()['dataset'].path
