@@ -147,16 +147,21 @@ def extract_resize_3d(path, output):
     output.append(array)
 
 
-def slice_to_2d(array, output, axis=2):
+def slice_to_2d(array, output, axis=3):
+    print('test')
+    print(array.shape)
     size = array.shape[axis]
     start = int(0.45 * size)
     end = int(0.55 * size)
     logging.info(
         '-- Selecting 2D slices on dim %d from slide %d to slice %d'
         % (axis, start, end))
-    array = array.take(indices=range(start, end), axis=axis)
 
-    output.append(array)
+    for k in range(start, end):
+        print(k)
+        img = array.take(indices=k, axis=axis)
+        print(img.shape)
+        output.append(img)
 
 
 class Preprocess3D(luigi.Task):
@@ -328,8 +333,8 @@ class MakeDataSet(luigi.Task):
 
         for name, array in name_to_array.items():
             logging.info(
-                '-- START Split into train/test for %s from dataset of shape: '
-                '(%d, %d, %d, %d)' % (
+                '-- START Split into 3D train/test for %s '
+                'from dataset of shape: (%d, %d, %d, %d)' % (
                     name,
                     array.shape[0], array.shape[1],
                     array.shape[2], array.shape[3]))
@@ -340,35 +345,53 @@ class MakeDataSet(luigi.Task):
             # https://stats.stackexchange.com/questions/250273/
             # benefits-of-stratified-vs-random-samplingi
             # -for-generating-training-data-in-classi
+            print('before')
+            print(array.shape)
             split = sklearn.model_selection.train_test_split(
                 array,
                 test_size=self.test_fraction,
                 random_state=self.random_state)
             train, test = split
+            print('after 3D')
+            print(train.shape)
+            print(test.shape)
             name_to_split[name] = train, test
 
         if IMG_DIM == 2:
             for name, split in name_to_split.items():
-                train, test = split
-                output = []
-                Parallel(backend="threading", n_jobs=4)(
-                    delayed(slice_to_2d)(one_train, one_test, output)
-                    for one_train, one_test in zip(train, test))
-                train = np.asarray([o[0] for o in output])
-                test = np.asarray([o[1] for o in output])
-                train = torch.Tensor(train)
-                test = torch.Tensor(test)
-                name_to_split[name] = train, test
+                train_3d, test_3d = split
 
-        np.save(self.output()['train_img'].path, self.train_img_path)
-        np.save(self.output()['test_img'].path, self.test_img_path)
+                train_output = []
+                Parallel(backend="threading", n_jobs=4)(
+                    delayed(slice_to_2d)(one_train, train_output)
+                    for one_train in train_3d)
+
+                test_output = []
+                Parallel(backend="threading", n_jobs=4)(
+                    delayed(slice_to_2d)(one_test, test_output)
+                    for one_test in test_3d)
+
+                print('list length after 2D sliceing')
+                print(len(train_output))
+                print(len(test_output))
+                #train_2d = np.concatenate(train_output, axis=0)
+                #test_2d = np.concatenate(test_output, axis=0)
+                train_2d = np.asarray(train_output)
+                test_2d = np.asarray(test_output)
+                print('after 2D slicing:')
+                print(train.shape)
+                print(test.shape)
+                name_to_split[name] = train_2d, test_2d
+
+        np.save(self.output()['train_img'].path, name_to_split['image'][0])
+        np.save(self.output()['test_img'].path, name_to_split['image'][1])
 
         np.save(
             self.output()['train_segmentation'].path,
-            self.train_segmentation_path)
+            name_to_split['segmentation'][0])
         np.save(
             self.output()['test_segmentation'].path,
-            self.test_segmentation_path)
+            name_to_split['segmentation'][1])
 
     def output(self):
         return {'train_img':
