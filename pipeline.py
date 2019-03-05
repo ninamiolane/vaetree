@@ -68,7 +68,7 @@ REGU_FACTOR = 0.003
 N_EPOCHS = 200
 if DEBUG:
     N_EPOCHS = 2
-    N_FILEPATHS = 1
+    N_FILEPATHS = 2
 
 LATENT_DIM = 50
 
@@ -79,7 +79,7 @@ BETA1 = 0.5
 BETA2 = 0.999
 
 
-NEURO_DIR = 'neuro'
+NEURO_DIR = '/neuro'
 
 LOADER = jinja2.FileSystemLoader('./templates/')
 TEMPLATE_ENVIRONMENT = jinja2.Environment(
@@ -117,7 +117,7 @@ def is_diag(M):
     return np.all(M == np.diag(np.diagonal(M)))
 
 
-def get_tmpfile_prefix(some_id='gne'):
+def get_tmpfile_prefix(some_id='gne007_'):
     return os.path.join(
         tempfile.gettempdir(),
         next(tempfile._get_candidate_names()) + "_" + some_id)
@@ -162,6 +162,16 @@ def extract_and_resize(path, img_dim, output):
 
 
 class Process3D(luigi.Task):
+    """
+    Performs the following:
+    - N4BiasFieldCorrection
+    - Atropos
+    - antsRegistration
+    - antsApplyTransforms
+    From:
+    https://github.com/ANTsX/ANTs/blob/master/Scripts/antsBrainExtraction.sh
+    """
+
     target_dir = os.path.join(NEURO_DIR, 'processed')
     brain_template_with_skull = os.path.join(
         NEURO_DIR, 'T_template0.nii.gz')
@@ -193,33 +203,53 @@ class Process3D(luigi.Task):
             return
 
         tmp_prefix = get_tmpfile_prefix()
-        print(tmp_prefix)
+        print('tmp_prefix: %s' % tmp_prefix)
 
         os.system(
             '/usr/lib/ants/antsBrainExtraction.sh'
-            ' -d {} -a {} -e {} -m {} -f {} -o {}'.format(
+            ' -d {} -a {} -e {} -m {} -f {} -o {} -k True'.format(
                 3, path,
                 self.brain_template_with_skull,
                 self.brain_prior,
                 self.registration_mask,
                 tmp_prefix))
 
-        processed_path = temp_prefix + 'BrainExtractionBrain.nii.gz'
-        out_path = os.path.join(self.target_dir, '%d.nii.gz' % i)
-        print(processed_path)
-        print(out_path)
+        processed_path = tmp_prefix + 'BrainExtractionBrain.nii.gz'
+        out_path = os.path.join(self.target_dir, 'brain_%d.nii.gz' % i)
+        print('precessed_path: %s' % processed_path)
+        print('out_path: %s' % out_path)
 
         os.system('mv %s %s' % (processed_path, out_path))
         output.append(out_path)
 
+        gm_path = tmp_prefix + 'BrainExtractionGM.nii.gz'
+        wm_path = tmp_prefix + 'BrainExtractionWM.nii.gz'
+        csf_path = tmp_prefix + 'BrainExtractionCSF.nii.gz'
+        t_path = tmp_prefix + 'BrainExtractionTmp.nii.gz'
+        segmentation_path = tmp_prefix + 'BrainExtractionSegmentation.nii.gz'
+
+        seg_paths = [gm_path, wm_path, csf_path, t_path, segmentation_path]
+        new_names = ['gm', 'wm', 'csf', 't', 'segmentation']
+
+        for path, name in zip(seg_paths, new_names):
+            out_path = os.path.join(
+                self.target_dir, '%d_' % i + name + 'nii.gz')
+            os.system('mv %s %s' % (path, out_path))
+
         tmp_paths = glob.glob(tmp_prefix + '*.nii.gz')
         for path in tmp_paths:
             print('Removing %s...' % path)
-            os.remove(path)
+            # os.remove(path)
 
     def run(self):
+        if not os.path.exists(self.target_dir):
+            os.makedirs(self.target_dir)
+
         path = self.input()['dataset'].path
-        filepaths = glob.glob(path + '**/*.nii.gz', recursive=True)
+        print('path: %s' % path)
+        filepaths = glob.glob(path + '/**/*.nii.gz', recursive=True)
+        print('filepaths:')
+        print(filepaths)
 
         if not DEBUG:
             random.shuffle(filepaths)
@@ -249,40 +279,23 @@ class Process3D(luigi.Task):
         return luigi.LocalTarget(self.target_dir)
 
 
-class Segment3D(luigi.Task):
-    target_dir = os.path.join(NEURO_DIR, 'segmented')
-
-    def requires(self):
-        return {'dataset': Process3D()}
-
-    def run(self):
-        path = self.input()['dataset'].path
-        filepaths = glob.glob(path + '**/*.nii.gz', recursive=True)
-        random.shuffle(filepaths)
-
-        if DEBUG:
-            raise NotImplementedError()
-
-    def output(self):
-        return luigi.LocalTarget(self.target_dir)
-
-
 class MakeDataSet(luigi.Task):
     train_path = os.path.join(OUTPUT_DIR, 'train.npy')
     test_path = os.path.join(OUTPUT_DIR, 'test.npy')
     test_fraction = 0.2
 
     def requires(self):
-        return {'dataset': Segment3D()}
+        return {'dataset': Process3D()}
 
     def run(self):
         path = self.input()['dataset'].path
-        filepaths = glob.glob(path + '**/*.nii.gz', recursive=True)
+        filepaths = glob.glob(path + 'brain_*.nii.gz')
         random.shuffle(filepaths)
 
         logging.info('----- 3D nii filepaths: %d' % len(filepaths))
         if DEBUG:
-            logging.info('DEBUG mode: Selecting only %d filepaths.' % N_FILEPATHS)
+            logging.info(
+                'DEBUG mode: Selecting only %d filepaths.' % N_FILEPATHS)
             filepaths = filepaths[:N_FILEPATHS]
 
         first_filepath = filepaths[0]
@@ -297,7 +310,8 @@ class MakeDataSet(luigi.Task):
         Parallel(
             backend="threading",
             n_jobs=4)(
-                delayed(process_file)(f, IMG_DIM, imgs) for f in filepaths)
+                delayed(extract_and_resize)(f, IMG_DIM, imgs)
+                for f in filepaths)
         imgs = np.asarray(imgs)
         imgs = torch.Tensor(imgs)
 
