@@ -31,11 +31,16 @@ import losses
 import metrics
 import nn
 
-HOME_DIR = '/scratch/users/nmiolane'
+import warnings
+warnings.filterwarnings("ignore")
 
+HOME_DIR = '/scratch/users/nmiolane'
 OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
 TRAIN_DIR = os.path.join(OUTPUT_DIR, 'training')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
+
+# TODO(nina): Put this in Singularity receipe
+os.environ['ANTSPATH'] = '/usr/lib/ants/'
 
 DEBUG = True
 
@@ -45,12 +50,12 @@ DEVICE = torch.device("cuda" if CUDA else "cpu")
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
-
-IMAGE_WIDTH = 128
-IMAGE_HEIGHT = 128
-IMAGE_SIZE = (IMAGE_WIDTH, IMAGE_HEIGHT)
+IMG_WIDTH = 128
+IMG_HEIGHT = 128
+IMG_SIZE = (IMG_WIDTH, IMG_HEIGHT)
+IMG_DIM = len(IMG_SIZE)
 BATCH_SIZES = {64: 64, 128: 16}
-BATCH_SIZE = BATCH_SIZES[IMAGE_WIDTH]
+BATCH_SIZE = BATCH_SIZES[IMG_WIDTH]
 
 PRINT_INTERVAL = 10
 torch.backends.cudnn.benchmark = True
@@ -63,6 +68,7 @@ REGU_FACTOR = 0.003
 N_EPOCHS = 200
 if DEBUG:
     N_EPOCHS = 2
+    N_FILEPATHS = 2
 
 LATENT_DIM = 50
 
@@ -73,7 +79,7 @@ BETA1 = 0.5
 BETA2 = 0.999
 
 
-TARGET = '/neuro/'
+NEURO_DIR = '/neuro'
 
 LOADER = jinja2.FileSystemLoader('./templates/')
 TEMPLATE_ENVIRONMENT = jinja2.Environment(
@@ -84,11 +90,11 @@ TEMPLATE_NAME = 'report.jinja2'
 
 class FetchOpenNeuroDataset(luigi.Task):
     file_list_path = './datasets/openneuro_files.txt'
-    target_dir = '/neuro/'
+    target_dir = os.path.join(NEURO_DIR, 't1scans')
 
     def dl_file(self, path):
         path = path.strip()
-        target_path = TARGET + os.path.dirname(path)
+        target_path = self.target_dir + os.path.dirname(path)
         if not os.path.exists(target_path):
             os.makedirs(target_path)
         os.system("aws --no-sign-request s3 cp  s3://openneuro.org/%s %s" %
@@ -111,10 +117,10 @@ def is_diag(M):
     return np.all(M == np.diag(np.diagonal(M)))
 
 
-def get_tempfile_name(some_id='def'):
+def get_tmpfile_prefix(some_id='gne007_'):
     return os.path.join(
         tempfile.gettempdir(),
-        next(tempfile._get_candidate_names()) + "_" + some_id + ".nii.gz")
+        next(tempfile._get_candidate_names()) + "_" + some_id)
 
 
 def affine_matrix_permutes_axes(affine_matrix):
@@ -128,48 +134,149 @@ def affine_matrix_permutes_axes(affine_matrix):
     return False
 
 
-def process_file(path, output):
-    logging.info('loading and resizing image %s', path)
+def extract_and_resize(path, img_dim, output):
     img = nibabel.load(path)
-    if affine_matrix_permutes_axes(img.affine):
-        return
-
-    array = img.get_fdata()
-    array = np.nan_to_num(array)
-    std = np.std(array.reshape(-1))
-
-    array = array / std
-    mean = np.mean(array.reshape(-1))
-    # HACK Alert - This is a way to check if the backgound is a white noise.
-    if mean > 1.0:
-        print('mean too high: %s' % mean)
-        return
-
-    processed_file = get_tempfile_name()
-    # os.system('/usr/lib/ants/N4BiasFieldCorrection -i %s -o %s -s 6' %
-    #          (path, processed_file))
-    # Uncomment to skip N4 Bias Field Correction:
-    os.system('cp %s %s' % (path, processed_file))
-    img = nibabel.load(processed_file)
-
     array = img.get_fdata()
     array = np.nan_to_num(array)
     std = np.std(array.reshape(-1))
     # No centering because we're using cross-entropy loss.
     # Another HACK ALERT - statisticians please intervene.
     array = array / (4 * std)
-    z_size = array.shape[2]
-    z_start = int(0.45 * z_size)
-    z_end = int(0.55 * z_size)
-    logging.info(
-        '-- Selecting 2D slices on dim 1 from slide %d to slice %d'
-        % (z_start, z_end))
 
-    for k in range(z_start, z_end):
-        img_slice = array[:, :, k]
-        img = skimage.transform.resize(img_slice, IMAGE_SIZE)
-        output.append(img)
-    os.remove(processed_file)
+    if img_dim == 2:
+        z_size = array.shape[2]
+        z_start = int(0.45 * z_size)
+        z_end = int(0.55 * z_size)
+        logging.info(
+            '-- Selecting 2D slices on dim 1 from slide %d to slice %d'
+            % (z_start, z_end))
+
+        for k in range(z_start, z_end):
+            img_slice = array[:, :, k]
+            img = skimage.transform.resize(img_slice, IMG_SIZE)
+            output.append(img)
+    elif img_dim == 3:
+        output.append(array)
+    else:
+        raise ValueError('Dimension of the image must be 2D or 3D.')
+
+
+class Process3D(luigi.Task):
+    """
+    Performs the following:
+    - N4BiasFieldCorrection
+    - Atropos
+    - antsRegistration
+    - antsApplyTransforms
+    From:
+    https://github.com/ANTsX/ANTs/blob/master/Scripts/antsBrainExtraction.sh
+    """
+
+    target_dir = os.path.join(NEURO_DIR, 'processed')
+    brain_template_with_skull = os.path.join(
+        NEURO_DIR, 'T_template0.nii.gz')
+    brain_prior = os.path.join(
+        NEURO_DIR, 'T_template0_BrainCerebellumProbabilityMask.nii.gz')
+    registration_mask = os.path.join(
+        NEURO_DIR, 'T_template0_BrainCerebellumRegistrationMask.nii.gz')
+
+    def requires(self):
+        return {'dataset': FetchOpenNeuroDataset()}
+
+    def process_file(self, path, i, output):
+        logging.info('Loading image %s...', path)
+        img = nibabel.load(path)
+
+        if affine_matrix_permutes_axes(img.affine):
+            print('Skip image %s - bad affine orientation' % path)
+            return
+
+        array = img.get_fdata()
+        array = np.nan_to_num(array)
+        std = np.std(array.reshape(-1))
+        array = array / std
+        mean = np.mean(array.reshape(-1))
+        # HACK Alert
+        # This is a way to check if the backgound is a white noise.
+        if mean > 1.0:
+            print('Skip image %s - mean too high: %s' % (path, mean))
+            return
+
+        tmp_prefix = get_tmpfile_prefix()
+        print('tmp_prefix: %s' % tmp_prefix)
+
+        os.system(
+            '/usr/lib/ants/antsBrainExtraction.sh'
+            ' -d {} -a {} -e {} -m {} -f {} -o {} -k True'.format(
+                3, path,
+                self.brain_template_with_skull,
+                self.brain_prior,
+                self.registration_mask,
+                tmp_prefix))
+
+        processed_path = tmp_prefix + 'BrainExtractionBrain.nii.gz'
+        out_path = os.path.join(self.target_dir, 'brain_%d.nii.gz' % i)
+        print('precessed_path: %s' % processed_path)
+        print('out_path: %s' % out_path)
+
+        os.system('mv %s %s' % (processed_path, out_path))
+        output.append(out_path)
+
+        gm_path = tmp_prefix + 'BrainExtractionGM.nii.gz'
+        wm_path = tmp_prefix + 'BrainExtractionWM.nii.gz'
+        csf_path = tmp_prefix + 'BrainExtractionCSF.nii.gz'
+        t_path = tmp_prefix + 'BrainExtractionTmp.nii.gz'
+        segmentation_path = tmp_prefix + 'BrainExtractionSegmentation.nii.gz'
+
+        seg_paths = [gm_path, wm_path, csf_path, t_path, segmentation_path]
+        new_names = ['gm', 'wm', 'csf', 't', 'segmentation']
+
+        for path, name in zip(seg_paths, new_names):
+            out_path = os.path.join(
+                self.target_dir, '%d_' % i + name + 'nii.gz')
+            os.system('mv %s %s' % (path, out_path))
+
+        tmp_paths = glob.glob(tmp_prefix + '*.nii.gz')
+        for path in tmp_paths:
+            print('Removing %s...' % path)
+            # os.remove(path)
+
+    def run(self):
+        if not os.path.exists(self.target_dir):
+            os.makedirs(self.target_dir)
+
+        path = self.input()['dataset'].path
+        print('path: %s' % path)
+        filepaths = glob.glob(path + '/**/*.nii.gz', recursive=True)
+        print('filepaths:')
+        print(filepaths)
+
+        if not DEBUG:
+            random.shuffle(filepaths)
+
+        if DEBUG:
+            logging.info(
+                'DEBUG mode: Selecting only %d filepaths.' % N_FILEPATHS)
+            filepaths = filepaths[:N_FILEPATHS]
+
+        n_filepaths = len(filepaths)
+        logging.info('----- Found %d 3D nii filepaths' % n_filepaths)
+
+        first_filepath = filepaths[0]
+        logging.info('----- First filepath: %s' % first_filepath)
+
+        processed_filepaths = []
+        Parallel(
+            backend="threading",
+            n_jobs=4)(
+                delayed(self.process_file)(f, i, processed_filepaths)
+                for i, f in enumerate(filepaths))
+
+        logging.info('-- Processing DONE: %d/%d nii processed.' % (
+            len(processed_filepaths), n_filepaths))
+
+    def output(self):
+        return luigi.LocalTarget(self.target_dir)
 
 
 class MakeDataSet(luigi.Task):
@@ -178,14 +285,18 @@ class MakeDataSet(luigi.Task):
     test_fraction = 0.2
 
     def requires(self):
-        return {'dataset': FetchOpenNeuroDataset()}
+        return {'dataset': Process3D()}
 
     def run(self):
         path = self.input()['dataset'].path
-        filepaths = glob.glob(path + '**/*.nii.gz', recursive=True)
+        filepaths = glob.glob(path + 'brain_*.nii.gz')
         random.shuffle(filepaths)
-        n_vols = len(filepaths)
-        logging.info('----- 3D images: %d' % n_vols)
+
+        logging.info('----- 3D nii filepaths: %d' % len(filepaths))
+        if DEBUG:
+            logging.info(
+                'DEBUG mode: Selecting only %d filepaths.' % N_FILEPATHS)
+            filepaths = filepaths[:N_FILEPATHS]
 
         first_filepath = filepaths[0]
         first_img = nibabel.load(first_filepath)
@@ -195,22 +306,19 @@ class MakeDataSet(luigi.Task):
         logging.info(
             '----- First volume shape: (%d, %d, %d)' % first_array.shape)
 
-        if DEBUG:
-            filepaths = filepaths[:16]
-
         imgs = []
         Parallel(
             backend="threading",
-            n_jobs=4)(delayed(process_file)(f, imgs) for f in filepaths)
+            n_jobs=4)(
+                delayed(extract_and_resize)(f, IMG_DIM, imgs)
+                for f in filepaths)
         imgs = np.asarray(imgs)
         imgs = torch.Tensor(imgs)
 
         new_shape = (imgs.shape[0],) + (1,) + imgs.shape[1:]
         imgs = imgs.reshape(new_shape)
 
-        logging.info(
-            '----- 2D images:'
-            'training set shape: (%d, %d, %d, %d)' % imgs.shape)
+        logging.info('--Dataset: (%d, %d, %d, %d)' % imgs.shape)
 
         logging.info('-- Split into train and test sets')
         split = sklearn.model_selection.train_test_split(
@@ -460,19 +568,19 @@ class Train(luigi.Task):
                     win=data_win,
                     opts=dict(
                         title='Train Epoch {}: Data'.format(epoch),
-                        width=150*IMAGE_WIDTH/64, height=150*IMAGE_HEIGHT/64))
+                        width=150*IMG_WIDTH/64, height=150*IMG_HEIGHT/64))
                 recon_win = train_vis.image(
                     batch_recon[0],
                     win=recon_win,
                     opts=dict(
                         title='Train Epoch {}: Reconstruction'.format(epoch),
-                        width=150*IMAGE_WIDTH/64, height=150*IMAGE_HEIGHT/64))
+                        width=150*IMG_WIDTH/64, height=150*IMG_HEIGHT/64))
                 from_prior_win = train_vis.image(
                     batch_from_prior[0],
                     win=from_prior_win,
                     opts=dict(
                         title='Train Epoch {}: From prior'.format(epoch),
-                        width=150*IMAGE_WIDTH/64, height=150*IMAGE_HEIGHT/64))
+                        width=150*IMG_WIDTH/64, height=150*IMG_HEIGHT/64))
 
             total_loss_reconstruction += loss_reconstruction.item()
             total_loss_regularization += loss_regularization.item()
@@ -645,23 +753,23 @@ class Train(luigi.Task):
                         win=data_win,
                         opts=dict(
                             title='Test Epoch {}: Data'.format(epoch),
-                            width=150*IMAGE_WIDTH/64,
-                            height=150*IMAGE_HEIGHT/64))
+                            width=150*IMG_WIDTH/64,
+                            height=150*IMG_HEIGHT/64))
                     recon_win = vis.image(
                         batch_recon[0][0],
                         win=recon_win,
                         opts=dict(
                             title='Test Epoch {}: Reconstruction'.format(
                                 epoch),
-                            width=150*IMAGE_WIDTH/64,
-                            height=150*IMAGE_HEIGHT/64))
+                            width=150*IMG_WIDTH/64,
+                            height=150*IMG_HEIGHT/64))
                     from_prior_win = vis.image(
                         batch_from_prior[0][0],
                         win=from_prior_win,
                         opts=dict(
                             title='Test Epoch {}: From prior'.format(epoch),
-                            width=150*IMAGE_WIDTH/64,
-                            height=150*IMAGE_HEIGHT/64))
+                            width=150*IMG_WIDTH/64,
+                            height=150*IMG_HEIGHT/64))
 
                     # Save only last batch
                     data_path = os.path.join(
