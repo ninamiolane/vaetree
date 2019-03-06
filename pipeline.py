@@ -148,8 +148,6 @@ def extract_resize_3d(path, output):
 
 
 def slice_to_2d(array, output, axis=3):
-    print('test')
-    print(array.shape)
     size = array.shape[axis]
     start = int(0.45 * size)
     end = int(0.55 * size)
@@ -213,12 +211,13 @@ class Preprocess3D(luigi.Task):
         # -k parameter to keep the temporary files, i.e. the segmentation
         os.system(
             '/usr/lib/ants/antsBrainExtraction.sh'
-            ' -d {} -a {} -e {} -m {} -f {} -o {} -k 1'.format(
+            ' -d {} -a {} -e {} -m {} -f {} -o {} -k 1 -z {}'.format(
                 3, path,
                 self.brain_template_with_skull,
                 self.brain_prior,
                 self.registration_mask,
-                tmp_prefix))
+                tmp_prefix,
+                int(DEBUG)))
 
         img_tmp = tmp_prefix + 'BrainExtractionBrain.nii.gz'
         img_out = os.path.join(
@@ -385,11 +384,11 @@ class MakeDataSet(luigi.Task):
         return {'train_img':
                 luigi.LocalTarget(self.name_to_train_path['img']),
                 'test_img':
-                luigi.LocalTarget(self.name_to_train_path['img']),
+                luigi.LocalTarget(self.name_to_test_path['img']),
                 'train_segmentation':
                 luigi.LocalTarget(self.name_to_train_path['segmentation']),
                 'test_segmentation':
-                luigi.LocalTarget(self.name_to_train_path['segmentation'])}
+                luigi.LocalTarget(self.name_to_test_path['segmentation'])}
 
 
 class Train(luigi.Task):
@@ -865,9 +864,12 @@ class Train(luigi.Task):
                 os.chmod(directory, 0o777)
 
         train_name = 'train_' + DATA_TYPE
-        test_name = 'train_' + DATA_TYPE
-        train = torch.Tensor(np.load(self.input()[train_name].path))
-        test = torch.Tensor(np.load(self.input()[test_name].path))
+        test_name = 'test_' + DATA_TYPE
+        train_path = self.input()[train_name].path
+        test_path = self.input()[test_name].path
+
+        train = torch.Tensor(np.load(train_path))
+        test = torch.Tensor(np.load(test_path))
 
         logging.info('-- Train tensor: (%d, %d, %d, %d)' % train.shape)
         np.random.shuffle(train)
