@@ -100,6 +100,7 @@ class FetchOpenNeuroDataset(luigi.Task):
         target_path = self.target_dir + os.path.dirname(path)
         if not os.path.exists(target_path):
             os.makedirs(target_path)
+        # TODO(nina): Replace with subprocess
         os.system("aws --no-sign-request s3 cp  s3://openneuro.org/%s %s" %
                   (path, target_path))
 
@@ -138,6 +139,8 @@ def affine_matrix_permutes_axes(affine_matrix):
 
 
 def extract_resize_3d(path, output):
+    # TODO(nina): investigate distribution of sizes in datasets
+    # TODO(nina): add DatasetReport Task
     img = nibabel.load(path)
     array = img.get_fdata()
     array = np.nan_to_num(array)
@@ -177,7 +180,7 @@ class Preprocess3D(luigi.Task):
     Labels in array after segmentation:
     - Background=0., CSF=1., GM=2., WM=3.
     """
-
+    # TODO(nina): Add skip if preprocess img already in folder.
     target_dir = os.path.join(NEURO_DIR, 'preprocessed')
     brain_template_with_skull = os.path.join(
         NEURO_DIR, 'T_template0.nii.gz')
@@ -190,6 +193,8 @@ class Preprocess3D(luigi.Task):
         return {'dataset': FetchOpenNeuroDataset()}
 
     def process_file(self, path, i, output):
+        # TODO(nina): Replace os.system by subprocess and control ANTs verbose
+        # TODO(nina): Put a progress bar?
         logging.info('Loading image %s...', path)
         img = nibabel.load(path)
 
@@ -872,15 +877,13 @@ class Train(luigi.Task):
         train = torch.Tensor(np.load(train_path))
         test = torch.Tensor(np.load(test_path))
 
-        if DEBUG:
-            train = test  ## we have nothign in train
-        #logging.info('-- Train tensor: (%d, %d, %d, %d)' % train.shape)
+        logging.info('-- Train tensor: (%d, %d, %d, %d)' % train.shape)
         np.random.shuffle(train)
         train_dataset = torch.utils.data.TensorDataset(train)
         train_loader = torch.utils.data.DataLoader(
             train_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
 
-        #logging.info('-- Test tensor: (%d, %d, %d, %d)' % test.shape)
+        logging.info('-- Test tensor: (%d, %d, %d, %d)' % test.shape)
         test_dataset = torch.utils.data.TensorDataset(test)
         test_loader = torch.utils.data.DataLoader(
             test_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
