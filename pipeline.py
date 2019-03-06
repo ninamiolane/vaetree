@@ -222,7 +222,7 @@ class Preprocess3D(luigi.Task):
 
         img_tmp = tmp_prefix + 'BrainExtractionBrain.nii.gz'
         img_out = os.path.join(
-            self.target_dir, 'image_%d.nii.gz' % i)
+            self.target_dir, 'img_%d.nii.gz' % i)
         os.system('mv %s %s' % (img_tmp, img_out))
 
         output.append(img_out)
@@ -276,15 +276,17 @@ class MakeDataSet(luigi.Task):
     Extract slices if IMG_DIM is set to 2D, taking care to separate patients.
     """
     shape_str = '%dx%dx%d' % IMG_SHAPE if IMG_DIM == 3 else '%dx%d' % IMG_SHAPE
+    target_dir = os.path.join(NEURO_DIR, 'train_test_datasets')
 
-    train_img_path = os.path.join(
-        OUTPUT_DIR, 'train_img_' + shape_str + '.npy')
-    test_img_path = os.path.join(
-        OUTPUT_DIR, 'test_img_' + shape_str + '.npy')
-    train_segmentation_path = os.path.join(
-        OUTPUT_DIR, 'train_segmentation_' + shape_str + '.npy')
-    test_segmentation_path = os.path.join(
-        OUTPUT_DIR, 'test_segmentation_' + shape_str + '.npy')
+    names = ['img', 'segmentation']
+    name_to_train_path = {}
+    name_to_test_path = {}
+    for name in names:
+        name_to_train_path[name] = os.path.join(
+            target_dir, 'train_%s_%s.npy' % (name, shape_str))
+        name_to_test_path[name] = os.path.join(
+            target_dir, 'test_%s_%s.npy' % (name, shape_str))
+
     test_fraction = 0.2
     if DEBUG:
         test_fraction = 0.
@@ -294,25 +296,29 @@ class MakeDataSet(luigi.Task):
         return {'dataset': Preprocess3D()}
 
     def run(self):
+        if not os.path.isdir(self.target_dir):
+            os.mkdir(self.target_dir)
+            os.chmod(self.target_dir, 0o777)
+
         directory = self.input()['dataset'].path
-        img_paths = glob.glob(directory + '/image_*.nii.gz')
-        segmentation_paths = glob.glob(directory + '/segmentation_*.nii.gz')
+        name_to_input_paths = {}
+        for name in self.names:
+            name_to_input_paths[name] = glob.glob(
+                directory + '/%s_*.nii.gz' % name)
 
         if not DEBUG:
-            random.shuffle(img_paths)
-            random.shuffle(segmentation_paths)
+            for paths in name_to_input_paths.values():
+                random.shuffle(paths)
 
         if DEBUG:
             logging.info(
                 'DEBUG mode: '
                 'Selecting only %d images and %d segmentations.' % (
                     N_FILEPATHS, N_FILEPATHS))
-            img_paths = img_paths[:N_FILEPATHS]
-            segmentation_paths = segmentation_paths[:N_FILEPATHS]
+            for name, paths in name_to_input_paths.items():
+                name_to_input_paths[name] = paths[:N_FILEPATHS]
 
-        name_to_paths = {
-            'image': img_paths, 'segmentation': segmentation_paths}
-        for name, paths in name_to_paths.items():
+        for name, paths in name_to_input_paths.items():
             n_paths = len(paths)
             first_path = paths[0]
             logging.info(
@@ -321,7 +327,7 @@ class MakeDataSet(luigi.Task):
                    n_paths, name, first_path))
 
         name_to_array = {}
-        for name, paths in name_to_paths.items():
+        for name, paths in name_to_input_paths.items():
             output = []
             Parallel(backend="threading", n_jobs=4)(
                 delayed(extract_resize_3d)(f, output)
@@ -345,16 +351,11 @@ class MakeDataSet(luigi.Task):
             # https://stats.stackexchange.com/questions/250273/
             # benefits-of-stratified-vs-random-samplingi
             # -for-generating-training-data-in-classi
-            print('before')
-            print(array.shape)
             split = sklearn.model_selection.train_test_split(
                 array,
                 test_size=self.test_fraction,
                 random_state=self.random_state)
             train, test = split
-            print('after 3D')
-            print(train.shape)
-            print(test.shape)
             name_to_split[name] = train, test
 
         if IMG_DIM == 2:
@@ -371,37 +372,24 @@ class MakeDataSet(luigi.Task):
                     delayed(slice_to_2d)(one_test, test_output)
                     for one_test in test_3d)
 
-                print('list length after 2D sliceing')
-                print(len(train_output))
-                print(len(test_output))
-                #train_2d = np.concatenate(train_output, axis=0)
-                #test_2d = np.concatenate(test_output, axis=0)
                 train_2d = np.asarray(train_output)
                 test_2d = np.asarray(test_output)
-                print('after 2D slicing:')
-                print(train.shape)
-                print(test.shape)
                 name_to_split[name] = train_2d, test_2d
 
-        np.save(self.output()['train_img'].path, name_to_split['image'][0])
-        np.save(self.output()['test_img'].path, name_to_split['image'][1])
-
-        np.save(
-            self.output()['train_segmentation'].path,
-            name_to_split['segmentation'][0])
-        np.save(
-            self.output()['test_segmentation'].path,
-            name_to_split['segmentation'][1])
+        for name, split in name_to_split.items():
+            train, test = name_to_split[name]
+            np.save(self.output()['train_' + name].path, train)
+            np.save(self.output()['test_' + name].path, test)
 
     def output(self):
         return {'train_img':
-                luigi.LocalTarget(self.train_img_path),
+                luigi.LocalTarget(self.name_to_train_path['img']),
                 'test_img':
-                luigi.LocalTarget(self.test_img_path),
+                luigi.LocalTarget(self.name_to_train_path['img']),
                 'train_segmentation':
-                luigi.LocalTarget(self.train_segmentation_path),
+                luigi.LocalTarget(self.name_to_train_path['segmentation']),
                 'test_segmentation':
-                luigi.LocalTarget(self.test_segmentation_path)}
+                luigi.LocalTarget(self.name_to_train_path['segmentation'])}
 
 
 class Train(luigi.Task):
