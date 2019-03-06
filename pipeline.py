@@ -169,6 +169,8 @@ class Preprocess3D(luigi.Task):
     - Atropos for segmentation and brain extraction, which uses:
     --- antsRegistration
     --- antsApplyTransforms
+    # -k parameter to keep the temporary files, i.e. the segmentation
+    # -z parameter > 0 runs a debug version, 10min/nii instead of 20min/nii
     From:
     https://github.com/ANTsX/ANTs/blob/master/Scripts/antsBrainExtraction.sh
 
@@ -208,7 +210,6 @@ class Preprocess3D(luigi.Task):
 
         tmp_prefix = get_tmpfile_prefix()
 
-        # -k parameter to keep the temporary files, i.e. the segmentation
         os.system(
             '/usr/lib/ants/antsBrainExtraction.sh'
             ' -d {} -a {} -e {} -m {} -f {} -o {} -k 1 -z {}'.format(
@@ -288,7 +289,7 @@ class MakeDataSet(luigi.Task):
 
     test_fraction = 0.2
     if DEBUG:
-        test_fraction = 0.
+        test_fraction = 0.5
     random_state = 13
 
     def requires(self):
@@ -871,13 +872,15 @@ class Train(luigi.Task):
         train = torch.Tensor(np.load(train_path))
         test = torch.Tensor(np.load(test_path))
 
-        logging.info('-- Train tensor: (%d, %d, %d, %d)' % train.shape)
+        if DEBUG:
+            train = test  ## we have nothign in train
+        #logging.info('-- Train tensor: (%d, %d, %d, %d)' % train.shape)
         np.random.shuffle(train)
         train_dataset = torch.utils.data.TensorDataset(train)
         train_loader = torch.utils.data.DataLoader(
             train_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
 
-        logging.info('-- Test tensor: (%d, %d, %d, %d)' % test.shape)
+        #logging.info('-- Test tensor: (%d, %d, %d, %d)' % test.shape)
         test_dataset = torch.utils.data.TensorDataset(test)
         test_loader = torch.utils.data.DataLoader(
             test_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
