@@ -71,7 +71,7 @@ REGU_FACTOR = 0.003
 N_EPOCHS = 200
 if DEBUG:
     N_EPOCHS = 2
-    N_FILEPATHS = 2
+    N_FILEPATHS = 10
 
 LATENT_DIM = 50
 
@@ -223,7 +223,7 @@ class Preprocess3D(luigi.Task):
                 self.brain_prior,
                 self.registration_mask,
                 tmp_prefix,
-                int(DEBUG)))
+                0))  # int(DEBUG)))
 
         img_tmp = tmp_prefix + 'BrainExtractionBrain.nii.gz'
         img_out = os.path.join(
