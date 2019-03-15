@@ -50,10 +50,13 @@ DEVICE = torch.device("cuda" if CUDA else "cpu")
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
+# Decide on using segmentations or image intensities
+DATA_TYPE = 'segmentation'
+
 IMG_WIDTH = 128
 IMG_HEIGHT = 128
-IMG_SIZE = (IMG_WIDTH, IMG_HEIGHT)
-IMG_DIM = len(IMG_SIZE)
+IMG_SHAPE = (IMG_WIDTH, IMG_HEIGHT)
+IMG_DIM = len(IMG_SHAPE)
 BATCH_SIZES = {64: 64, 128: 16}
 BATCH_SIZE = BATCH_SIZES[IMG_WIDTH]
 
@@ -68,7 +71,7 @@ REGU_FACTOR = 0.003
 N_EPOCHS = 200
 if DEBUG:
     N_EPOCHS = 2
-    N_FILEPATHS = 2
+    N_FILEPATHS = 10
 
 LATENT_DIM = 50
 
@@ -97,6 +100,7 @@ class FetchOpenNeuroDataset(luigi.Task):
         target_path = self.target_dir + os.path.dirname(path)
         if not os.path.exists(target_path):
             os.makedirs(target_path)
+        # TODO(nina): Replace with subprocess
         os.system("aws --no-sign-request s3 cp  s3://openneuro.org/%s %s" %
                   (path, target_path))
 
@@ -134,45 +138,50 @@ def affine_matrix_permutes_axes(affine_matrix):
     return False
 
 
-def extract_and_resize(path, img_dim, output):
+def extract_resize_3d(path, output):
+    # TODO(nina): investigate distribution of sizes in datasets
+    # TODO(nina): add DatasetReport Task
     img = nibabel.load(path)
     array = img.get_fdata()
     array = np.nan_to_num(array)
-    std = np.std(array.reshape(-1))
-    # No centering because we're using cross-entropy loss.
-    # Another HACK ALERT - statisticians please intervene.
-    array = array / (4 * std)
+    # TODO(nina): Need to normalize/resample intensity histograms?
 
-    if img_dim == 2:
-        z_size = array.shape[2]
-        z_start = int(0.45 * z_size)
-        z_end = int(0.55 * z_size)
-        logging.info(
-            '-- Selecting 2D slices on dim 1 from slide %d to slice %d'
-            % (z_start, z_end))
-
-        for k in range(z_start, z_end):
-            img_slice = array[:, :, k]
-            img = skimage.transform.resize(img_slice, IMG_SIZE)
-            output.append(img)
-    elif img_dim == 3:
-        output.append(array)
-    else:
-        raise ValueError('Dimension of the image must be 2D or 3D.')
+    array = skimage.transform.resize(array, IMG_SHAPE)
+    output.append(array)
 
 
-class Process3D(luigi.Task):
+def slice_to_2d(array, output, axis=3):
+    size = array.shape[axis]
+    start = int(0.45 * size)
+    end = int(0.55 * size)
+    logging.info(
+        '-- Selecting 2D slices on dim %d from slide %d to slice %d'
+        % (axis, start, end))
+
+    for k in range(start, end):
+        print(k)
+        img = array.take(indices=k, axis=axis)
+        print(img.shape)
+        output.append(img)
+
+
+class Preprocess3D(luigi.Task):
     """
     Performs the following:
     - N4BiasFieldCorrection
-    - Atropos
-    - antsRegistration
-    - antsApplyTransforms
+    - Atropos for segmentation and brain extraction, which uses:
+    --- antsRegistration
+    --- antsApplyTransforms
+    # -k parameter to keep the temporary files, i.e. the segmentation
+    # -z parameter > 0 runs a debug version, 10min/nii instead of 20min/nii
     From:
     https://github.com/ANTsX/ANTs/blob/master/Scripts/antsBrainExtraction.sh
-    """
 
-    target_dir = os.path.join(NEURO_DIR, 'processed')
+    Labels in array after segmentation:
+    - Background=0., CSF=1., GM=2., WM=3.
+    """
+    # TODO(nina): Add skip if preprocess img already in folder.
+    target_dir = os.path.join(NEURO_DIR, 'preprocessed')
     brain_template_with_skull = os.path.join(
         NEURO_DIR, 'T_template0.nii.gz')
     brain_prior = os.path.join(
@@ -184,6 +193,8 @@ class Process3D(luigi.Task):
         return {'dataset': FetchOpenNeuroDataset()}
 
     def process_file(self, path, i, output):
+        # TODO(nina): Replace os.system by subprocess and control ANTs verbose
+        # TODO(nina): Put a progress bar?
         logging.info('Loading image %s...', path)
         img = nibabel.load(path)
 
@@ -203,53 +214,40 @@ class Process3D(luigi.Task):
             return
 
         tmp_prefix = get_tmpfile_prefix()
-        print('tmp_prefix: %s' % tmp_prefix)
 
         os.system(
             '/usr/lib/ants/antsBrainExtraction.sh'
-            ' -d {} -a {} -e {} -m {} -f {} -o {} -k True'.format(
+            ' -d {} -a {} -e {} -m {} -f {} -o {} -k 1 -z {}'.format(
                 3, path,
                 self.brain_template_with_skull,
                 self.brain_prior,
                 self.registration_mask,
-                tmp_prefix))
+                tmp_prefix,
+                0))  # int(DEBUG)))
 
-        processed_path = tmp_prefix + 'BrainExtractionBrain.nii.gz'
-        out_path = os.path.join(self.target_dir, 'brain_%d.nii.gz' % i)
-        print('precessed_path: %s' % processed_path)
-        print('out_path: %s' % out_path)
+        img_tmp = tmp_prefix + 'BrainExtractionBrain.nii.gz'
+        img_out = os.path.join(
+            self.target_dir, 'img_%d.nii.gz' % i)
+        os.system('mv %s %s' % (img_tmp, img_out))
 
-        os.system('mv %s %s' % (processed_path, out_path))
-        output.append(out_path)
+        output.append(img_out)
 
-        gm_path = tmp_prefix + 'BrainExtractionGM.nii.gz'
-        wm_path = tmp_prefix + 'BrainExtractionWM.nii.gz'
-        csf_path = tmp_prefix + 'BrainExtractionCSF.nii.gz'
-        t_path = tmp_prefix + 'BrainExtractionTmp.nii.gz'
-        segmentation_path = tmp_prefix + 'BrainExtractionSegmentation.nii.gz'
-
-        seg_paths = [gm_path, wm_path, csf_path, t_path, segmentation_path]
-        new_names = ['gm', 'wm', 'csf', 't', 'segmentation']
-
-        for path, name in zip(seg_paths, new_names):
-            out_path = os.path.join(
-                self.target_dir, '%d_' % i + name + 'nii.gz')
-            os.system('mv %s %s' % (path, out_path))
+        segmentation_tmp = tmp_prefix + 'BrainExtractionSegmentation.nii.gz'
+        segmentation_out = os.path.join(
+            self.target_dir, 'segmentation_%d.nii.gz' % i)
+        os.system('mv %s %s' % (segmentation_tmp, segmentation_out))
 
         tmp_paths = glob.glob(tmp_prefix + '*.nii.gz')
         for path in tmp_paths:
             print('Removing %s...' % path)
-            # os.remove(path)
+            os.remove(path)
 
     def run(self):
         if not os.path.exists(self.target_dir):
             os.makedirs(self.target_dir)
 
-        path = self.input()['dataset'].path
-        print('path: %s' % path)
-        filepaths = glob.glob(path + '/**/*.nii.gz', recursive=True)
-        print('filepaths:')
-        print(filepaths)
+        directory = self.input()['dataset'].path
+        filepaths = glob.glob(directory + '/**/*.nii.gz', recursive=True)
 
         if not DEBUG:
             random.shuffle(filepaths)
@@ -260,17 +258,15 @@ class Process3D(luigi.Task):
             filepaths = filepaths[:N_FILEPATHS]
 
         n_filepaths = len(filepaths)
-        logging.info('----- Found %d 3D nii filepaths' % n_filepaths)
-
         first_filepath = filepaths[0]
-        logging.info('----- First filepath: %s' % first_filepath)
+        logging.info(
+            '-- Found %d 3D raw nii filepaths, for example: %s' % (
+               n_filepaths, first_filepath))
 
         processed_filepaths = []
-        Parallel(
-            backend="threading",
-            n_jobs=4)(
-                delayed(self.process_file)(f, i, processed_filepaths)
-                for i, f in enumerate(filepaths))
+        Parallel(backend="threading", n_jobs=4)(delayed(self.process_file)(
+            f, i, processed_filepaths)
+            for i, f in enumerate(filepaths))
 
         logging.info('-- Processing DONE: %d/%d nii processed.' % (
             len(processed_filepaths), n_filepaths))
@@ -280,59 +276,125 @@ class Process3D(luigi.Task):
 
 
 class MakeDataSet(luigi.Task):
-    train_path = os.path.join(OUTPUT_DIR, 'train.npy')
-    test_path = os.path.join(OUTPUT_DIR, 'test.npy')
+    """
+    Resize images and segmentations.
+    Extract slices if IMG_DIM is set to 2D, taking care to separate patients.
+    """
+    shape_str = '%dx%dx%d' % IMG_SHAPE if IMG_DIM == 3 else '%dx%d' % IMG_SHAPE
+    target_dir = os.path.join(NEURO_DIR, 'train_test_datasets')
+
+    names = ['img', 'segmentation']
+    name_to_train_path = {}
+    name_to_test_path = {}
+    for name in names:
+        name_to_train_path[name] = os.path.join(
+            target_dir, 'train_%s_%s.npy' % (name, shape_str))
+        name_to_test_path[name] = os.path.join(
+            target_dir, 'test_%s_%s.npy' % (name, shape_str))
+
     test_fraction = 0.2
+    if DEBUG:
+        test_fraction = 0.5
+    random_state = 13
 
     def requires(self):
-        return {'dataset': Process3D()}
+        return {'dataset': Preprocess3D()}
 
     def run(self):
-        path = self.input()['dataset'].path
-        filepaths = glob.glob(path + 'brain_*.nii.gz')
-        random.shuffle(filepaths)
+        if not os.path.isdir(self.target_dir):
+            os.mkdir(self.target_dir)
+            os.chmod(self.target_dir, 0o777)
 
-        logging.info('----- 3D nii filepaths: %d' % len(filepaths))
+        directory = self.input()['dataset'].path
+        name_to_input_paths = {}
+        for name in self.names:
+            name_to_input_paths[name] = glob.glob(
+                directory + '/%s_*.nii.gz' % name)
+
+        if not DEBUG:
+            for paths in name_to_input_paths.values():
+                random.shuffle(paths)
+
         if DEBUG:
             logging.info(
-                'DEBUG mode: Selecting only %d filepaths.' % N_FILEPATHS)
-            filepaths = filepaths[:N_FILEPATHS]
+                'DEBUG mode: '
+                'Selecting only %d images and %d segmentations.' % (
+                    N_FILEPATHS, N_FILEPATHS))
+            for name, paths in name_to_input_paths.items():
+                name_to_input_paths[name] = paths[:N_FILEPATHS]
 
-        first_filepath = filepaths[0]
-        first_img = nibabel.load(first_filepath)
-        first_array = first_img.get_fdata()
+        for name, paths in name_to_input_paths.items():
+            n_paths = len(paths)
+            first_path = paths[0]
+            logging.info(
+                '-- START Extraction of array and resizing from '
+                '%d 3D nii %s path(s), for example: %s' % (
+                   n_paths, name, first_path))
 
-        logging.info('----- First filepath: %s' % first_filepath)
-        logging.info(
-            '----- First volume shape: (%d, %d, %d)' % first_array.shape)
+        name_to_array = {}
+        for name, paths in name_to_input_paths.items():
+            output = []
+            Parallel(backend="threading", n_jobs=4)(
+                delayed(extract_resize_3d)(f, output)
+                for f in paths)
+            array = np.asarray(output)
+            shape_with_channels = (array.shape[0],) + (1,) + array.shape[1:]
+            array = array.reshape(shape_with_channels)
+            name_to_array[name] = array
 
-        imgs = []
-        Parallel(
-            backend="threading",
-            n_jobs=4)(
-                delayed(extract_and_resize)(f, IMG_DIM, imgs)
-                for f in filepaths)
-        imgs = np.asarray(imgs)
-        imgs = torch.Tensor(imgs)
+        for name, array in name_to_array.items():
+            logging.info(
+                '-- START Split into 3D train/test for %s '
+                'from dataset of shape: (%d, %d, %d, %d)' % (
+                    name,
+                    array.shape[0], array.shape[1],
+                    array.shape[2], array.shape[3]))
 
-        new_shape = (imgs.shape[0],) + (1,) + imgs.shape[1:]
-        imgs = imgs.reshape(new_shape)
+        name_to_split = {}
+        for name, array in name_to_array.items():
+            # TODO(nina): Consider using "stratified" split for better splits
+            # https://stats.stackexchange.com/questions/250273/
+            # benefits-of-stratified-vs-random-samplingi
+            # -for-generating-training-data-in-classi
+            split = sklearn.model_selection.train_test_split(
+                array,
+                test_size=self.test_fraction,
+                random_state=self.random_state)
+            train, test = split
+            name_to_split[name] = train, test
 
-        logging.info('--Dataset: (%d, %d, %d, %d)' % imgs.shape)
+        if IMG_DIM == 2:
+            for name, split in name_to_split.items():
+                train_3d, test_3d = split
 
-        logging.info('-- Split into train and test sets')
-        split = sklearn.model_selection.train_test_split(
-            np.array(imgs), test_size=self.test_fraction, random_state=13)
-        train, test = split
-        train = torch.Tensor(train)
-        test = torch.Tensor(test)
+                train_output = []
+                Parallel(backend="threading", n_jobs=4)(
+                    delayed(slice_to_2d)(one_train, train_output)
+                    for one_train in train_3d)
 
-        np.save(self.output()['train'].path, train)
-        np.save(self.output()['test'].path, test)
+                test_output = []
+                Parallel(backend="threading", n_jobs=4)(
+                    delayed(slice_to_2d)(one_test, test_output)
+                    for one_test in test_3d)
+
+                train_2d = np.asarray(train_output)
+                test_2d = np.asarray(test_output)
+                name_to_split[name] = train_2d, test_2d
+
+        for name, split in name_to_split.items():
+            train, test = name_to_split[name]
+            np.save(self.output()['train_' + name].path, train)
+            np.save(self.output()['test_' + name].path, test)
 
     def output(self):
-        return {'train': luigi.LocalTarget(self.train_path),
-                'test': luigi.LocalTarget(self.test_path)}
+        return {'train_img':
+                luigi.LocalTarget(self.name_to_train_path['img']),
+                'test_img':
+                luigi.LocalTarget(self.name_to_test_path['img']),
+                'train_segmentation':
+                luigi.LocalTarget(self.name_to_train_path['segmentation']),
+                'test_segmentation':
+                luigi.LocalTarget(self.name_to_test_path['segmentation'])}
 
 
 class Train(luigi.Task):
@@ -807,8 +869,13 @@ class Train(luigi.Task):
                 os.mkdir(directory)
                 os.chmod(directory, 0o777)
 
-        train = torch.Tensor(np.load(self.input()['train'].path))
-        test = torch.Tensor(np.load(self.input()['test'].path))
+        train_name = 'train_' + DATA_TYPE
+        test_name = 'test_' + DATA_TYPE
+        train_path = self.input()[train_name].path
+        test_path = self.input()[test_name].path
+
+        train = torch.Tensor(np.load(train_path))
+        test = torch.Tensor(np.load(test_path))
 
         logging.info('-- Train tensor: (%d, %d, %d, %d)' % train.shape)
         np.random.shuffle(train)
