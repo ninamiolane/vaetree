@@ -1,5 +1,6 @@
 """Data processing pipeline."""
 
+import datetime as dt
 import jinja2
 import logging
 import luigi
@@ -42,27 +43,29 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # NN architecture
-data_dim = 1
-latent_dim = 1
-n_layers = 1
-nonlinearity = False
-with_biasx = False
-with_logvarx = False
+DATA_DIM = 1
+LATENT_DIM = 1
+N_DECODER_LAYERS = 1
+NONLINEARITY = False
+WITH_BIASX = False
+WITH_LOGVARX = False
+WITH_BIASZ = False
+WITH_LOGVARZ = False
 
 # True generative model
-n_samples = 10000
-w_true = {}
-b_true = {}
+N_SAMPLES = 10000
+W_TRUE = {}
+B_TRUE = {}
 
 # For the reconstruction
-w_true[0] = [[2.]]
-if with_biasx:
-    b_true[0] = [[0.]]
+W_TRUE[0] = [[2.]]
+if WITH_BIASX:
+    B_TRUE[0] = [[0.]]
 
-if with_logvarx:
+if WITH_LOGVARX:
     # For the scale
-    w_true[1] = [[0.]]
-    b_true[1] = [[0.]]
+    W_TRUE[1] = [[0.]]
+    B_TRUE[1] = [[0.]]
 
 # Train
 FRAC_TEST = 0.2
@@ -75,13 +78,11 @@ torch.backends.cudnn.benchmark = True
 N_EPOCHS = 200
 LR = 1e-4
 
-LATENT_DIM = 50
 BETA1 = 0.5
 BETA2 = 0.999
 
 
 # Report
-
 LOADER = jinja2.FileSystemLoader('./templates/')
 TEMPLATE_ENVIRONMENT = jinja2.Environment(
     autoescape=False,
@@ -100,14 +101,39 @@ class MakeDataSet(luigi.Task):
         pass
 
     def run(self):
+        logging.info('Configuration:')
+
+        logging.info('DATA_DIM = %d' % DATA_DIM)
+        logging.info('LATENT_DIM = %d' % LATENT_DIM)
+        logging.info('N_DECODER_LAYERS = %d' % N_DECODER_LAYERS)
+
+        logging.info('NONLINEARITY=%r' % NONLINEARITY)
+        logging.info('WITH_BIASX=%r' % WITH_BIASX)
+        logging.info('WITH_LOGVARX=%r' % WITH_LOGVARX)
+        logging.info('WITH_BIASZ=%r' % WITH_BIASZ)
+        logging.info('WITH_LOGVARZ=%r' % WITH_LOGVARZ)
+
+        logging.info('N_SAMPLES=%d' % N_SAMPLES)
+
+        logging.info('W_TRUE:')
+        logging.info(W_TRUE)
+        logging.info('B_TRUE:')
+        logging.info(B_TRUE)
+
         decoder_true = toynn.make_decoder_true(
-            w_true, b_true, latent_dim, data_dim, n_layers,
-            nonlinearity, with_biasx, with_logvarx)
+            w_true=W_TRUE, b_true=B_TRUE,
+            latent_dim=LATENT_DIM, data_dim=DATA_DIM,
+            n_layers=N_DECODER_LAYERS,
+            nonlinearity=NONLINEARITY,
+            with_biasx=WITH_BIASX, with_logvarx=WITH_LOGVARX)
 
+        logging.info('Values of true \'decoder\' parameters:')
         for name, param in decoder_true.named_parameters():
-            print(name, param.data, '\n')
+            logging.info(name)
+            logging.info(param.data)
 
-        synthetic_data = toynn.generate_from_decoder(decoder_true, n_samples)
+        synthetic_data = toynn.generate_from_decoder(
+            decoder=decoder_true, n_samples=N_SAMPLES)
 
         np.save(self.output().path, synthetic_data)
         torch.save(decoder_true, self.decoder_true_path)
@@ -132,7 +158,6 @@ class TrainVAE(luigi.Task):
 
         n_data = len(train_loader.dataset)
         n_batches = len(train_loader)
-
         for batch_idx, batch_data in enumerate(train_loader):
             if DEBUG:
                 if batch_idx > 3:
@@ -153,7 +178,7 @@ class TrainVAE(luigi.Task):
             batch_recon, batch_logvarx = decoder(z)
 
             z_from_prior = toynn.sample_from_prior(
-                    latent_dim, n_samples=n_batch_data).to(DEVICE)
+                    LATENT_DIM, n_samples=n_batch_data).to(DEVICE)
             batch_from_prior, scale_b_from_prior = decoder(
                     z_from_prior)
 
@@ -177,7 +202,7 @@ class TrainVAE(luigi.Task):
                 string_base = (
                     'Train Epoch: {} [{}/{} ({:.0f}%)]\tTotal Loss: {:.6f}'
                     + '\nReconstruction: {:.6f}, Regularization: {:.6f}')
-                print(
+                logging.info(
                     string_base.format(
                         epoch, batch_idx * n_batch_data, n_data,
                         100. * batch_idx / n_batches,
@@ -192,7 +217,7 @@ class TrainVAE(luigi.Task):
         average_loss_regularization = total_loss_regularization / n_data
         average_loss = total_loss / n_data
 
-        print('====> Epoch: {} Average loss: {:.4f}'.format(
+        logging.info('====> Epoch: {} Average loss: {:.4f}'.format(
                 epoch, average_loss))
         train_losses = {}
         train_losses['reconstruction'] = average_loss_reconstruction
@@ -210,7 +235,7 @@ class TrainVAE(luigi.Task):
 
         logging.info('--Dataset tensor: (%d, %d)' % dataset.shape)
 
-        n_train = int((1 - FRAC_TEST) * n_samples)
+        n_train = int((1 - FRAC_TEST) * N_SAMPLES)
         train = torch.Tensor(dataset[:n_train, :])
 
         logging.info('-- Train tensor: (%d, %d)' % train.shape)
@@ -221,22 +246,23 @@ class TrainVAE(luigi.Task):
         # TODO(nina): Introduce test tensor
 
         vae = toynn.VAE(
-            latent_dim=latent_dim, data_dim=data_dim,
-            n_layers=n_layers, nonlinearity=nonlinearity,
-            with_biasx=False,
-            with_logvarx=False,
-            with_biasz=False,
-            with_logvarz=False)
+            latent_dim=LATENT_DIM, data_dim=DATA_DIM,
+            n_layers=N_DECODER_LAYERS, nonlinearity=NONLINEARITY,
+            with_biasx=WITH_BIASX,
+            with_logvarx=WITH_LOGVARX,
+            with_biasz=WITH_BIASZ,
+            with_logvarz=WITH_LOGVARZ)
         vae.to(DEVICE)
 
         modules = {}
         modules['encoder'] = vae.encoder
         modules['decoder'] = vae.decoder
 
-        print('\n-- Values of parameters before learning')
+        logging.info('Values of VAE\'s decoder parameters before training:')
         decoder = modules['decoder']
         for name, param in decoder.named_parameters():
-            print(name, param.data, '\n')
+            logging.info(name)
+            logging.info(param.data)
 
         optimizers = {}
         optimizers['encoder'] = torch.optim.Adam(
@@ -247,8 +273,6 @@ class TrainVAE(luigi.Task):
         def init_xavier_normal(m):
             if type(m) == tnn.Linear:
                 tnn.init.xavier_normal_(m.weight)
-            else:
-                print('Error of layer type.', type(m))
 
         for module in modules.values():
             module.apply(init_xavier_normal)
@@ -256,6 +280,9 @@ class TrainVAE(luigi.Task):
         train_losses_all_epochs = []
 
         for epoch in range(N_EPOCHS):
+            if DEBUG:
+                if epoch > 2:
+                    break
             train_losses = self.train_vae(
                 epoch, train_loader, modules, optimizers)
             train_losses_all_epochs.append(train_losses)
@@ -313,7 +340,7 @@ class TrainVEM(luigi.Task):
             batch_recon, batch_logvarx = decoder(z)
 
             z_from_prior = toynn.sample_from_prior(
-                    latent_dim, n_samples=n_batch_data).to(DEVICE)
+                    LATENT_DIM, n_samples=n_batch_data).to(DEVICE)
             batch_from_prior, batch_logvarx_from_prior = decoder(
                     z_from_prior)
 
@@ -332,7 +359,7 @@ class TrainVEM(luigi.Task):
                 low=n_batch_data - n_batch_data / 4,
                 high=n_batch_data + n_batch_data / 4))
             z_from_prior = toynn.sample_from_prior(
-                latent_dim, n_samples=n_from_prior)
+                LATENT_DIM, n_samples=n_from_prior)
             batch_recon_from_prior, batch_logvarx_from_prior = decoder(
                 z_from_prior)
 
@@ -397,7 +424,7 @@ class TrainVEM(luigi.Task):
                 string_base += (
                     ', Discriminator: {:.6f}; Generator: {:.6f},'
                     '\nD(x): {:.3f}, D(G(z)): {:.3f}')
-                print(
+                logging.info(
                     string_base.format(
                         epoch, batch_idx * n_batch_data, n_data,
                         100. * batch_idx / n_batches,
@@ -419,7 +446,7 @@ class TrainVEM(luigi.Task):
         average_loss_regularization = total_loss_regularization / n_data
         average_loss = total_loss / n_data
 
-        print('====> Epoch: {} Average loss: {:.4f}'.format(
+        logging.info('====> Epoch: {} Average loss: {:.4f}'.format(
                 epoch, average_loss))
         train_losses = {}
         train_losses['reconstruction'] = average_loss_reconstruction
@@ -437,7 +464,7 @@ class TrainVEM(luigi.Task):
 
         logging.info('--Dataset tensor: (%d, %d)' % dataset.shape)
 
-        n_train = int((1 - FRAC_TEST) * n_samples)
+        n_train = int((1 - FRAC_TEST) * N_SAMPLES)
         train = torch.Tensor(dataset[:n_train, :])
 
         logging.info('-- Train tensor: (%d, %d)' % train.shape)
@@ -446,17 +473,16 @@ class TrainVEM(luigi.Task):
             train_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
 
         # TODO(nina): Introduce test tensor
-
         vae = toynn.VAE(
-            latent_dim=latent_dim, data_dim=data_dim,
-            n_layers=n_layers, nonlinearity=nonlinearity,
-            with_biasx=False,
-            with_logvarx=False,
-            with_biasz=False,
-            with_logvarz=False)
+            latent_dim=LATENT_DIM, data_dim=DATA_DIM,
+            n_layers=N_DECODER_LAYERS, nonlinearity=NONLINEARITY,
+            with_biasx=WITH_BIASX,
+            with_logvarx=WITH_LOGVARX,
+            with_biasz=WITH_BIASZ,
+            with_logvarz=WITH_LOGVARZ)
         vae.to(DEVICE)
 
-        discriminator = toynn.Discriminator(data_dim=data_dim).to(DEVICE)
+        discriminator = toynn.Discriminator(data_dim=DATA_DIM).to(DEVICE)
 
         modules = {}
         modules['encoder'] = vae.encoder
@@ -464,10 +490,11 @@ class TrainVEM(luigi.Task):
 
         modules['discriminator'] = discriminator
 
-        print('\n-- Values of parameters before learning')
+        logging.info('Values of VEM\'s decoder parameters before training:')
         decoder = modules['decoder']
         for name, param in decoder.named_parameters():
-            print(name, param.data, '\n')
+            logging.info(name)
+            logging.info(param.data)
 
         optimizers = {}
         optimizers['encoder'] = torch.optim.Adam(
@@ -488,6 +515,9 @@ class TrainVEM(luigi.Task):
         train_losses_all_epochs = []
 
         for epoch in range(N_EPOCHS):
+            if DEBUG:
+                if epoch > 2:
+                    break
             train_losses = self.train_vem(
                 epoch, train_loader, modules, optimizers)
 
@@ -573,7 +603,21 @@ def init():
             os.mkdir(directory)
             os.chmod(directory, 0o777)
 
-    logging.basicConfig(level=logging.INFO)
+    logs_filename = os.path.join(OUTPUT_DIR, 'logs%s.txt' % dt.datetime.now())
+    logging.basicConfig(
+        filename=logs_filename,
+        format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s',
+        level=logging.INFO)
+    # define a Handler which writes INFO messages or higher to the sys.stderr
+    console = logging.StreamHandler()
+    console.setLevel(logging.INFO)
+    # set a format which is simpler for console use
+    formatter = logging.Formatter('%(name)-12s: %(levelname)-8s %(message)s')
+    # tell the handler to use this format
+    console.setFormatter(formatter)
+    # add the handler to the root logger
+    logging.getLogger('').addHandler(console)
+
     logging.info('start')
     luigi.run(
         main_task_cls=RunAll(),
