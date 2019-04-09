@@ -21,6 +21,8 @@ From: ../../simgs/base.simg
                  numpy \
                  scikit-learn \
                  scikit-image \
+                 seaborn \
+                 sympy \
                  torch \
                  torchvision \
                  nilearn \
@@ -29,4 +31,4 @@ From: ../../simgs/base.simg
                  visdom
 
 %runscript
-    exec /usr/bin/python3 -u pipeline.py
+    exec /usr/bin/python3 -u toypipeline.py

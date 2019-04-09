@@ -28,7 +28,7 @@ TRAIN_VAE_DIR = os.path.join(OUTPUT_DIR, 'train_vae')
 TRAIN_VEM_DIR = os.path.join(OUTPUT_DIR, 'train_vem')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
-DEBUG = True
+DEBUG = False
 
 CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if CUDA else "cpu")
@@ -69,7 +69,7 @@ FRAC_TEST = 0.2
 BATCH_SIZE = 64
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 
-PRINT_INTERVAL = 10
+PRINT_INTERVAL = 16
 torch.backends.cudnn.benchmark = True
 
 N_EPOCHS = 200
@@ -94,6 +94,7 @@ class MakeDataSet(luigi.Task):
     Generate synthetic dataset from a "true" decoder.
     """
     output_path = os.path.join(SYNTHETIC_DIR, 'dataset.npy')
+    decoder_true_path = os.path.join(SYNTHETIC_DIR, 'decoder_true.pth')
 
     def requires(self):
         pass
@@ -109,6 +110,7 @@ class MakeDataSet(luigi.Task):
         synthetic_data = toynn.generate_from_decoder(decoder_true, n_samples)
 
         np.save(self.output().path, synthetic_data)
+        torch.save(decoder_true, self.decoder_true_path)
 
     def output(self):
         return luigi.LocalTarget(self.output_path)
@@ -199,10 +201,9 @@ class TrainVAE(luigi.Task):
         return train_losses
 
     def run(self):
-        for directory in (self.imgs_path, self.models_path, self.losses_path):
-            if not os.path.isdir(directory):
-                os.mkdir(directory)
-                os.chmod(directory, 0o777)
+        if not os.path.isdir(self.models_path):
+            os.mkdir(self.models_path)
+            os.chmod(self.models_path, 0o777)
 
         dataset_path = self.input().path
         dataset = torch.Tensor(np.load(dataset_path))
@@ -255,7 +256,7 @@ class TrainVAE(luigi.Task):
         train_losses_all_epochs = []
 
         for epoch in range(N_EPOCHS):
-            train_losses = self.toytrain_vae(
+            train_losses = self.train_vae(
                 epoch, train_loader, modules, optimizers)
             train_losses_all_epochs.append(train_losses)
 
@@ -427,10 +428,9 @@ class TrainVEM(luigi.Task):
         return train_losses
 
     def run(self):
-        for directory in (self.imgs_path, self.models_path, self.losses_path):
-            if not os.path.isdir(directory):
-                os.mkdir(directory)
-                os.chmod(directory, 0o777)
+        if not os.path.isdir(self.models_path):
+            os.mkdir(self.models_path)
+            os.chmod(self.models_path, 0o777)
 
         dataset_path = self.input().path
         dataset = torch.Tensor(np.load(dataset_path))
@@ -559,14 +559,16 @@ class Report(luigi.Task):
 
 class RunAll(luigi.Task):
     def requires(self):
-        return Report()
+        return TrainVAE(), TrainVEM()
 
     def output(self):
         return luigi.LocalTarget('dummy')
 
 
 def init():
-    for directory in [OUTPUT_DIR, TRAIN_VAE_DIR, REPORT_DIR]:
+    directories = [
+        OUTPUT_DIR, SYNTHETIC_DIR, TRAIN_VAE_DIR, TRAIN_VEM_DIR, REPORT_DIR]
+    for directory in directories:
         if not os.path.isdir(directory):
             os.mkdir(directory)
             os.chmod(directory, 0o777)
