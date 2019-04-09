@@ -1,0 +1,50 @@
+"""Toy losses."""
+
+
+import numpy as np
+import torch
+import torch.nn
+
+CUDA = torch.cuda.is_available()
+DEVICE = torch.device("cuda" if CUDA else "cpu")
+
+
+def reconstruction_loss(batch_data, batch_recon, batch_logvarx):
+    n_batch_data, data_dim = batch_data.shape
+    assert batch_data.shape == batch_recon.shape
+
+    batch_logvarx = batch_logvarx.squeeze()
+    if batch_logvarx.shape == (n_batch_data,):
+        scale_term = - data_dim / 2. * batch_logvarx
+        ssd = torch.sum((batch_data - batch_recon) ** 2, dim=1)
+        ssd_term = - 1. / (2. * batch_logvarx.exp()) * ssd
+
+    else:
+        assert batch_logvarx.shape == (
+            n_batch_data, data_dim), batch_logvarx.shape
+
+        scale_term = - 1. / 2. * torch.sum(batch_logvarx, dim=1)
+
+        batch_varx = batch_logvarx.exp()
+        aux = (batch_data - batch_recon) ** 2 / batch_varx
+        assert aux.shape == (n_batch_data, data_dim), aux.shape
+        ssd_term = - 1. / 2. * torch.sum(aux, dim=1)
+
+    # We keep the constant term to have an interpretation to the loss
+    cst_term = - data_dim / 2. * torch.log(torch.Tensor([2 * np.pi]))
+    cst_term = cst_term.to(DEVICE)
+    assert scale_term.shape == (n_batch_data,)
+    assert ssd_term.shape == (n_batch_data,), ssd_term
+    l_uvae = cst_term + scale_term + ssd_term
+    expected_l_uvae = torch.mean(l_uvae)
+    loss_reconstruction = -expected_l_uvae
+    return loss_reconstruction
+
+
+def regularization_loss(mu, logvar):
+    n_batch_data, _ = logvar.shape
+    assert logvar.shape == mu.shape
+    loss_regularization = -0.5 * torch.sum(
+        1 + logvar - mu.pow(2) - logvar.exp())
+    loss_regularization /= n_batch_data
+    return loss_regularization
