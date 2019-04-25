@@ -12,7 +12,7 @@ BINS = 40
 def plot_data(x_data, color='darkgreen', label=None, ax=None):
     _, data_dim = x_data.shape
     if data_dim == 1:
-        ax.hist(x_data, bins=BINS, alpha=ALPHA, color=color, label=label)
+        ax.hist(x_data, bins=BINS, alpha=ALPHA, color=color, label=label, density=True)
     else:
         sns.scatterplot(x_data[:, 0], x_data[:, 1], ax=ax, color=color)
     return ax
