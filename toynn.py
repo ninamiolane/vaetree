@@ -233,7 +233,7 @@ class Discriminator(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
         n_layers = int(np.log2(self.data_dim)) + 1  # HACK - at least 1 layers
-        n_layers = 20
+        n_layers = 10
 
         self.layers = torch.nn.ModuleList()
 
