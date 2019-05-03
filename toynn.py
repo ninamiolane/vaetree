@@ -229,32 +229,19 @@ class Discriminator(nn.Module):
         self.data_dim = data_dim
 
         # activation functions
-        self.relu = nn.ReLU()
+        self.relu = nn.LeakyReLU()
         self.sigmoid = nn.Sigmoid()
 
         n_layers = int(np.log2(self.data_dim)) + 1  # HACK - at least 1 layers
+        n_layers = 10
 
         self.layers = torch.nn.ModuleList()
 
-        layer = layer = nn.Linear(
-            in_features=data_dim,
-            out_features=data_dim)
-        self.layers.append(layer)
-
-        layer = layer = nn.Linear(
-            in_features=data_dim,
-            out_features=data_dim)
-        self.layers.append(layer)
-
-        layer = layer = nn.Linear(
-            in_features=data_dim,
-            out_features=data_dim)
-        self.layers.append(layer)
-
-        layer = layer = nn.Linear(
-            in_features=data_dim,
-            out_features=data_dim)
-        self.layers.append(layer)
+        for i in range(n_layers):
+            layer = nn.Linear(
+                in_features=data_dim,
+                out_features=data_dim)
+            self.layers.append(layer)
 
         #for i in range(n_layers):
         #    layer = nn.Linear(

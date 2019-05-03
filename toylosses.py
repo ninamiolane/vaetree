@@ -1,6 +1,6 @@
 """Toy losses."""
 
-
+import math
 import numpy as np
 import torch
 import torch.nn
@@ -26,9 +26,23 @@ def reconstruction_loss(batch_data, batch_recon, batch_logvarx):
         scale_term = - 1. / 2. * torch.sum(batch_logvarx, dim=1)
 
         batch_varx = batch_logvarx.exp()
+        norms = np.linalg.norm(batch_varx.cpu().detach().numpy(), axis=1)
+        if np.isclose(norms, 0.).any():
+            print('Waaarning')
         aux = (batch_data - batch_recon) ** 2 / batch_varx
+
+        if np.isinf(batch_data.cpu().detach().numpy()).any():
+            raise ValueError('batch_data has a inf')
+        if np.isinf(batch_recon.cpu().detach().numpy()).any():
+            raise ValueError('batch_recon has a inf')
+        if np.isinf(aux.cpu().detach().numpy()).any():
+            raise ValueError('aux has a inf')
         assert aux.shape == (n_batch_data, data_dim), aux.shape
         ssd_term = - 1. / 2. * torch.sum(aux, dim=1)
+
+        for i in range(len(ssd_term)):
+            if math.isinf(ssd_term[i]):
+                raise ValueError()
 
     # We keep the constant term to have an interpretation to the loss
     cst_term = - data_dim / 2. * torch.log(torch.Tensor([2 * np.pi]))

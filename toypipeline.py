@@ -4,6 +4,7 @@ import datetime as dt
 import jinja2
 import logging
 import luigi
+import math
 import numpy as np
 import os
 import pickle
@@ -43,33 +44,39 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # NN architecture
-DATA_DIM = 1
+DATA_DIM = 2
 LATENT_DIM = 1
-N_DECODER_LAYERS = 1
-NONLINEARITY = False
-WITH_BIASX = False
-WITH_LOGVARX = False
-WITH_BIASZ = False
-WITH_LOGVARZ = False
-
-# True generative model
+N_DECODER_LAYERS = 2
+NONLINEARITY = True
 N_SAMPLES = 10000
+WITH_BIASX = True
+WITH_LOGVARX = True
+
 W_TRUE = {}
 B_TRUE = {}
 
+W_TRUE[0] = [[0.6], [-0.7]]
+B_TRUE[0] = [0., -0.1]
+
 # For the reconstruction
-W_TRUE[0] = [[2.]]
-if WITH_BIASX:
-    B_TRUE[0] = [[0.]]
+W_TRUE[1] = [[10., 0.], [0., -5.]]
+B_TRUE[1] = [2., 0.]
+
+# For the logvarx
+W_TRUE[2] = [[0., 0.], [0., 0.]]
+B_TRUE[2] = [0., 0.]
 
 if WITH_LOGVARX:
-    # For the scale
-    W_TRUE[1] = [[0.]]
-    B_TRUE[1] = [[0.]]
+    assert len(W_TRUE) == N_DECODER_LAYERS + 1, len(W_TRUE)
+else:
+    assert len(W_TRUE) == N_DECODER_LAYERS
+
+WITH_BIASZ = True
+WITH_LOGVARZ = True
 
 # Train
 FRAC_TEST = 0.2
-BATCH_SIZE = 64
+BATCH_SIZE = 32
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 
 PRINT_INTERVAL = 16
@@ -173,9 +180,13 @@ class TrainVAE(luigi.Task):
             decoder = modules['decoder']
 
             mu, logvar = encoder(batch_data)
+            #print('mu=', mu)
+            #print('logvar=', logvar)
 
             z = toynn.sample_from_q(mu, logvar).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
+            #print('batch_recon=', batch_recon)
+            #print('batch_logvarx=', batch_logvarx)
 
             z_from_prior = toynn.sample_from_prior(
                     LATENT_DIM, n_samples=n_batch_data).to(DEVICE)
@@ -192,6 +203,12 @@ class TrainVAE(luigi.Task):
             optimizers['encoder'].step()
             optimizers['decoder'].step()
 
+            if math.isnan(loss_reconstruction.item()):
+                raise ValueError('Reconstruction loss on this batch is nan.')
+            if math.isnan(loss_regularization.item()):
+                raise ValueError('Regularization loss on this batch is nan.')
+            #print('reconstruction', loss_reconstruction)
+            #print('regularization', loss_regularization)
             loss = loss_reconstruction + loss_regularization
 
             if batch_idx % PRINT_INTERVAL == 0:
@@ -246,8 +263,10 @@ class TrainVAE(luigi.Task):
         # TODO(nina): Introduce test tensor
 
         vae = toynn.VAE(
-            latent_dim=LATENT_DIM, data_dim=DATA_DIM,
-            n_layers=N_DECODER_LAYERS, nonlinearity=NONLINEARITY,
+            latent_dim=LATENT_DIM,
+            data_dim=DATA_DIM,
+            n_layers=N_DECODER_LAYERS,
+            nonlinearity=NONLINEARITY,
             with_biasx=WITH_BIASX,
             with_logvarx=WITH_LOGVARX,
             with_biasz=WITH_BIASZ,
