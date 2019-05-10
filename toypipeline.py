@@ -320,8 +320,8 @@ class TrainVAE(luigi.Task):
 
 
 class TrainVEM(luigi.Task):
-    models_path = os.path.join(TRAIN_VEM_DIR, 'models')
-    train_losses_path = os.path.join(TRAIN_VEM_DIR, 'train_losses.pkl')
+    models_path = os.path.join(TRAIN_VAE_DIR, 'models')
+    train_losses_path = os.path.join(TRAIN_VAE_DIR, 'train_losses.pkl')
 
     def requires(self):
         return MakeDataSet()
@@ -331,13 +331,10 @@ class TrainVEM(luigi.Task):
             module.train()
         total_loss_reconstruction = 0
         total_loss_regularization = 0
-        total_loss_discriminator = 0
-        total_loss_generator = 0
         total_loss = 0
 
         n_data = len(train_loader.dataset)
         n_batches = len(train_loader)
-
         for batch_idx, batch_data in enumerate(train_loader):
             if DEBUG:
                 if batch_idx > 3:
@@ -353,15 +350,13 @@ class TrainVEM(luigi.Task):
             decoder = modules['decoder']
 
             mu, logvar = encoder(batch_data)
+            #print('mu=', mu)
+            #print('logvar=', logvar)
 
-            z = toynn.sample_from_q(
-                    mu, logvar).to(DEVICE)
+            z = toynn.sample_from_q(mu, logvar).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
-
-            z_from_prior = toynn.sample_from_prior(
-                    LATENT_DIM, n_samples=n_batch_data).to(DEVICE)
-            batch_from_prior, batch_logvarx_from_prior = decoder(
-                    z_from_prior)
+            #print('batch_recon=', batch_recon)
+            #print('batch_logvarx=', batch_logvarx)
 
             loss_reconstruction = toylosses.reconstruction_loss(
                 batch_data, batch_recon, batch_logvarx)
@@ -370,95 +365,85 @@ class TrainVEM(luigi.Task):
                 mu, logvar)  # kld
             loss_regularization.backward()
 
-            # - ENCODER STEP -
             optimizers['encoder'].step()
-            # - - - - - - - - -
+            #optimizers['decoder'].step()
 
-            n_from_prior = int(np.random.uniform(
-                low=n_batch_data - n_batch_data / 4,
-                high=n_batch_data + n_batch_data / 4))
-            z_from_prior = toynn.sample_from_prior(
-                LATENT_DIM, n_samples=n_from_prior)
-            batch_recon_from_prior, batch_logvarx_from_prior = decoder(
-                z_from_prior)
+            # TODO: Free the decoder from loss_reconstruction gradients.
+            # Or: Deal with decoder first
 
-            discriminator = modules['discriminator']
+            z_from_prior_1 = torch.Tensor((n_batch_data, LATENT_DIM))
+            z_from_prior_2 = torch.Tensor((n_batch_data, LATENT_DIM))
 
-            real_labels = torch.full((n_batch_data, 1), 1, device=DEVICE)
-            fake_labels = torch.full((n_batch_data, 1), 0, device=DEVICE)
+            for i_one_data, one_data in enumerate(batch_data):
+                opposed_gradients = False
 
-            # -- Update Discriminator
-            labels_data = discriminator(batch_data)
-            labels_from_prior = discriminator(batch_from_prior)
+                print('one_data #%d' % i_one_data)
+                if DEBUG:
+                    n_trials = 0
+                while opposed_gradients is False:
+                    n_trials += 1
+                    if DEBUG and n_trials > 100:
+                        print('Tried a 100 times for one_data #%d. STOP.' % i_one_data)
+                    print('Try to match condition')
 
-            loss_dis_data = F.binary_cross_entropy(
-                        labels_data,
-                        real_labels)
-            loss_dis_from_prior = F.binary_cross_entropy(
-                        labels_from_prior,
-                        fake_labels)
+                    one_z_from_prior_1 = toynn.sample_from_prior(
+                            LATENT_DIM, n_samples=1).to(DEVICE)
+                    one_recon_from_prior_1, one_logvarx_1 = decoder(
+                            one_z_from_prior_1)
 
-            loss_discriminator = (
-                    loss_dis_data + loss_dis_from_prior)
+                    one_z_from_prior_2 = toynn.sample_from_prior(
+                            LATENT_DIM, n_samples=1).to(DEVICE)
+                    one_recon_from_prior_2, one_logvarx_2 = decoder(
+                            one_z_from_prior_2)
 
-            # Fill gradients on discriminator only
-            loss_discriminator.backward(retain_graph=True)
+                    loss_reconstruction_1 = toylosses.reconstruction_loss(
+                        one_data, one_recon_from_prior_1, one_logvarx_1)
+                    loss_reconstruction_1.backward(retain_graph=True)
 
-            # - DISCRIMINATOR STEP -
-            # Before filing with gradient of loss_generator
-            optimizers['discriminator'].step()
-            # - - - - - - - - -
+                    loss_reconstruction_2 = toylosses.reconstruction_loss(
+                        one_data, one_recon_from_prior_2, one_logvarx_2)
+                    loss_reconstruction_2.backward(retain_graph=True)
 
-            # -- Update Generator/Decoder
-            loss_generator = F.binary_cross_entropy(
-                    labels_from_prior,
-                    real_labels)
+                    n_decoder_parameters = decoder.parameters().size()
+                    print(n_decoder_parameters)
+                    n_decoder_parameters = int(n_decoder_parameters)
 
-            # Fill gradients on generator only
-            # FREE THE DECODER:
-            optimizers['decoder'].zero_grad()
-            # Only back propagate the loss of the generator through the deocder
-            loss_generator.backward()
+                    total_grad = torch.zeros((n_decoder_parameters,))
+                    for i_param, param in enumerate(decoder.parameters()):
+                        total_grad[i_param] = param.grad
 
-            # - DECODER STEP -
-            optimizers['decoder'].step()
-            # - - - - - - - - -
+                    if torch.norm(total_grad, p=2) < CORRECTION_THRESHOLD:
+                        opposed_gradients =  True
+                        z_from_prior_1[i_one_data] = one_z_from_prior_1
+                        z_from_prior_2[i_one_data] = one_z_from_prior_2
 
+            #
+
+            if math.isnan(loss_reconstruction.item()):
+                raise ValueError('Reconstruction loss on this batch is nan.')
+            if math.isnan(loss_regularization.item()):
+                raise ValueError('Regularization loss on this batch is nan.')
+            #print('reconstruction', loss_reconstruction)
+            #print('regularization', loss_regularization)
             loss = loss_reconstruction + loss_regularization
-            loss += loss_discriminator + loss_generator
 
             if batch_idx % PRINT_INTERVAL == 0:
-                batch_loss = loss / n_batch_data
-                batch_loss_reconstruction = loss_reconstruction / n_batch_data
-                batch_loss_regularization = loss_regularization / n_batch_data
-                batch_loss_discriminator = loss_discriminator / n_batch_data
-                batch_loss_generator = loss_generator / n_batch_data
-
-                dx = labels_data.mean()
-                dgz = labels_from_prior.mean()
+                logloss = loss / n_batch_data
+                logloss_reconstruction = loss_reconstruction / n_batch_data
+                logloss_regularization = loss_regularization / n_batch_data
 
                 string_base = (
                     'Train Epoch: {} [{}/{} ({:.0f}%)]\tTotal Loss: {:.6f}'
                     + '\nReconstruction: {:.6f}, Regularization: {:.6f}')
-                string_base += (
-                    ', Discriminator: {:.6f}; Generator: {:.6f},'
-                    '\nD(x): {:.3f}, D(G(z)): {:.3f}')
                 logging.info(
                     string_base.format(
                         epoch, batch_idx * n_batch_data, n_data,
                         100. * batch_idx / n_batches,
-                        batch_loss,
-                        batch_loss_reconstruction,
-                        batch_loss_regularization,
-                        batch_loss_discriminator,
-                        batch_loss_generator,
-                        dx, dgz))
+                        logloss,
+                        logloss_reconstruction, logloss_regularization))
 
             total_loss_reconstruction += loss_reconstruction.item()
             total_loss_regularization += loss_regularization.item()
-            total_loss_discriminator += loss_discriminator.item()
-            total_loss_generator += loss_generator.item()
-
             total_loss += loss.item()
 
         average_loss_reconstruction = total_loss_reconstruction / n_data
@@ -492,24 +477,23 @@ class TrainVEM(luigi.Task):
             train_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
 
         # TODO(nina): Introduce test tensor
+
         vae = toynn.VAE(
-            latent_dim=LATENT_DIM, data_dim=DATA_DIM,
-            n_layers=N_DECODER_LAYERS, nonlinearity=NONLINEARITY,
+            latent_dim=LATENT_DIM,
+            data_dim=DATA_DIM,
+            n_layers=N_DECODER_LAYERS,
+            nonlinearity=NONLINEARITY,
             with_biasx=WITH_BIASX,
             with_logvarx=WITH_LOGVARX,
             with_biasz=WITH_BIASZ,
             with_logvarz=WITH_LOGVARZ)
         vae.to(DEVICE)
 
-        discriminator = toynn.Discriminator(data_dim=DATA_DIM).to(DEVICE)
-
         modules = {}
         modules['encoder'] = vae.encoder
         modules['decoder'] = vae.decoder
 
-        modules['discriminator'] = discriminator
-
-        logging.info('Values of VEM\'s decoder parameters before training:')
+        logging.info('Values of VAE\'s decoder parameters before training:')
         decoder = modules['decoder']
         for name, param in decoder.named_parameters():
             logging.info(name)
@@ -520,9 +504,6 @@ class TrainVEM(luigi.Task):
             modules['encoder'].parameters(), lr=LR, betas=(BETA1, BETA2))
         optimizers['decoder'] = torch.optim.Adam(
             modules['decoder'].parameters(), lr=LR, betas=(BETA1, BETA2))
-
-        optimizers['discriminator'] = torch.optim.Adam(
-            modules['discriminator'].parameters(), lr=LR, betas=(BETA1, BETA2))
 
         def init_xavier_normal(m):
             if type(m) == tnn.Linear:
@@ -537,9 +518,8 @@ class TrainVEM(luigi.Task):
             if DEBUG:
                 if epoch > 2:
                     break
-            train_losses = self.train_vem(
+            train_losses = self.train_vae(
                 epoch, train_loader, modules, optimizers)
-
             train_losses_all_epochs.append(train_losses)
 
         for module_name, module in modules.items():
