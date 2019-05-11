@@ -326,6 +326,8 @@ class TrainVEM(luigi.Task):
     def requires(self):
         return MakeDataSet()
 
+    def iw_elbo(self)
+
     def train_vem(self, epoch, train_loader, modules, optimizers):
         for module in modules.values():
             module.train()
@@ -358,6 +360,7 @@ class TrainVEM(luigi.Task):
             #print('batch_recon=', batch_recon)
             #print('batch_logvarx=', batch_logvarx)
 
+            # Update the encoder wrt the elbo, proxy for the KL to the posterior
             loss_reconstruction = toylosses.reconstruction_loss(
                 batch_data, batch_recon, batch_logvarx)
             loss_reconstruction.backward(retain_graph=True)
@@ -366,58 +369,33 @@ class TrainVEM(luigi.Task):
             loss_regularization.backward()
 
             optimizers['encoder'].step()
-            #optimizers['decoder'].step()
 
-            # TODO: Free the decoder from loss_reconstruction gradients.
-            # Or: Deal with decoder first
+            # Update the decoder wrt the log-likelihood
+            optimizers['decoder'].zero_grad()
+            mu, logvar = encoder(batch_data)
 
-            z_from_prior_1 = torch.Tensor((n_batch_data, LATENT_DIM))
-            z_from_prior_2 = torch.Tensor((n_batch_data, LATENT_DIM))
+            mu_expanded = mu.expand(N_SAMPLES, batch_size, LATENT_DIM)
+            mu_expanded_flat = mu_expanded.resize(N_SAMPLES*batch_size, LATENT_DIM)
 
-            for i_one_data, one_data in enumerate(batch_data):
-                opposed_gradients = False
+            logvar_expanded = logvar.expand(N_SAMPLES, batch_size, -1)
+            logvar_expanded_flat = logvar_expanded.resize(N_SAMPLES*batch_size, LATENT_DIM)
 
-                print('one_data #%d' % i_one_data)
-                if DEBUG:
-                    n_trials = 0
-                while opposed_gradients is False:
-                    n_trials += 1
-                    if DEBUG and n_trials > 100:
-                        print('Tried a 100 times for one_data #%d. STOP.' % i_one_data)
-                    print('Try to match condition')
+            z_expanded_flat = toynn.sample_from_q(
+                mu_expanded, logvar_expanded).to(DEVICE)
+            z_expanded = z_expanded_flat.resize(N_SAMPLES, batch_size, LATENT_DIM)
 
-                    one_z_from_prior_1 = toynn.sample_from_prior(
-                            LATENT_DIM, n_samples=1).to(DEVICE)
-                    one_recon_from_prior_1, one_logvarx_1 = decoder(
-                            one_z_from_prior_1)
+            batch_recon_expanded_flat, _ = decoder(z_expanded_flat)
+            batch_recon_expanded = batch_recon_expanded_flat.resize(N_SAMPLES, batch_size, DATA_DIM)
 
-                    one_z_from_prior_2 = toynn.sample_from_prior(
-                            LATENT_DIM, n_samples=1).to(DEVICE)
-                    one_recon_from_prior_2, one_logvarx_2 = decoder(
-                            one_z_from_prior_2)
+            batch_data_expanded = batch_data.expand(N_SAMPLES, batch_size, DATA_DIM)
 
-                    loss_reconstruction_1 = toylosses.reconstruction_loss(
-                        one_data, one_recon_from_prior_1, one_logvarx_1)
-                    loss_reconstruction_1.backward(retain_graph=True)
+            loss_iw_vae = losses.loss_iw_vae(
+                batch_data_expanded, batch_recon_expanded,
+                mu_expanded, logvar_expanded,
+                z_expanded)
 
-                    loss_reconstruction_2 = toylosses.reconstruction_loss(
-                        one_data, one_recon_from_prior_2, one_logvarx_2)
-                    loss_reconstruction_2.backward(retain_graph=True)
-
-                    n_decoder_parameters = decoder.parameters().size()
-                    print(n_decoder_parameters)
-                    n_decoder_parameters = int(n_decoder_parameters)
-
-                    total_grad = torch.zeros((n_decoder_parameters,))
-                    for i_param, param in enumerate(decoder.parameters()):
-                        total_grad[i_param] = param.grad
-
-                    if torch.norm(total_grad, p=2) < CORRECTION_THRESHOLD:
-                        opposed_gradients =  True
-                        z_from_prior_1[i_one_data] = one_z_from_prior_1
-                        z_from_prior_2[i_one_data] = one_z_from_prior_2
-
-            #
+            loss_iw_vae.backward()
+            optimizers['decoder'].step()
 
             if math.isnan(loss_reconstruction.item()):
                 raise ValueError('Reconstruction loss on this batch is nan.')
