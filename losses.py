@@ -47,22 +47,3 @@ def vae_loss(x, recon_x, scale_b, mu, logvar):
     bce = bce_on_intensities(x, recon_x, scale_b)
     kld = kullback_leibler(mu, logvar)
     return bce + kld
-
-
-def iw_vae_loss(x, recon_x, mu, logvar, z):
-    var = torch.exp(logvar)
-    log_QzGx = torch.sum(- 0.5 * (z - mu) ** 2 / var - 0.5 * logvar, -1)
-
-    log_Pz = torch.sum(-0.5 * z ** 2, -1)
-
-    # Note: reconstruction is a cross-entropy here
-    log_PxGz = torch.sum(
-        x * torch.log(recon_x) + (1 - x) * torch.log(1 - recon_x), -1)
-
-    log_weight = log_Pz + log_PxGz - log_QzGx
-    log_weight = log_weight - torch.max(log_weight, 0)[0]
-    weight = torch.exp(log_weight)
-    weight = weight / torch.sum(weight, 0)
-    weight = torch.Variable(weight.data, requires_grad=False)
-    loss = -torch.mean(torch.sum(weight * (log_Pz + log_PxGz - log_QzGx), 0))
-    return loss

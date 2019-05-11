@@ -13,7 +13,6 @@ import random
 import torch
 import torch.autograd
 import torch.nn as tnn
-from torch.nn import functional as F
 import torch.optim
 import torch.utils.data
 
@@ -48,15 +47,15 @@ DATA_DIM = 1
 LATENT_DIM = 1
 N_DECODER_LAYERS = 1
 NONLINEARITY = False
-N_SAMPLES = 1000
-N_IS_SAMPLES = 100000
+N_SAMPLES = 1000  # Number of synthetic data
+N_IS_SAMPLES = 1000
 WITH_BIASX = False
 WITH_LOGVARX = False
 
 W_TRUE = {}
 B_TRUE = {}
 
-W_TRUE[0] = [2.]
+W_TRUE[0] = [[2.]]
 
 if WITH_LOGVARX:
     assert len(W_TRUE) == N_DECODER_LAYERS + 1, len(W_TRUE)
@@ -68,6 +67,7 @@ WITH_LOGVARZ = True
 
 # Train
 FRAC_TEST = 0.2
+
 BATCH_SIZE = 32
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 
@@ -79,6 +79,10 @@ LR = 1e-4
 
 BETA1 = 0.5
 BETA2 = 0.999
+
+if DEBUG:
+    BATCH_SIZE = 4
+    N_IS_SAMPLES = 3
 
 
 # Report
@@ -172,13 +176,13 @@ class TrainVAE(luigi.Task):
             decoder = modules['decoder']
 
             mu, logvar = encoder(batch_data)
-            #print('mu=', mu)
-            #print('logvar=', logvar)
+            # print('mu=', mu)
+            # print('logvar=', logvar)
 
             z = toynn.sample_from_q(mu, logvar).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
-            #print('batch_recon=', batch_recon)
-            #print('batch_logvarx=', batch_logvarx)
+            # print('batch_recon=', batch_recon)
+            # print('batch_logvarx=', batch_logvarx)
 
             z_from_prior = toynn.sample_from_prior(
                     LATENT_DIM, n_samples=n_batch_data).to(DEVICE)
@@ -199,8 +203,8 @@ class TrainVAE(luigi.Task):
                 raise ValueError('Reconstruction loss on this batch is nan.')
             if math.isnan(loss_regularization.item()):
                 raise ValueError('Regularization loss on this batch is nan.')
-            #print('reconstruction', loss_reconstruction)
-            #print('regularization', loss_regularization)
+            # print('reconstruction', loss_reconstruction)
+            # print('regularization', loss_regularization)
             loss = loss_reconstruction + loss_regularization
 
             if batch_idx % PRINT_INTERVAL == 0:
@@ -312,13 +316,11 @@ class TrainVAE(luigi.Task):
 
 
 class TrainVEM(luigi.Task):
-    models_path = os.path.join(TRAIN_VAE_DIR, 'models')
-    train_losses_path = os.path.join(TRAIN_VAE_DIR, 'train_losses.pkl')
+    models_path = os.path.join(TRAIN_VEM_DIR, 'models')
+    train_losses_path = os.path.join(TRAIN_VEM_DIR, 'train_losses.pkl')
 
     def requires(self):
         return MakeDataSet()
-
-    def iw_elbo(self)
 
     def train_vem(self, epoch, train_loader, modules, optimizers):
         for module in modules.values():
@@ -344,15 +346,16 @@ class TrainVEM(luigi.Task):
             decoder = modules['decoder']
 
             mu, logvar = encoder(batch_data)
-            #print('mu=', mu)
-            #print('logvar=', logvar)
+            # print('mu=', mu)
+            # print('logvar=', logvar)
 
             z = toynn.sample_from_q(mu, logvar).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
-            #print('batch_recon=', batch_recon)
-            #print('batch_logvarx=', batch_logvarx)
+            # print('batch_recon=', batch_recon)
+            # print('batch_logvarx=', batch_logvarx)
 
-            # Update the encoder wrt the elbo, proxy for the KL to the posterior
+            # Update the encoder wrt the elbo,
+            # proxy for the KL to the posterior
             loss_reconstruction = toylosses.reconstruction_loss(
                 batch_data, batch_recon, batch_logvarx)
             loss_reconstruction.backward(retain_graph=True)
@@ -366,25 +369,36 @@ class TrainVEM(luigi.Task):
             optimizers['decoder'].zero_grad()
             mu, logvar = encoder(batch_data)
 
-            mu_expanded = mu.expand(N_IS_SAMPLES, batch_size, LATENT_DIM)
-            mu_expanded_flat = mu_expanded.resize(N_IS_SAMPLES*batch_size, LATENT_DIM)
+            mu_expanded = mu.expand(N_IS_SAMPLES, n_batch_data, LATENT_DIM)
+            mu_expanded_flat = mu_expanded.resize(
+                N_IS_SAMPLES*n_batch_data, LATENT_DIM)
 
-            logvar_expanded = logvar.expand(N_IS_SAMPLES, batch_size, -1)
-            logvar_expanded_flat = logvar_expanded.resize(N_IS_SAMPLES*batch_size, LATENT_DIM)
+            logvar_expanded = logvar.expand(N_IS_SAMPLES, n_batch_data, -1)
+            logvar_expanded_flat = logvar_expanded.resize(
+                N_IS_SAMPLES*n_batch_data, LATENT_DIM)
 
             z_expanded_flat = toynn.sample_from_q(
-                mu_expanded, logvar_expanded).to(DEVICE)
-            z_expanded = z_expanded_flat.resize(N_IS_SAMPLES, batch_size, LATENT_DIM)
+                mu_expanded_flat, logvar_expanded_flat).to(DEVICE)
+            z_expanded = z_expanded_flat.resize(
+                N_IS_SAMPLES, n_batch_data, LATENT_DIM)
 
-            batch_recon_expanded_flat, _ = decoder(z_expanded_flat)
-            batch_recon_expanded = batch_recon_expanded_flat.resize(N_IS_SAMPLES, batch_size, DATA_DIM)
+            batch_recon_expanded_flat, batch_logvarx_expanded_flat = decoder(
+                z_expanded_flat)
+            batch_recon_expanded = batch_recon_expanded_flat.resize(
+                N_IS_SAMPLES, n_batch_data, DATA_DIM)
+            batch_logvarx_expanded = batch_logvarx_expanded_flat.resize(
+                N_IS_SAMPLES, n_batch_data, DATA_DIM)
 
-            batch_data_expanded = batch_data.expand(N_IS_SAMPLES, batch_size, DATA_DIM)
+            batch_data_expanded = batch_data.expand(
+                N_IS_SAMPLES, n_batch_data, DATA_DIM)
 
-            loss_iw_vae = losses.loss_iw_vae(
-                batch_data_expanded, batch_recon_expanded,
+            loss_iw_vae = toylosses.iw_vae_loss(
+                batch_data_expanded,
+                batch_recon_expanded, batch_logvarx_expanded,
                 mu_expanded, logvar_expanded,
                 z_expanded)
+
+            print('NLL estimator with IW ELBO =', loss_iw_vae)
 
             loss_iw_vae.backward()
             optimizers['decoder'].step()
@@ -393,8 +407,8 @@ class TrainVEM(luigi.Task):
                 raise ValueError('Reconstruction loss on this batch is nan.')
             if math.isnan(loss_regularization.item()):
                 raise ValueError('Regularization loss on this batch is nan.')
-            #print('reconstruction', loss_reconstruction)
-            #print('regularization', loss_regularization)
+            # print('reconstruction', loss_reconstruction)
+            # print('regularization', loss_regularization)
             loss = loss_reconstruction + loss_regularization
 
             if batch_idx % PRINT_INTERVAL == 0:
@@ -488,7 +502,7 @@ class TrainVEM(luigi.Task):
             if DEBUG:
                 if epoch > 2:
                     break
-            train_losses = self.train_vae(
+            train_losses = self.train_vem(
                 epoch, train_loader, modules, optimizers)
             train_losses_all_epochs.append(train_losses)
 

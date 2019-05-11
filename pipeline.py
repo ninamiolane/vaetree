@@ -75,7 +75,7 @@ if DEBUG:
 
 LATENT_DIM = 50
 
-LR = 15e-6
+LR = 1e-4
 if 'adversarial' in RECONSTRUCTIONS:
     LR = 0.0002
 BETA1 = 0.5
