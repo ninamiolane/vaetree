@@ -44,27 +44,19 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # NN architecture
-DATA_DIM = 2
+DATA_DIM = 1
 LATENT_DIM = 1
-N_DECODER_LAYERS = 2
-NONLINEARITY = True
-N_SAMPLES = 10000
-WITH_BIASX = True
-WITH_LOGVARX = True
+N_DECODER_LAYERS = 1
+NONLINEARITY = False
+N_SAMPLES = 1000
+N_IS_SAMPLES = 100000
+WITH_BIASX = False
+WITH_LOGVARX = False
 
 W_TRUE = {}
 B_TRUE = {}
 
-W_TRUE[0] = [[0.6], [-0.7]]
-B_TRUE[0] = [0., -0.1]
-
-# For the reconstruction
-W_TRUE[1] = [[10., 0.], [0., -5.]]
-B_TRUE[1] = [2., 0.]
-
-# For the logvarx
-W_TRUE[2] = [[0., 0.], [0., 0.]]
-B_TRUE[2] = [0., 0.]
+W_TRUE[0] = [2.]
 
 if WITH_LOGVARX:
     assert len(W_TRUE) == N_DECODER_LAYERS + 1, len(W_TRUE)
@@ -374,20 +366,20 @@ class TrainVEM(luigi.Task):
             optimizers['decoder'].zero_grad()
             mu, logvar = encoder(batch_data)
 
-            mu_expanded = mu.expand(N_SAMPLES, batch_size, LATENT_DIM)
-            mu_expanded_flat = mu_expanded.resize(N_SAMPLES*batch_size, LATENT_DIM)
+            mu_expanded = mu.expand(N_IS_SAMPLES, batch_size, LATENT_DIM)
+            mu_expanded_flat = mu_expanded.resize(N_IS_SAMPLES*batch_size, LATENT_DIM)
 
-            logvar_expanded = logvar.expand(N_SAMPLES, batch_size, -1)
-            logvar_expanded_flat = logvar_expanded.resize(N_SAMPLES*batch_size, LATENT_DIM)
+            logvar_expanded = logvar.expand(N_IS_SAMPLES, batch_size, -1)
+            logvar_expanded_flat = logvar_expanded.resize(N_IS_SAMPLES*batch_size, LATENT_DIM)
 
             z_expanded_flat = toynn.sample_from_q(
                 mu_expanded, logvar_expanded).to(DEVICE)
-            z_expanded = z_expanded_flat.resize(N_SAMPLES, batch_size, LATENT_DIM)
+            z_expanded = z_expanded_flat.resize(N_IS_SAMPLES, batch_size, LATENT_DIM)
 
             batch_recon_expanded_flat, _ = decoder(z_expanded_flat)
-            batch_recon_expanded = batch_recon_expanded_flat.resize(N_SAMPLES, batch_size, DATA_DIM)
+            batch_recon_expanded = batch_recon_expanded_flat.resize(N_IS_SAMPLES, batch_size, DATA_DIM)
 
-            batch_data_expanded = batch_data.expand(N_SAMPLES, batch_size, DATA_DIM)
+            batch_data_expanded = batch_data.expand(N_IS_SAMPLES, batch_size, DATA_DIM)
 
             loss_iw_vae = losses.loss_iw_vae(
                 batch_data_expanded, batch_recon_expanded,
