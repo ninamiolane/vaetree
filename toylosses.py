@@ -10,6 +10,19 @@ CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if CUDA else "cpu")
 
 
+def fa_loglikelihood(weight, data):
+    mean_data = np.mean(data, axis=0)
+    sig2 = np.mean((data - mean_data) ** 2, axis=0)
+    weight_mle_square = sig2 - 1
+    weight_mle = np.sqrt(weight_mle_square)
+
+    loglikelihood_term_1 = - 1. / 2. * np.log(
+        2 * np.pi * (weight_mle ** 2 + 1))
+    loglikelihood_term_2 = - sig2 / (2 * (weight_mle ** 2 + 1))
+    loglikelihood = loglikelihood_term_1 + loglikelihood_term_2
+    return loglikelihood
+
+
 def reconstruction_loss(batch_data, batch_recon, batch_logvarx):
     n_batch_data, data_dim = batch_data.shape
     assert batch_data.shape == batch_recon.shape
@@ -29,7 +42,7 @@ def reconstruction_loss(batch_data, batch_recon, batch_logvarx):
         batch_varx = batch_logvarx.exp()
         norms = np.linalg.norm(batch_varx.cpu().detach().numpy(), axis=1)
         if np.isclose(norms, 0.).any():
-            print('Waaarning')
+            print('Warning: norms close to 0.')
         aux = (batch_data - batch_recon) ** 2 / batch_varx
 
         if np.isinf(batch_data.cpu().detach().numpy()).any():
