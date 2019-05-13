@@ -74,7 +74,7 @@ KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 PRINT_INTERVAL = 16
 torch.backends.cudnn.benchmark = True
 
-N_EPOCHS = 200
+N_EPOCHS = 500
 LR = 1e-4
 
 BETA1 = 0.5
