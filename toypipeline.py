@@ -68,7 +68,7 @@ WITH_BIASZ = True
 WITH_LOGVARZ = True
 
 # Train
-FRAC_TEST = 0.2
+FRAC_VAL = 0.2
 
 BATCH_SIZE = 32
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
@@ -149,7 +149,10 @@ class MakeDataSet(luigi.Task):
 
 class TrainVAE(luigi.Task):
     models_path = os.path.join(TRAIN_VAE_DIR, 'models')
-    train_losses_path = os.path.join(TRAIN_VAE_DIR, 'train_losses.pkl')
+    train_losses_path = os.path.join(
+        TRAIN_VAE_DIR, 'train_losses.pkl')
+    val_losses_path = os.path.join(
+        TRAIN_VAE_DIR, 'val_losses.pkl')
 
     def requires(self):
         return MakeDataSet()
@@ -240,6 +243,84 @@ class TrainVAE(luigi.Task):
         train_losses['total'] = average_loss
         return train_losses
 
+    def val_vae(self, epoch, val_loader, modules):
+        for module in modules.values():
+            module.val()
+        total_loss_reconstruction = 0
+        total_loss_regularization = 0
+        total_loss = 0
+
+        n_data = len(val_loader.dataset)
+        n_batches = len(val_loader)
+        for batch_idx, batch_data in enumerate(val_loader):
+            if DEBUG:
+                if batch_idx > 3:
+                    continue
+
+            batch_data = batch_data[0].to(DEVICE)
+            n_batch_data = len(batch_data)
+
+            encoder = modules['encoder']
+            decoder = modules['decoder']
+
+            mu, logvar = encoder(batch_data)
+            # print('mu=', mu)
+            # print('logvar=', logvar)
+
+            z = toynn.sample_from_q(mu, logvar).to(DEVICE)
+            batch_recon, batch_logvarx = decoder(z)
+            # print('batch_recon=', batch_recon)
+            # print('batch_logvarx=', batch_logvarx)
+
+            z_from_prior = toynn.sample_from_prior(
+                    LATENT_DIM, n_samples=n_batch_data).to(DEVICE)
+            batch_from_prior, scale_b_from_prior = decoder(
+                    z_from_prior)
+
+            loss_reconstruction = toylosses.reconstruction_loss(
+                batch_data, batch_recon, batch_logvarx)
+            loss_regularization = toylosses.regularization_loss(
+                mu, logvar)  # kld
+
+            if math.isnan(loss_reconstruction.item()):
+                raise ValueError('Reconstruction loss on this batch is nan.')
+            if math.isnan(loss_regularization.item()):
+                raise ValueError('Regularization loss on this batch is nan.')
+            # print('reconstruction', loss_reconstruction)
+            # print('regularization', loss_regularization)
+            loss = loss_reconstruction + loss_regularization
+
+            if batch_idx % PRINT_INTERVAL == 0:
+                logloss = loss / n_batch_data
+                logloss_reconstruction = loss_reconstruction / n_batch_data
+                logloss_regularization = loss_regularization / n_batch_data
+
+                string_base = (
+                    'Val Epoch: {} [{}/{} ({:.0f}%)]\tTotal Loss: {:.6f}'
+                    + '\nReconstruction: {:.6f}, Regularization: {:.6f}')
+                logging.info(
+                    string_base.format(
+                        epoch, batch_idx * n_batch_data, n_data,
+                        100. * batch_idx / n_batches,
+                        logloss,
+                        logloss_reconstruction, logloss_regularization))
+
+            total_loss_reconstruction += loss_reconstruction.item()
+            total_loss_regularization += loss_regularization.item()
+            total_loss += loss.item()
+
+        average_loss_reconstruction = total_loss_reconstruction / n_data
+        average_loss_regularization = total_loss_regularization / n_data
+        average_loss = total_loss / n_data
+
+        logging.info('====> Val Epoch: {} Average loss: {:.4f}'.format(
+                epoch, average_loss))
+        val_losses = {}
+        val_losses['reconstruction'] = average_loss_reconstruction
+        val_losses['regularization'] = average_loss_regularization
+        val_losses['total'] = average_loss
+        return val_losses
+
     def run(self):
         if not os.path.isdir(self.models_path):
             os.mkdir(self.models_path)
@@ -250,15 +331,19 @@ class TrainVAE(luigi.Task):
 
         logging.info('--Dataset tensor: (%d, %d)' % dataset.shape)
 
-        n_train = int((1 - FRAC_TEST) * N_SAMPLES)
+        n_train = int((1 - FRAC_VAL) * N_SAMPLES)
         train = torch.Tensor(dataset[:n_train, :])
+        val = torch.Tensor(dataset[n_train:, :])
 
         logging.info('-- Train tensor: (%d, %d)' % train.shape)
+        logging.info('-- Validation tensor: (%d, %d)' % val.shape)
+
         train_dataset = torch.utils.data.TensorDataset(train)
         train_loader = torch.utils.data.DataLoader(
             train_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
-
-        # TODO(nina): Introduce test tensor
+        val_dataset = torch.utils.data.TensorDataset(val)
+        val_loader = torch.utils.data.DataLoader(
+            val_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
 
         vae = toynn.VAE(
             latent_dim=LATENT_DIM,
@@ -295,6 +380,7 @@ class TrainVAE(luigi.Task):
             module.apply(init_xavier_normal)
 
         train_losses_all_epochs = []
+        val_losses_all_epochs = []
 
         for epoch in range(N_EPOCHS):
             if DEBUG:
@@ -302,7 +388,11 @@ class TrainVAE(luigi.Task):
                     break
             train_losses = self.train_vae(
                 epoch, train_loader, modules, optimizers)
+            val_losses = self.val_vae(
+                epoch, val_loader, modules)
+
             train_losses_all_epochs.append(train_losses)
+            val_losses_all_epochs.append(val_losses)
 
         for module_name, module in modules.items():
             module_path = os.path.join(
@@ -312,9 +402,13 @@ class TrainVAE(luigi.Task):
 
         with open(self.output()['train_losses'].path, 'wb') as pkl:
             pickle.dump(train_losses_all_epochs, pkl)
+        with open(self.output()['val_losses'].path, 'wb') as pkl:
+            pickle.dump(val_losses_all_epochs, pkl)
 
     def output(self):
-        return {'train_losses': luigi.LocalTarget(self.train_losses_path)}
+        return {
+            'train_losses': luigi.LocalTarget(self.train_losses_path),
+            'val_losses': luigi.LocalTarget(self.val_losses_path)}
 
 
 class TrainVEM(luigi.Task):
@@ -454,7 +548,7 @@ class TrainVEM(luigi.Task):
 
         logging.info('--Dataset tensor: (%d, %d)' % dataset.shape)
 
-        n_train = int((1 - FRAC_TEST) * N_SAMPLES)
+        n_train = int((1 - FRAC_VAL) * N_SAMPLES)
         train = torch.Tensor(dataset[:n_train, :])
 
         logging.info('-- Train tensor: (%d, %d)' % train.shape)
@@ -685,7 +779,7 @@ class TrainVEGAN(luigi.Task):
 
         logging.info('--Dataset tensor: (%d, %d)' % dataset.shape)
 
-        n_train = int((1 - FRAC_TEST) * N_SAMPLES)
+        n_train = int((1 - FRAC_VAL) * N_SAMPLES)
         train = torch.Tensor(dataset[:n_train, :])
 
         logging.info('-- Train tensor: (%d, %d)' % train.shape)
