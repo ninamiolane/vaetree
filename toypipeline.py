@@ -31,7 +31,7 @@ TRAIN_VEM_DIR = os.path.join(OUTPUT_DIR, 'train_vem')
 TRAIN_VEGAN_DIR = os.path.join(OUTPUT_DIR, 'train_vegan')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
-DEBUG = False
+DEBUG = True
 
 CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if CUDA else "cpu")
@@ -245,7 +245,7 @@ class TrainVAE(luigi.Task):
 
     def val_vae(self, epoch, val_loader, modules):
         for module in modules.values():
-            module.val()
+            module.eval()
         total_loss_reconstruction = 0
         total_loss_regularization = 0
         total_loss = 0
@@ -855,7 +855,7 @@ class Report(luigi.Task):
     report_path = os.path.join(REPORT_DIR, 'report.html')
 
     def requires(self):
-        return TrainVEM()
+        return TrainVAE(), TrainVEM(), TrainVEGAN()
 
     def get_last_epoch(self):
         # Placeholder
@@ -904,7 +904,7 @@ class Report(luigi.Task):
 
 class RunAll(luigi.Task):
     def requires(self):
-        return TrainVAE(), TrainVEM()
+        return Report()
 
     def output(self):
         return luigi.LocalTarget('dummy')
