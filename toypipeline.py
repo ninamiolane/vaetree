@@ -12,6 +12,7 @@ import random
 
 import torch
 import torch.autograd
+from torch.nn import functional as F
 import torch.nn as tnn
 import torch.optim
 import torch.utils.data
@@ -27,6 +28,7 @@ OUTPUT_DIR = os.path.join(HOME_DIR, 'toyoutput')
 SYNTHETIC_DIR = os.path.join(OUTPUT_DIR, 'synthetic')
 TRAIN_VAE_DIR = os.path.join(OUTPUT_DIR, 'train_vae')
 TRAIN_VEM_DIR = os.path.join(OUTPUT_DIR, 'train_vem')
+TRAIN_VEGAN_DIR = os.path.join(OUTPUT_DIR, 'train_vegan')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
 DEBUG = False
@@ -519,6 +521,242 @@ class TrainVEM(luigi.Task):
         return {'train_losses': luigi.LocalTarget(self.train_losses_path)}
 
 
+class TrainVEGAN(luigi.Task):
+    models_path = os.path.join(TRAIN_VEGAN_DIR, 'models')
+    train_losses_path = os.path.join(TRAIN_VEGAN_DIR, 'train_losses.pkl')
+
+    def requires(self):
+        return MakeDataSet()
+
+    def train_vegan(self, epoch, train_loader, modules, optimizers):
+        for module in modules.values():
+            module.train()
+        total_loss_reconstruction = 0
+        total_loss_regularization = 0
+        total_loss_discriminator = 0
+        total_loss_generator = 0
+        total_loss = 0
+
+        n_data = len(train_loader.dataset)
+        n_batches = len(train_loader)
+
+        for batch_idx, batch_data in enumerate(train_loader):
+            if DEBUG:
+                if batch_idx > 3:
+                    continue
+
+            batch_data = batch_data[0].to(DEVICE)
+            n_batch_data = len(batch_data)
+
+            for optimizer in optimizers.values():
+                optimizer.zero_grad()
+
+            encoder = modules['encoder']
+            decoder = modules['decoder']
+
+            mu, logvar = encoder(batch_data)
+
+            z = toynn.sample_from_q(
+                    mu, logvar).to(DEVICE)
+            batch_recon, batch_logvarx = decoder(z)
+
+            z_from_prior = toynn.sample_from_prior(
+                    LATENT_DIM, n_samples=n_batch_data).to(DEVICE)
+            batch_from_prior, batch_logvarx_from_prior = decoder(
+                    z_from_prior)
+
+            loss_reconstruction = toylosses.reconstruction_loss(
+                batch_data, batch_recon, batch_logvarx)
+            loss_reconstruction.backward(retain_graph=True)
+            loss_regularization = toylosses.regularization_loss(
+                mu, logvar)  # kld
+            loss_regularization.backward()
+
+            # - ENCODER STEP -
+            optimizers['encoder'].step()
+            # - - - - - - - - -
+
+            n_from_prior = int(np.random.uniform(
+                low=n_batch_data - n_batch_data / 4,
+                high=n_batch_data + n_batch_data / 4))
+            z_from_prior = toynn.sample_from_prior(
+                LATENT_DIM, n_samples=n_from_prior)
+            batch_recon_from_prior, batch_logvarx_from_prior = decoder(
+                z_from_prior)
+
+            discriminator = modules['discriminator']
+
+            real_labels = torch.full((n_batch_data, 1), 1, device=DEVICE)
+            fake_labels = torch.full((n_batch_data, 1), 0, device=DEVICE)
+
+            # -- Update Discriminator
+            labels_data = discriminator(batch_data)
+            labels_from_prior = discriminator(batch_from_prior)
+
+            loss_dis_data = F.binary_cross_entropy(
+                        labels_data,
+                        real_labels)
+            loss_dis_from_prior = F.binary_cross_entropy(
+                        labels_from_prior,
+                        fake_labels)
+
+            loss_discriminator = (
+                    loss_dis_data + loss_dis_from_prior)
+
+            # Fill gradients on discriminator only
+            loss_discriminator.backward(retain_graph=True)
+
+            # - DISCRIMINATOR STEP -
+            # Before filing with gradient of loss_generator
+            optimizers['discriminator'].step()
+            # - - - - - - - - -
+
+            # -- Update Generator/Decoder
+            loss_generator = F.binary_cross_entropy(
+                    labels_from_prior,
+                    real_labels)
+
+            # Fill gradients on generator only
+            # FREE THE DECODER:
+            optimizers['decoder'].zero_grad()
+            # Only back propagate the loss of the generator through the deocder
+            loss_generator.backward()
+
+            # - DECODER STEP -
+            optimizers['decoder'].step()
+            # - - - - - - - - -
+
+            loss = loss_reconstruction + loss_regularization
+            loss += loss_discriminator + loss_generator
+
+            if batch_idx % PRINT_INTERVAL == 0:
+                batch_loss = loss / n_batch_data
+                batch_loss_reconstruction = loss_reconstruction / n_batch_data
+                batch_loss_regularization = loss_regularization / n_batch_data
+                batch_loss_discriminator = loss_discriminator / n_batch_data
+                batch_loss_generator = loss_generator / n_batch_data
+
+                dx = labels_data.mean()
+                dgz = labels_from_prior.mean()
+
+                string_base = (
+                    'Train Epoch: {} [{}/{} ({:.0f}%)]\tTotal Loss: {:.6f}'
+                    + '\nReconstruction: {:.6f}, Regularization: {:.6f}')
+                string_base += (
+                    ', Discriminator: {:.6f}; Generator: {:.6f},'
+                    '\nD(x): {:.3f}, D(G(z)): {:.3f}')
+                logging.info(
+                    string_base.format(
+                        epoch, batch_idx * n_batch_data, n_data,
+                        100. * batch_idx / n_batches,
+                        batch_loss,
+                        batch_loss_reconstruction,
+                        batch_loss_regularization,
+                        batch_loss_discriminator,
+                        batch_loss_generator,
+                        dx, dgz))
+
+            total_loss_reconstruction += loss_reconstruction.item()
+            total_loss_regularization += loss_regularization.item()
+            total_loss_discriminator += loss_discriminator.item()
+            total_loss_generator += loss_generator.item()
+
+            total_loss += loss.item()
+
+        average_loss_reconstruction = total_loss_reconstruction / n_data
+        average_loss_regularization = total_loss_regularization / n_data
+        average_loss = total_loss / n_data
+
+        logging.info('====> Epoch: {} Average loss: {:.4f}'.format(
+                epoch, average_loss))
+        train_losses = {}
+        train_losses['reconstruction'] = average_loss_reconstruction
+        train_losses['regularization'] = average_loss_regularization
+        train_losses['total'] = average_loss
+        return train_losses
+
+    def run(self):
+        if not os.path.isdir(self.models_path):
+            os.mkdir(self.models_path)
+            os.chmod(self.models_path, 0o777)
+
+        dataset_path = self.input().path
+        dataset = torch.Tensor(np.load(dataset_path))
+
+        logging.info('--Dataset tensor: (%d, %d)' % dataset.shape)
+
+        n_train = int((1 - FRAC_TEST) * N_SAMPLES)
+        train = torch.Tensor(dataset[:n_train, :])
+
+        logging.info('-- Train tensor: (%d, %d)' % train.shape)
+        train_dataset = torch.utils.data.TensorDataset(train)
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
+
+        # TODO(nina): Introduce test tensor
+        vae = toynn.VAE(
+            latent_dim=LATENT_DIM, data_dim=DATA_DIM,
+            n_layers=N_DECODER_LAYERS, nonlinearity=NONLINEARITY,
+            with_biasx=WITH_BIASX,
+            with_logvarx=WITH_LOGVARX,
+            with_biasz=WITH_BIASZ,
+            with_logvarz=WITH_LOGVARZ)
+        vae.to(DEVICE)
+
+        discriminator = toynn.Discriminator(data_dim=DATA_DIM).to(DEVICE)
+
+        modules = {}
+        modules['encoder'] = vae.encoder
+        modules['decoder'] = vae.decoder
+
+        modules['discriminator'] = discriminator
+
+        logging.info('Values of VEGAN\'s decoder parameters before training:')
+        decoder = modules['decoder']
+        for name, param in decoder.named_parameters():
+            logging.info(name)
+            logging.info(param.data)
+
+        optimizers = {}
+        optimizers['encoder'] = torch.optim.Adam(
+            modules['encoder'].parameters(), lr=LR, betas=(BETA1, BETA2))
+        optimizers['decoder'] = torch.optim.Adam(
+            modules['decoder'].parameters(), lr=LR, betas=(BETA1, BETA2))
+
+        optimizers['discriminator'] = torch.optim.Adam(
+            modules['discriminator'].parameters(), lr=LR, betas=(BETA1, BETA2))
+
+        def init_xavier_normal(m):
+            if type(m) == tnn.Linear:
+                tnn.init.xavier_normal_(m.weight)
+
+        for module in modules.values():
+            module.apply(init_xavier_normal)
+
+        train_losses_all_epochs = []
+
+        for epoch in range(N_EPOCHS):
+            if DEBUG:
+                if epoch > 2:
+                    break
+            train_losses = self.train_vegan(
+                epoch, train_loader, modules, optimizers)
+
+            train_losses_all_epochs.append(train_losses)
+
+        for module_name, module in modules.items():
+            module_path = os.path.join(
+                self.models_path,
+                '{}.pth'.format(module_name))
+            torch.save(module, module_path)
+
+        with open(self.output()['train_losses'].path, 'wb') as pkl:
+            pickle.dump(train_losses_all_epochs, pkl)
+
+    def output(self):
+        return {'train_losses': luigi.LocalTarget(self.train_losses_path)}
+
+
 class Report(luigi.Task):
     report_path = os.path.join(REPORT_DIR, 'report.html')
 
@@ -580,7 +818,9 @@ class RunAll(luigi.Task):
 
 def init():
     directories = [
-        OUTPUT_DIR, SYNTHETIC_DIR, TRAIN_VAE_DIR, TRAIN_VEM_DIR, REPORT_DIR]
+        OUTPUT_DIR, SYNTHETIC_DIR,
+        TRAIN_VAE_DIR, TRAIN_VEM_DIR, TRAIN_VEGAN_DIR,
+        REPORT_DIR]
     for directory in directories:
         if not os.path.isdir(directory):
             os.mkdir(directory)
