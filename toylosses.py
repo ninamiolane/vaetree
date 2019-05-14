@@ -86,16 +86,25 @@ def iw_vae_loss(x, recon_x, logvarx, mu, logvar, z):
     var = torch.exp(logvar)
     varx = torch.exp(logvarx)
 
-    log_QzGx = torch.sum(- 0.5 * (z - mu) ** 2 / var - 0.5 * logvar, -1)
-    log_Pz = torch.sum(-0.5 * z ** 2, -1)
+    log_QzGx = torch.sum(
+        - 0.5 * (z - mu) ** 2 / var
+        - 0.5 * logvar, dim=-1)
+    log_QzGx += - 0.5 * torch.log(torch.Tensor([2 * np.pi]))
 
-    log_PxGz = torch.sum(- 0.5 * (x - recon_x) ** 2 / varx - 0.5 * logvarx, -1)
+    log_Pz = torch.sum(-0.5 * z ** 2, dim=-1)
+    log_Pz += - 0.5 * torch.log(torch.Tensor([2 * np.pi]))
+
+    log_PxGz = torch.sum(
+        - 0.5 * (x - recon_x) ** 2 / varx
+        - 0.5 * logvarx, dim=-1)
+    log_PxGz += - 0.5 * torch.log(torch.Tensor([2 * np.pi]))
 
     log_weight = log_Pz + log_PxGz - log_QzGx
     log_weight = log_weight - torch.max(log_weight, 0)[0]
     weight = torch.exp(log_weight)
-    weight = weight / torch.sum(weight, 0)
+    weight = weight / torch.sum(weight, dim=0)
     weight = Variable(weight.data, requires_grad=False)
 
-    loss = -torch.mean(torch.sum(weight * (log_Pz + log_PxGz - log_QzGx), 0))
+    loss = -torch.mean(
+        torch.sum(weight * (log_Pz + log_PxGz - log_QzGx), dim=0))
     return loss
