@@ -10,7 +10,7 @@ CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if CUDA else "cpu")
 
 
-def fa_negloglikelihood(weight, data):
+def fa_neg_loglikelihood(weight, data):
     weight = weight.cpu()
     sig2 = torch.mean(data ** 2, dim=0)
 
@@ -18,8 +18,8 @@ def fa_negloglikelihood(weight, data):
         2 * np.pi * (weight ** 2 + 1))
     loglikelihood_term_2 = - sig2 / (2 * (weight ** 2 + 1))
     loglikelihood = loglikelihood_term_1 + loglikelihood_term_2
-    negloglikelihood = - loglikelihood
-    return negloglikelihood
+    neg_loglikelihood = - loglikelihood
+    return neg_loglikelihood
 
 
 def reconstruction_loss(batch_data, batch_recon, batch_logvarx):

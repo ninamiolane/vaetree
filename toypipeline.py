@@ -4,7 +4,6 @@ import datetime as dt
 import jinja2
 import logging
 import luigi
-import math
 import numpy as np
 import os
 import pickle
@@ -184,39 +183,27 @@ class TrainVAE(luigi.Task):
             decoder = modules['decoder']
 
             mu, logvar = encoder(batch_data)
-            # print('mu=', mu)
-            # print('logvar=', logvar)
 
             z = toynn.sample_from_q(mu, logvar).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
-            # print('batch_recon=', batch_recon)
-            # print('batch_logvarx=', batch_logvarx)
 
-            z_from_prior = toynn.sample_from_prior(
-                    LATENT_DIM, n_samples=n_batch_data).to(DEVICE)
-            batch_from_prior, scale_b_from_prior = decoder(
-                    z_from_prior)
-
+            # --- VAE: Train wrt Neg ELBO --- #
             loss_reconstruction = toylosses.reconstruction_loss(
                 batch_data, batch_recon, batch_logvarx)
             loss_reconstruction.backward(retain_graph=True)
+
             loss_regularization = toylosses.regularization_loss(
                 mu, logvar)  # kld
             loss_regularization.backward()
 
             optimizers['encoder'].step()
             optimizers['decoder'].step()
+            # ------------------------------- #
+
+            neg_elbo = loss_reconstruction + loss_regularization
 
             iwae = toylosses.iw_vae_loss(
                 batch_data, batch_recon, batch_logvarx, mu, logvar, z)
-
-            if math.isnan(loss_reconstruction.item()):
-                raise ValueError('Reconstruction loss on this batch is nan.')
-            if math.isnan(loss_regularization.item()):
-                raise ValueError('Regularization loss on this batch is nan.')
-            # print('reconstruction', loss_reconstruction)
-            # print('regularization', loss_regularization)
-            neg_elbo = loss_reconstruction + loss_regularization
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -229,7 +216,6 @@ class TrainVAE(luigi.Task):
                         neg_elbo,
                         loss_reconstruction, loss_regularization))
 
-            # Total losses are not averaged, only the sum of losses
             total_loss_reconstruction += (
                 n_batch_data * loss_reconstruction.item())
             total_loss_regularization += (
@@ -279,30 +265,15 @@ class TrainVAE(luigi.Task):
             decoder = modules['decoder']
 
             mu, logvar = encoder(batch_data)
-            # print('mu=', mu)
-            # print('logvar=', logvar)
 
             z = toynn.sample_from_q(mu, logvar).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
-            # print('batch_recon=', batch_recon)
-            # print('batch_logvarx=', batch_logvarx)
-
-            z_from_prior = toynn.sample_from_prior(
-                    LATENT_DIM, n_samples=n_batch_data).to(DEVICE)
-            batch_from_prior, scale_b_from_prior = decoder(
-                    z_from_prior)
 
             loss_reconstruction = toylosses.reconstruction_loss(
                 batch_data, batch_recon, batch_logvarx)
             loss_regularization = toylosses.regularization_loss(
                 mu, logvar)  # kld
 
-            if math.isnan(loss_reconstruction.item()):
-                raise ValueError('Reconstruction loss on this batch is nan.')
-            if math.isnan(loss_regularization.item()):
-                raise ValueError('Regularization loss on this batch is nan.')
-            # print('reconstruction', loss_reconstruction)
-            # print('regularization', loss_regularization)
             neg_elbo = loss_reconstruction + loss_regularization
 
             iwae = toylosses.iw_vae_loss(
@@ -470,18 +441,9 @@ class TrainIWAE(luigi.Task):
             decoder = modules['decoder']
 
             mu, logvar = encoder(batch_data)
-            # print('mu=', mu)
-            # print('logvar=', logvar)
 
             z = toynn.sample_from_q(mu, logvar).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
-            # print('batch_recon=', batch_recon)
-            # print('batch_logvarx=', batch_logvarx)
-
-            z_from_prior = toynn.sample_from_prior(
-                    LATENT_DIM, n_samples=n_batch_data).to(DEVICE)
-            batch_from_prior, scale_b_from_prior = decoder(
-                    z_from_prior)
 
             loss_reconstruction = toylosses.reconstruction_loss(
                 batch_data, batch_recon, batch_logvarx)
@@ -490,7 +452,7 @@ class TrainIWAE(luigi.Task):
 
             neg_elbo = loss_reconstruction + loss_regularization
 
-            # We only propagate the IWAE
+            # --- IWAE: Train wrt IWAE --- #
             iwae = toylosses.iw_vae_loss(
                 batch_data, batch_recon, batch_logvarx, mu, logvar, z)
 
@@ -498,13 +460,7 @@ class TrainIWAE(luigi.Task):
 
             optimizers['encoder'].step()
             optimizers['decoder'].step()
-
-            if math.isnan(loss_reconstruction.item()):
-                raise ValueError('Reconstruction loss on this batch is nan.')
-            if math.isnan(loss_regularization.item()):
-                raise ValueError('Regularization loss on this batch is nan.')
-            # print('reconstruction', loss_reconstruction)
-            # print('regularization', loss_regularization)
+            # ---------------------------- #
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -515,7 +471,6 @@ class TrainIWAE(luigi.Task):
                         100. * batch_idx / n_batches,
                         iwae))
 
-            # Total losses are not averaged, only the sum of losses
             total_loss_reconstruction += (
                 n_batch_data * loss_reconstruction.item())
             total_loss_regularization += (
@@ -565,18 +520,9 @@ class TrainIWAE(luigi.Task):
             decoder = modules['decoder']
 
             mu, logvar = encoder(batch_data)
-            # print('mu=', mu)
-            # print('logvar=', logvar)
 
             z = toynn.sample_from_q(mu, logvar).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
-            # print('batch_recon=', batch_recon)
-            # print('batch_logvarx=', batch_logvarx)
-
-            z_from_prior = toynn.sample_from_prior(
-                    LATENT_DIM, n_samples=n_batch_data).to(DEVICE)
-            batch_from_prior, scale_b_from_prior = decoder(
-                    z_from_prior)
 
             loss_reconstruction = toylosses.reconstruction_loss(
                 batch_data, batch_recon, batch_logvarx)
@@ -587,13 +533,6 @@ class TrainIWAE(luigi.Task):
 
             iwae = toylosses.iw_vae_loss(
                 batch_data, batch_recon, batch_logvarx, mu, logvar, z)
-
-            if math.isnan(loss_reconstruction.item()):
-                raise ValueError('Reconstruction loss on this batch is nan.')
-            if math.isnan(loss_regularization.item()):
-                raise ValueError('Regularization loss on this batch is nan.')
-            # print('reconstruction', loss_reconstruction)
-            # print('regularization', loss_regularization)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -753,28 +692,26 @@ class TrainVEM(luigi.Task):
             decoder = modules['decoder']
 
             mu, logvar = encoder(batch_data)
-            # print('mu=', mu)
-            # print('logvar=', logvar)
 
             z = toynn.sample_from_q(mu, logvar).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
-            # print('batch_recon=', batch_recon)
-            # print('batch_logvarx=', batch_logvarx)
 
-            # Update the encoder wrt the elbo,
-            # proxy for the KL to the posterior
+            # --- VEM: Train encoder with NEG ELBO, proxy for KL --- #
             loss_reconstruction = toylosses.reconstruction_loss(
                 batch_data, batch_recon, batch_logvarx)
             loss_reconstruction.backward(retain_graph=True)
+
             loss_regularization = toylosses.regularization_loss(
                 mu, logvar)  # kld
             loss_regularization.backward()
 
-            # The encoder is trained with ELBO
             optimizers['encoder'].step()
+            neg_elbo = loss_reconstruction + loss_regularization
+            # ----------------------------------------------------- #
 
-            # Update the decoder wrt the log-likelihood
+            # --- VEM: Train decoder with IWAE, proxy for NLL --- #
             optimizers['decoder'].zero_grad()
+
             mu, logvar = encoder(batch_data)
 
             mu_expanded = mu.expand(N_IS_SAMPLES, n_batch_data, LATENT_DIM)
@@ -806,17 +743,9 @@ class TrainVEM(luigi.Task):
                 mu_expanded, logvar_expanded,
                 z_expanded)
 
-            # The decoder is trained with IWAE
             iwae.backward()
             optimizers['decoder'].step()
-
-            if math.isnan(loss_reconstruction.item()):
-                raise ValueError('Reconstruction loss on this batch is nan.')
-            if math.isnan(loss_regularization.item()):
-                raise ValueError('Regularization loss on this batch is nan.')
-            # print('reconstruction', loss_reconstruction)
-            # print('regularization', loss_regularization)
-            neg_elbo = loss_reconstruction + loss_regularization
+            # ----------------------------------------------------- #
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -882,23 +811,19 @@ class TrainVEM(luigi.Task):
             decoder = modules['decoder']
 
             mu, logvar = encoder(batch_data)
-            # print('mu=', mu)
-            # print('logvar=', logvar)
 
             z = toynn.sample_from_q(mu, logvar).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
-            # print('batch_recon=', batch_recon)
-            # print('batch_logvarx=', batch_logvarx)
 
-            # Update the encoder wrt the elbo,
-            # proxy for the KL to the posterior
+            # --- VEM: Neg ELBO
             loss_reconstruction = toylosses.reconstruction_loss(
                 batch_data, batch_recon, batch_logvarx)
             loss_reconstruction.backward(retain_graph=True)
             loss_regularization = toylosses.regularization_loss(
                 mu, logvar)  # kld
+            neg_elbo = loss_reconstruction + loss_regularization
 
-            # Decoder wrt the log-likelihood
+            # --- VEM: IWAE
             mu, logvar = encoder(batch_data)
 
             mu_expanded = mu.expand(N_IS_SAMPLES, n_batch_data, LATENT_DIM)
@@ -929,14 +854,6 @@ class TrainVEM(luigi.Task):
                 batch_recon_expanded, batch_logvarx_expanded,
                 mu_expanded, logvar_expanded,
                 z_expanded)
-
-            if math.isnan(loss_reconstruction.item()):
-                raise ValueError('Reconstruction loss on this batch is nan.')
-            if math.isnan(loss_regularization.item()):
-                raise ValueError('Regularization loss on this batch is nan.')
-            # print('reconstruction', loss_reconstruction)
-            # print('regularization', loss_regularization)
-            neg_elbo = loss_reconstruction + loss_regularization
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -1451,7 +1368,7 @@ class Report(luigi.Task):
     report_path = os.path.join(REPORT_DIR, 'report.html')
 
     def requires(self):
-        return TrainVAE(), TrainIWAE(), TrainVEM(), TrainVEGAN()
+        return TrainVAE(), TrainIWAE(), TrainVEM()
 
     def get_last_epoch(self):
         # Placeholder
@@ -1509,7 +1426,7 @@ class RunAll(luigi.Task):
 def init():
     directories = [
         OUTPUT_DIR, SYNTHETIC_DIR,
-        TRAIN_VAE_DIR, TRAIN_IWAE_DIR, TRAIN_VEM_DIR, # TRAIN_VEGAN_DIR,
+        TRAIN_VAE_DIR, TRAIN_IWAE_DIR, TRAIN_VEM_DIR,
         REPORT_DIR]
     for directory in directories:
         if not os.path.isdir(directory):
