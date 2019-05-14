@@ -49,7 +49,7 @@ DATA_DIM = 1
 LATENT_DIM = 1
 N_DECODER_LAYERS = 1
 NONLINEARITY = False
-N_SAMPLES = 1000  # Number of synthetic data
+N_SAMPLES = 2000  # Number of synthetic data
 N_IS_SAMPLES = 1000
 WITH_BIASX = False
 WITH_LOGVARX = False
@@ -84,6 +84,7 @@ BETA2 = 0.999
 
 if DEBUG:
     BATCH_SIZE = 4
+    N_SAMPLES = 20
     N_IS_SAMPLES = 3
 
 
@@ -213,10 +214,6 @@ class TrainVAE(luigi.Task):
             loss = loss_reconstruction + loss_regularization
 
             if batch_idx % PRINT_INTERVAL == 0:
-                logloss = loss / n_batch_data
-                logloss_reconstruction = loss_reconstruction / n_batch_data
-                logloss_regularization = loss_regularization / n_batch_data
-
                 string_base = (
                     'Train Epoch: {} [{}/{} ({:.0f}%)]\tTotal Loss: {:.6f}'
                     + '\nReconstruction: {:.6f}, Regularization: {:.6f}')
@@ -224,22 +221,31 @@ class TrainVAE(luigi.Task):
                     string_base.format(
                         epoch, batch_idx * n_batch_data, n_data,
                         100. * batch_idx / n_batches,
-                        logloss,
-                        logloss_reconstruction, logloss_regularization))
+                        loss,
+                        loss_reconstruction, loss_regularization))
 
-            total_loss_reconstruction += loss_reconstruction.item()
-            total_loss_regularization += loss_regularization.item()
-            total_loss += loss.item()
+            # Total losses are not averaged, only the sum of losses
+            total_loss_reconstruction += (
+                n_batch_data * loss_reconstruction.item())
+            total_loss_regularization += (
+                n_batch_data * loss_regularization.item())
+            total_loss += n_batch_data * loss.item()
 
         average_loss_reconstruction = total_loss_reconstruction / n_data
         average_loss_regularization = total_loss_regularization / n_data
         average_loss = total_loss / n_data
+
+        weight = decoder.layers[0].weight[[0]]
+        train_data = torch.Tensor(train_loader.dataset)
+        negloglikelihood = toylosses.fa_negloglikelihood(
+            weight, train_data)
 
         logging.info('====> Epoch: {} Average loss: {:.4f}'.format(
                 epoch, average_loss))
         train_losses = {}
         train_losses['reconstruction'] = average_loss_reconstruction
         train_losses['regularization'] = average_loss_regularization
+        train_losses['negloglikelihood'] = negloglikelihood
         train_losses['total'] = average_loss
         return train_losses
 
@@ -291,10 +297,6 @@ class TrainVAE(luigi.Task):
             loss = loss_reconstruction + loss_regularization
 
             if batch_idx % PRINT_INTERVAL == 0:
-                logloss = loss / n_batch_data
-                logloss_reconstruction = loss_reconstruction / n_batch_data
-                logloss_regularization = loss_regularization / n_batch_data
-
                 string_base = (
                     'Val Epoch: {} [{}/{} ({:.0f}%)]\tTotal Loss: {:.6f}'
                     + '\nReconstruction: {:.6f}, Regularization: {:.6f}')
@@ -302,22 +304,29 @@ class TrainVAE(luigi.Task):
                     string_base.format(
                         epoch, batch_idx * n_batch_data, n_data,
                         100. * batch_idx / n_batches,
-                        logloss,
-                        logloss_reconstruction, logloss_regularization))
+                        loss,
+                        loss_reconstruction, loss_regularization))
 
-            total_loss_reconstruction += loss_reconstruction.item()
-            total_loss_regularization += loss_regularization.item()
-            total_loss += loss.item()
+            total_loss_reconstruction += (
+                n_batch_data * loss_reconstruction.item())
+            total_loss_regularization += (
+                n_batch_data * loss_regularization.item())
+            total_loss += n_batch_data * loss.item()
 
         average_loss_reconstruction = total_loss_reconstruction / n_data
         average_loss_regularization = total_loss_regularization / n_data
         average_loss = total_loss / n_data
+
+        weight = decoder.layers[0].weight[[0]]
+        val_data = torch.Tensor(val_loader.dataset)
+        negloglikelihood = toylosses.fa_negloglikelihood(weight, val_data)
 
         logging.info('====> Val Epoch: {} Average loss: {:.4f}'.format(
                 epoch, average_loss))
         val_losses = {}
         val_losses['reconstruction'] = average_loss_reconstruction
         val_losses['regularization'] = average_loss_regularization
+        val_losses['negloglikelihood'] = negloglikelihood
         val_losses['total'] = average_loss
         return val_losses
 
@@ -509,10 +518,6 @@ class TrainVEM(luigi.Task):
             loss = loss_reconstruction + loss_regularization
 
             if batch_idx % PRINT_INTERVAL == 0:
-                logloss = loss / n_batch_data
-                logloss_reconstruction = loss_reconstruction / n_batch_data
-                logloss_regularization = loss_regularization / n_batch_data
-
                 string_base = (
                     'Train Epoch: {} [{}/{} ({:.0f}%)]\tTotal Loss: {:.6f}'
                     + '\nReconstruction: {:.6f}, Regularization: {:.6f}')
@@ -520,23 +525,34 @@ class TrainVEM(luigi.Task):
                     string_base.format(
                         epoch, batch_idx * n_batch_data, n_data,
                         100. * batch_idx / n_batches,
-                        logloss,
-                        logloss_reconstruction, logloss_regularization))
+                        loss,
+                        loss_reconstruction, loss_regularization))
 
-            total_loss_reconstruction += loss_reconstruction.item()
-            total_loss_regularization += loss_regularization.item()
-            total_loss += loss.item()
+            total_loss_reconstruction += (
+                n_batch_data * loss_reconstruction.item())
+            total_loss_regularization += (
+                n_batch_data * loss_regularization.item())
+            total_loss += n_batch_data * loss.item()
 
         average_loss_reconstruction = total_loss_reconstruction / n_data
         average_loss_regularization = total_loss_regularization / n_data
         average_loss = total_loss / n_data
+
+        weight = decoder.layers[0].weight[[0]]
+        print('weight = ', weight)
+        train_data = torch.Tensor(train_loader.dataset)
+        negloglikelihood = toylosses.fa_negloglikelihood(
+            weight, train_data)
 
         logging.info('====> Epoch: {} Average loss: {:.4f}'.format(
                 epoch, average_loss))
         train_losses = {}
         train_losses['reconstruction'] = average_loss_reconstruction
         train_losses['regularization'] = average_loss_regularization
+        train_losses['negloglikelihood'] = negloglikelihood
         train_losses['total'] = average_loss
+
+        print('!! train data : ', train_data)
         return train_losses
 
     def val_vem(self, epoch, val_loader, modules):
@@ -619,10 +635,6 @@ class TrainVEM(luigi.Task):
             loss = loss_reconstruction + loss_regularization
 
             if batch_idx % PRINT_INTERVAL == 0:
-                logloss = loss / n_batch_data
-                logloss_reconstruction = loss_reconstruction / n_batch_data
-                logloss_regularization = loss_regularization / n_batch_data
-
                 string_base = (
                     'Val Epoch: {} [{}/{} ({:.0f}%)]\tTotal Loss: {:.6f}'
                     + '\nReconstruction: {:.6f}, Regularization: {:.6f}')
@@ -630,22 +642,30 @@ class TrainVEM(luigi.Task):
                     string_base.format(
                         epoch, batch_idx * n_batch_data, n_data,
                         100. * batch_idx / n_batches,
-                        logloss,
-                        logloss_reconstruction, logloss_regularization))
+                        loss,
+                        loss_reconstruction, loss_regularization))
 
-            total_loss_reconstruction += loss_reconstruction.item()
-            total_loss_regularization += loss_regularization.item()
-            total_loss += loss.item()
+            total_loss_reconstruction += (
+                n_batch_data * loss_reconstruction.item())
+            total_loss_regularization += (
+                n_batch_data * loss_regularization.item())
+            total_loss += n_batch_data * loss.item()
 
         average_loss_reconstruction = total_loss_reconstruction / n_data
         average_loss_regularization = total_loss_regularization / n_data
         average_loss = total_loss / n_data
+
+        weight = decoder.layers[0].weight[[0]]
+        val_data = torch.Tensor(val_loader.dataset)
+        negloglikelihood = toylosses.fa_negloglikelihood(
+            weight, val_data)
 
         logging.info('====> Val Epoch: {} Average loss: {:.4f}'.format(
                 epoch, average_loss))
         val_losses = {}
         val_losses['reconstruction'] = average_loss_reconstruction
         val_losses['regularization'] = average_loss_regularization
+        val_losses['negloglikelihood'] = negloglikelihood
         val_losses['total'] = average_loss
         return val_losses
 
@@ -846,15 +866,9 @@ class TrainVEGAN(luigi.Task):
             # - - - - - - - - -
 
             loss = loss_reconstruction + loss_regularization
-            loss += loss_discriminator + loss_generator
+            # loss += loss_discriminator + loss_generator
 
             if batch_idx % PRINT_INTERVAL == 0:
-                batch_loss = loss / n_batch_data
-                batch_loss_reconstruction = loss_reconstruction / n_batch_data
-                batch_loss_regularization = loss_regularization / n_batch_data
-                batch_loss_discriminator = loss_discriminator / n_batch_data
-                batch_loss_generator = loss_generator / n_batch_data
-
                 dx = labels_data.mean()
                 dgz = labels_from_prior.mean()
 
@@ -868,29 +882,38 @@ class TrainVEGAN(luigi.Task):
                     string_base.format(
                         epoch, batch_idx * n_batch_data, n_data,
                         100. * batch_idx / n_batches,
-                        batch_loss,
-                        batch_loss_reconstruction,
-                        batch_loss_regularization,
-                        batch_loss_discriminator,
-                        batch_loss_generator,
+                        loss,
+                        loss_reconstruction,
+                        loss_regularization,
+                        loss_discriminator,
+                        loss_generator,
                         dx, dgz))
 
-            total_loss_reconstruction += loss_reconstruction.item()
-            total_loss_regularization += loss_regularization.item()
-            total_loss_discriminator += loss_discriminator.item()
-            total_loss_generator += loss_generator.item()
+            total_loss_reconstruction += (
+                n_batch_data * loss_reconstruction.item())
+            total_loss_regularization += (
+                n_batch_data * loss_regularization.item())
+            total_loss_discriminator += (
+                n_batch_data * loss_discriminator.item())
+            total_loss_generator += (n_batch_data * loss_generator.item())
 
-            total_loss += loss.item()
+            total_loss += n_batch_data * loss.item()
 
         average_loss_reconstruction = total_loss_reconstruction / n_data
         average_loss_regularization = total_loss_regularization / n_data
         average_loss = total_loss / n_data
+
+        weight = decoder.layers[0].weight[[0]]
+        train_data = torch.Tensor(train_loader.dataset)
+        negloglikelihood = toylosses.fa_negloglikelihood(
+            weight, train_data)
 
         logging.info('====> Epoch: {} Average loss: {:.4f}'.format(
                 epoch, average_loss))
         train_losses = {}
         train_losses['reconstruction'] = average_loss_reconstruction
         train_losses['regularization'] = average_loss_regularization
+        train_losses['negloglikelihood'] = negloglikelihood
         train_losses['total'] = average_loss
         return train_losses
 
@@ -967,15 +990,9 @@ class TrainVEGAN(luigi.Task):
                     real_labels)
 
             loss = loss_reconstruction + loss_regularization
-            loss += loss_discriminator + loss_generator
+            # loss += loss_discriminator + loss_generator
 
             if batch_idx % PRINT_INTERVAL == 0:
-                batch_loss = loss / n_batch_data
-                batch_loss_reconstruction = loss_reconstruction / n_batch_data
-                batch_loss_regularization = loss_regularization / n_batch_data
-                batch_loss_discriminator = loss_discriminator / n_batch_data
-                batch_loss_generator = loss_generator / n_batch_data
-
                 dx = labels_data.mean()
                 dgz = labels_from_prior.mean()
 
@@ -989,29 +1006,38 @@ class TrainVEGAN(luigi.Task):
                     string_base.format(
                         epoch, batch_idx * n_batch_data, n_data,
                         100. * batch_idx / n_batches,
-                        batch_loss,
-                        batch_loss_reconstruction,
-                        batch_loss_regularization,
-                        batch_loss_discriminator,
-                        batch_loss_generator,
+                        loss,
+                        loss_reconstruction,
+                        loss_regularization,
+                        loss_discriminator,
+                        loss_generator,
                         dx, dgz))
 
-            total_loss_reconstruction += loss_reconstruction.item()
-            total_loss_regularization += loss_regularization.item()
-            total_loss_discriminator += loss_discriminator.item()
-            total_loss_generator += loss_generator.item()
+            total_loss_reconstruction += (
+                n_batch_data * loss_reconstruction.item())
+            total_loss_regularization += (
+                n_batch_data * loss_regularization.item())
+            total_loss_discriminator += (
+                n_batch_data * loss_discriminator.item())
+            total_loss_generator += n_batch_data * loss_generator.item()
 
-            total_loss += loss.item()
+            total_loss += n_batch_data * loss.item()
 
         average_loss_reconstruction = total_loss_reconstruction / n_data
         average_loss_regularization = total_loss_regularization / n_data
         average_loss = total_loss / n_data
+
+        weight = decoder.layers[0].weight[[0]]
+        val_data = torch.Tensor(val_loader.dataset)
+        negloglikelihood = toylosses.fa_negloglikelihood(
+            weight, val_data)
 
         logging.info('====> Val Epoch: {} Average loss: {:.4f}'.format(
                 epoch, average_loss))
         val_losses = {}
         val_losses['reconstruction'] = average_loss_reconstruction
         val_losses['regularization'] = average_loss_regularization
+        val_losses['negloglikelihood'] = negloglikelihood
         val_losses['total'] = average_loss
         return val_losses
 

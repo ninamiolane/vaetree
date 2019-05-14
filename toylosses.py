@@ -10,20 +10,24 @@ CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if CUDA else "cpu")
 
 
-def fa_loglikelihood(weight, data):
-    mean_data = np.mean(data, axis=0)
-    sig2 = np.mean((data - mean_data) ** 2, axis=0)
-    weight_mle_square = sig2 - 1
-    weight_mle = np.sqrt(weight_mle_square)
+def fa_negloglikelihood(weight, data):
+    weight = weight.cpu()
+    sig2 = torch.mean(data ** 2, dim=0)
 
-    loglikelihood_term_1 = - 1. / 2. * np.log(
-        2 * np.pi * (weight_mle ** 2 + 1))
-    loglikelihood_term_2 = - sig2 / (2 * (weight_mle ** 2 + 1))
+    loglikelihood_term_1 = - 1. / 2. * torch.log(
+        2 * np.pi * (weight ** 2 + 1))
+    loglikelihood_term_2 = - sig2 / (2 * (weight ** 2 + 1))
     loglikelihood = loglikelihood_term_1 + loglikelihood_term_2
-    return loglikelihood
+    negloglikelihood = - loglikelihood
+    return negloglikelihood
 
 
 def reconstruction_loss(batch_data, batch_recon, batch_logvarx):
+    """
+    First compute the expected l_uvae data per data (line by line).
+    Then take the average.
+    Then take the inverse, as we want a loss.
+    """
     n_batch_data, data_dim = batch_data.shape
     assert batch_data.shape == batch_recon.shape
 
