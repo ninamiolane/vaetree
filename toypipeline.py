@@ -202,7 +202,7 @@ class TrainVAE(luigi.Task):
 
             neg_elbo = loss_reconstruction + loss_regularization
 
-            iwae = toylosses.iw_vae_loss(
+            iwae = toylosses.iwae_loss(
                 batch_data, batch_recon, batch_logvarx, mu, logvar, z)
 
             if batch_idx % PRINT_INTERVAL == 0:
@@ -276,7 +276,7 @@ class TrainVAE(luigi.Task):
 
             neg_elbo = loss_reconstruction + loss_regularization
 
-            iwae = toylosses.iw_vae_loss(
+            iwae = toylosses.iwae_loss(
                 batch_data, batch_recon, batch_logvarx, mu, logvar, z)
 
             if batch_idx % PRINT_INTERVAL == 0:
@@ -453,7 +453,7 @@ class TrainIWAE(luigi.Task):
             neg_elbo = loss_reconstruction + loss_regularization
 
             # --- IWAE: Train wrt IWAE --- #
-            iwae = toylosses.iw_vae_loss(
+            iwae = toylosses.iwae_loss(
                 batch_data, batch_recon, batch_logvarx, mu, logvar, z)
 
             iwae.backward()
@@ -531,7 +531,7 @@ class TrainIWAE(luigi.Task):
 
             neg_elbo = loss_reconstruction + loss_regularization
 
-            iwae = toylosses.iw_vae_loss(
+            iwae = toylosses.iwae_loss(
                 batch_data, batch_recon, batch_logvarx, mu, logvar, z)
 
             if batch_idx % PRINT_INTERVAL == 0:
@@ -737,7 +737,7 @@ class TrainVEM(luigi.Task):
             batch_data_expanded = batch_data.expand(
                 N_IS_SAMPLES, n_batch_data, DATA_DIM)
 
-            iwae = toylosses.iw_vae_loss(
+            iwae = toylosses.iwae_loss(
                 batch_data_expanded,
                 batch_recon_expanded, batch_logvarx_expanded,
                 mu_expanded, logvar_expanded,
@@ -849,7 +849,7 @@ class TrainVEM(luigi.Task):
             batch_data_expanded = batch_data.expand(
                 N_IS_SAMPLES, n_batch_data, DATA_DIM)
 
-            iwae = toylosses.iw_vae_loss(
+            iwae = toylosses.iwae_loss(
                 batch_data_expanded,
                 batch_recon_expanded, batch_logvarx_expanded,
                 mu_expanded, logvar_expanded,

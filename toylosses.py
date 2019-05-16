@@ -82,7 +82,7 @@ def regularization_loss(mu, logvar):
     return loss_regularization
 
 
-def iw_vae_loss(x, recon_x, logvarx, mu, logvar, z):
+def iwae_loss(x, recon_x, logvarx, mu, logvar, z):
     var = torch.exp(logvar)
     varx = torch.exp(logvarx)
 
@@ -101,10 +101,12 @@ def iw_vae_loss(x, recon_x, logvarx, mu, logvar, z):
 
     log_weight = log_Pz + log_PxGz - log_QzGx
     log_weight = log_weight - torch.max(log_weight, 0)[0]
+
     weight = torch.exp(log_weight)
     weight = weight / torch.sum(weight, dim=0)
     weight = Variable(weight.data, requires_grad=False)
 
-    loss = -torch.mean(
+    lower_bound = torch.mean(
         torch.sum(weight * (log_Pz + log_PxGz - log_QzGx), dim=0))
-    return loss
+    iwae = - lower_bound
+    return iwae
