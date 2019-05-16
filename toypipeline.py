@@ -203,7 +203,7 @@ class TrainVAE(luigi.Task):
             neg_elbo = loss_reconstruction + loss_regularization
 
             iwae = toylosses.iwae_loss(
-                batch_data, batch_recon, batch_logvarx, mu, logvar, z)
+                decoder, batch_data, mu, logvar, n_is_samples=N_IS_SAMPLES)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -277,7 +277,7 @@ class TrainVAE(luigi.Task):
             neg_elbo = loss_reconstruction + loss_regularization
 
             iwae = toylosses.iwae_loss(
-                batch_data, batch_recon, batch_logvarx, mu, logvar, z)
+                decoder, batch_data, mu, logvar, n_is_samples=N_IS_SAMPLES)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -453,8 +453,12 @@ class TrainIWAE(luigi.Task):
             neg_elbo = loss_reconstruction + loss_regularization
 
             # --- IWAE: Train wrt IWAE --- #
+
             iwae = toylosses.iwae_loss(
-                batch_data, batch_recon, batch_logvarx, mu, logvar, z)
+                decoder,
+                batch_data,
+                mu, logvar,
+                n_is_samples=N_IS_SAMPLES)
 
             iwae.backward()
 
@@ -531,8 +535,13 @@ class TrainIWAE(luigi.Task):
 
             neg_elbo = loss_reconstruction + loss_regularization
 
+            # --- IWAE --- #
             iwae = toylosses.iwae_loss(
-                batch_data, batch_recon, batch_logvarx, mu, logvar, z)
+                decoder,
+                batch_data,
+                mu, logvar,
+                n_is_samples=N_IS_SAMPLES)
+            # ------------ #
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -703,7 +712,7 @@ class TrainVEM(luigi.Task):
 
             loss_regularization = toylosses.regularization_loss(
                 mu, logvar)  # kld
-            loss_regularization.backward()
+            loss_regularization.backward(retain_graph=True)
 
             optimizers['encoder'].step()
             neg_elbo = loss_reconstruction + loss_regularization
@@ -712,38 +721,13 @@ class TrainVEM(luigi.Task):
             # --- VEM: Train decoder with IWAE, proxy for NLL --- #
             optimizers['decoder'].zero_grad()
 
-            mu, logvar = encoder(batch_data)
-
-            mu_expanded = mu.expand(N_IS_SAMPLES, n_batch_data, LATENT_DIM)
-            mu_expanded_flat = mu_expanded.resize(
-                N_IS_SAMPLES*n_batch_data, LATENT_DIM)
-
-            logvar_expanded = logvar.expand(N_IS_SAMPLES, n_batch_data, -1)
-            logvar_expanded_flat = logvar_expanded.resize(
-                N_IS_SAMPLES*n_batch_data, LATENT_DIM)
-
-            z_expanded_flat = toynn.sample_from_q(
-                mu_expanded_flat, logvar_expanded_flat).to(DEVICE)
-            z_expanded = z_expanded_flat.resize(
-                N_IS_SAMPLES, n_batch_data, LATENT_DIM)
-
-            batch_recon_expanded_flat, batch_logvarx_expanded_flat = decoder(
-                z_expanded_flat)
-            batch_recon_expanded = batch_recon_expanded_flat.resize(
-                N_IS_SAMPLES, n_batch_data, DATA_DIM)
-            batch_logvarx_expanded = batch_logvarx_expanded_flat.resize(
-                N_IS_SAMPLES, n_batch_data, DATA_DIM)
-
-            batch_data_expanded = batch_data.expand(
-                N_IS_SAMPLES, n_batch_data, DATA_DIM)
-
             iwae = toylosses.iwae_loss(
-                batch_data_expanded,
-                batch_recon_expanded, batch_logvarx_expanded,
-                mu_expanded, logvar_expanded,
-                z_expanded)
+                decoder,
+                batch_data,
+                mu, logvar,
+                n_is_samples=N_IS_SAMPLES)
 
-            iwae.backward()
+            iwae.backward()  # This also fills the encoder, but we do not step
             optimizers['decoder'].step()
             # ----------------------------------------------------- #
 
@@ -824,36 +808,11 @@ class TrainVEM(luigi.Task):
             neg_elbo = loss_reconstruction + loss_regularization
 
             # --- VEM: IWAE
-            mu, logvar = encoder(batch_data)
-
-            mu_expanded = mu.expand(N_IS_SAMPLES, n_batch_data, LATENT_DIM)
-            mu_expanded_flat = mu_expanded.resize(
-                N_IS_SAMPLES*n_batch_data, LATENT_DIM)
-
-            logvar_expanded = logvar.expand(N_IS_SAMPLES, n_batch_data, -1)
-            logvar_expanded_flat = logvar_expanded.resize(
-                N_IS_SAMPLES*n_batch_data, LATENT_DIM)
-
-            z_expanded_flat = toynn.sample_from_q(
-                mu_expanded_flat, logvar_expanded_flat).to(DEVICE)
-            z_expanded = z_expanded_flat.resize(
-                N_IS_SAMPLES, n_batch_data, LATENT_DIM)
-
-            batch_recon_expanded_flat, batch_logvarx_expanded_flat = decoder(
-                z_expanded_flat)
-            batch_recon_expanded = batch_recon_expanded_flat.resize(
-                N_IS_SAMPLES, n_batch_data, DATA_DIM)
-            batch_logvarx_expanded = batch_logvarx_expanded_flat.resize(
-                N_IS_SAMPLES, n_batch_data, DATA_DIM)
-
-            batch_data_expanded = batch_data.expand(
-                N_IS_SAMPLES, n_batch_data, DATA_DIM)
-
             iwae = toylosses.iwae_loss(
-                batch_data_expanded,
-                batch_recon_expanded, batch_logvarx_expanded,
-                mu_expanded, logvar_expanded,
-                z_expanded)
+                decoder,
+                batch_data,
+                mu, logvar,
+                n_is_samples=N_IS_SAMPLES)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (

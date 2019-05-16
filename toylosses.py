@@ -6,6 +6,8 @@ import torch
 from torch.autograd import Variable
 import torch.nn
 
+import toynn
+
 CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if CUDA else "cpu")
 
@@ -82,24 +84,33 @@ def regularization_loss(mu, logvar):
     return loss_regularization
 
 
-def iwae_loss(x, recon_x, logvarx, mu, logvar, z):
-    var = torch.exp(logvar)
-    varx = torch.exp(logvarx)
+def iwae_loss_base(
+        x_expanded, recon_x_expanded,
+        logvarx_expanded, mu_expanded, logvar_expanded, z_expanded):
+    """
+    The _expanded means that the tensor is of shape:
+    n_is_samples x n_batch_data x tensor_dim.
+    """
+
+    var_expanded = torch.exp(logvar_expanded)
+    varx_expanded = torch.exp(logvarx_expanded)
 
     log_QzGx = torch.sum(
-        - 0.5 * (z - mu) ** 2 / var
-        - 0.5 * logvar, dim=-1)
+        - 0.5 * (z_expanded - mu_expanded) ** 2 / var_expanded
+        - 0.5 * logvar_expanded, dim=-1)
     log_QzGx += - 0.5 * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)
 
-    log_Pz = torch.sum(-0.5 * z ** 2, dim=-1)
+    log_Pz = torch.sum(-0.5 * z_expanded ** 2, dim=-1)
     log_Pz += - 0.5 * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)[0]
 
     log_PxGz = torch.sum(
-        - 0.5 * (x - recon_x) ** 2 / varx
-        - 0.5 * logvarx, dim=-1)
+        - 0.5 * (x_expanded - recon_x_expanded) ** 2 / varx_expanded
+        - 0.5 * logvarx_expanded, dim=-1)
     log_PxGz += - 0.5 * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)
 
     log_weight = log_Pz + log_PxGz - log_QzGx
+    # log weight is of shape: n_is_samples x n_batch_data
+
     log_weight = log_weight - torch.max(log_weight, 0)[0]
 
     weight = torch.exp(log_weight)
@@ -109,4 +120,39 @@ def iwae_loss(x, recon_x, logvarx, mu, logvar, z):
     lower_bound = torch.mean(
         torch.sum(weight * (log_Pz + log_PxGz - log_QzGx), dim=0))
     iwae = - lower_bound
+    return iwae
+
+
+def iwae_loss(decoder, x, mu, logvar, n_is_samples):
+    n_batch_data, latent_dim = mu.shape
+    _, data_dim = x.shape
+
+    mu_expanded = mu.expand(n_is_samples, n_batch_data, latent_dim)
+    mu_expanded_flat = mu_expanded.resize(
+        n_is_samples*n_batch_data, latent_dim)
+
+    logvar_expanded = logvar.expand(n_is_samples, n_batch_data, -1)
+    logvar_expanded_flat = logvar_expanded.resize(
+        n_is_samples*n_batch_data, latent_dim)
+
+    z_expanded_flat = toynn.sample_from_q(
+        mu_expanded_flat, logvar_expanded_flat).to(DEVICE)
+    z_expanded = z_expanded_flat.resize(
+        n_is_samples, n_batch_data, latent_dim)
+
+    batch_recon_expanded_flat, batch_logvarx_expanded_flat = decoder(
+        z_expanded_flat)
+    batch_recon_expanded = batch_recon_expanded_flat.resize(
+        n_is_samples, n_batch_data, data_dim)
+    batch_logvarx_expanded = batch_logvarx_expanded_flat.resize(
+        n_is_samples, n_batch_data, data_dim)
+
+    x_expanded = x.expand(
+        n_is_samples, n_batch_data, data_dim)
+
+    iwae = iwae_loss_base(
+        x_expanded,
+        batch_recon_expanded, batch_logvarx_expanded,
+        mu_expanded, logvar_expanded,
+        z_expanded)
     return iwae
