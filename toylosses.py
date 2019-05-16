@@ -111,7 +111,9 @@ def iwae_loss_base(
     log_weight = log_Pz + log_PxGz - log_QzGx
     # log weight is of shape: n_is_samples x n_batch_data
 
-    log_weight = log_weight - torch.max(log_weight, 0)[0]
+    # [0] because the result of max is a tuple
+    # substract the maximum so that logweights are negative.
+    log_weight = log_weight - torch.max(log_weight, dim=0)[0]
 
     weight = torch.exp(log_weight)
     weight = weight / torch.sum(weight, dim=0)

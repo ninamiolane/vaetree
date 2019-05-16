@@ -49,8 +49,8 @@ DATA_DIM = 1
 LATENT_DIM = 1
 N_DECODER_LAYERS = 1
 NONLINEARITY = False
-N_SAMPLES = 2000  # Number of synthetic data
-N_IS_SAMPLES = 1000
+N_SAMPLES = 10000  # Number of synthetic data
+N_IS_SAMPLES = 5000
 WITH_BIASX = False
 WITH_LOGVARX = False
 
