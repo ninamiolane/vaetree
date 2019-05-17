@@ -12,6 +12,36 @@ CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if CUDA else "cpu")
 
 
+def log_mean_exp(x, dim):
+    """
+    Compute the log(mean(exp(x), dim)) in a numerically stable manner
+
+    Args:
+        x: tensor: (...): Arbitrary tensor
+        dim: int: (): Dimension along which mean is computed
+
+    Return:
+        _: tensor: (...): log(mean(exp(x), dim))
+    """
+    return log_sum_exp(x, dim) - np.log(x.size(dim))
+
+
+def log_sum_exp(x, dim=0):
+    """
+    Compute the log(sum(exp(x), dim)) in a numerically stable manner
+
+    Args:
+        x: tensor: (...): Arbitrary tensor
+        dim: int: (): Dimension along which sum is computed
+
+    Return:
+        _: tensor: (...): log(sum(exp(x), dim))
+    """
+    max_x = torch.max(x, dim)[0]
+    new_x = x - max_x.unsqueeze(dim).expand_as(x)
+    return max_x + (new_x.exp().sum(dim)).log()
+
+
 def fa_neg_loglikelihood(weight, data):
     weight = weight.cpu()
     sig2 = torch.mean(data ** 2, dim=0)
@@ -84,7 +114,42 @@ def regularization_loss(mu, logvar):
     return loss_regularization
 
 
-def iwae_loss_base(
+def neg_iwelbo_loss_base(
+        x_expanded, recon_x_expanded,
+        logvarx_expanded, mu_expanded, logvar_expanded, z_expanded):
+    """
+    The _expanded means that the tensor is of shape:
+    n_is_samples x n_batch_data x tensor_dim.
+    """
+    n_is_samples, n_batch_data, _ = x_expanded.shape
+    var_expanded = torch.exp(logvar_expanded)
+    varx_expanded = torch.exp(logvarx_expanded)
+
+    log_QzGx = torch.sum(
+        - 0.5 * (z_expanded - mu_expanded) ** 2 / var_expanded
+        - 0.5 * logvar_expanded, dim=-1)
+    log_QzGx += - 0.5 * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)
+
+    log_Pz = torch.sum(-0.5 * z_expanded ** 2, dim=-1)
+    log_Pz += - 0.5 * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)[0]
+
+    log_PxGz = torch.sum(
+        - 0.5 * (x_expanded - recon_x_expanded) ** 2 / varx_expanded
+        - 0.5 * logvarx_expanded, dim=-1)
+    log_PxGz += - 0.5 * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)
+
+    log_weight = log_Pz + log_PxGz - log_QzGx
+    assert log_weight.shape == (n_is_samples, n_batch_data)
+
+    iwelbo = log_mean_exp(log_weight, dim=0)
+    assert iwelbo.shape == (n_batch_data,)
+
+    iwelbo = torch.mean(iwelbo)
+    neg_iwelbo = -iwelbo
+    return neg_iwelbo
+
+
+def iwae_loss_base_wrong(
         x_expanded, recon_x_expanded,
         logvarx_expanded, mu_expanded, logvar_expanded, z_expanded):
     """
@@ -165,9 +230,27 @@ def iwae_loss(decoder, x, mu, logvar, n_is_samples):
     x_expanded = x.expand(
         n_is_samples, n_batch_data, data_dim)
 
-    iwae = iwae_loss_base(
+    iwae = neg_iwelbo_loss_base(
         x_expanded,
         batch_recon_expanded, batch_logvarx_expanded,
         mu_expanded, logvar_expanded,
         z_expanded)
     return iwae
+
+
+def neg_iwelbo(self, x, n_samples_mc):
+    # tile vectors from (B, d) to (n_samples_mc, B, d)
+    px_mean, px_var, qz_m, qz_v, z = self.inference(
+        x, n_samples=n_samples_mc, reparam=True)
+    log_ratio = self.log_ratio(x, px_mean, px_var, qz_m, qz_v, z)
+    iwelbo = torch.logsumexp(log_ratio, dim=0) - np.log(n_samples_mc)
+    return - iwelbo
+
+
+def neg_iwelbo_grad(self, x, n_samples_mc):
+    # tile vectors from (B, d) to (n_samples_mc, B, d)
+    px_mean, px_var, qz_m, qz_v, z = self.inference(
+        x, n_samples=n_samples_mc, reparam=True)
+    log_ratio = self.log_ratio(x, px_mean, px_var, qz_m, qz_v, z)
+    iwelbo = torch.softmax(log_ratio, dim=0).detach() * log_ratio
+    return - iwelbo.sum(dim=0)

@@ -241,6 +241,7 @@ class TrainVAE(luigi.Task):
         train_losses['neg_loglikelihood'] = neg_loglikelihood
         train_losses['neg_elbo'] = average_neg_elbo
         train_losses['iwae'] = average_iwae
+        train_losses['weight'] = weight
         return train_losses
 
     def val_vae(self, epoch, val_loader, modules):
@@ -314,6 +315,7 @@ class TrainVAE(luigi.Task):
         val_losses['neg_loglikelihood'] = neg_loglikelihood
         val_losses['neg_elbo'] = average_neg_elbo
         val_losses['iwae'] = average_iwae
+        val_losses['weight'] = weight
         return val_losses
 
     def run(self):
@@ -500,6 +502,7 @@ class TrainIWAE(luigi.Task):
         train_losses['neg_loglikelihood'] = neg_loglikelihood
         train_losses['iwae'] = average_iwae
         train_losses['neg_elbo'] = average_neg_elbo
+        train_losses['weight'] = weight
         return train_losses
 
     def val_iwae(self, epoch, val_loader, modules):
@@ -576,6 +579,7 @@ class TrainIWAE(luigi.Task):
         val_losses['neg_loglikelihood'] = neg_loglikelihood
         val_losses['iwae'] = average_iwae
         val_losses['neg_elbo'] = average_neg_elbo
+        val_losses['weight'] = weight
         return val_losses
 
     def run(self):
@@ -770,6 +774,7 @@ class TrainVEM(luigi.Task):
         train_losses['neg_loglikelihood'] = neg_loglikelihood
         train_losses['neg_elbo'] = average_neg_elbo
         train_losses['iwae'] = average_iwae
+        train_losses['weight'] = weight
 
         return train_losses
 
@@ -853,7 +858,7 @@ class TrainVEM(luigi.Task):
         val_losses['neg_loglikelihood'] = neg_loglikelihood
         val_losses['neg_elbo'] = average_neg_elbo
         val_losses['iwae'] = average_iwae
-
+        val_losses['weight'] = weight
         return val_losses
 
     def run(self):
