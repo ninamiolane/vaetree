@@ -41,7 +41,7 @@ def make_decoder_true(w_true, b_true,
     return decoder_true
 
 
-def generate_from_decoder(decoder, n_samples):
+def generate_from_decoder(decoder, n_samples=1):
     z, mux, logvarx = decoder.generate(n_samples=n_samples)
     _, data_dim = mux.shape
 
@@ -59,22 +59,30 @@ def generate_from_decoder(decoder, n_samples):
     return generated_x
 
 
-def reparametrize(mu, logvar):
+def reparametrize(mu, logvar, n_samples=1):
+    n_batch_data, latent_dim = mu.shape
+
     std = logvar.mul(0.5).exp_()
+    std_expanded = std.resize(
+        n_samples, n_batch_data, latent_dim)
+    mu_expanded = mu.resize(
+        n_samples, n_batch_data, latent_dim)
 
-    n_samples, latent_dim = mu.shape
     if CUDA:
-        eps = torch.cuda.FloatTensor(n_samples, latent_dim).normal_()
+        eps = torch.cuda.FloatTensor(
+            n_samples, n_batch_data, latent_dim).normal_()
     else:
-        eps = torch.FloatTensor(n_samples, latent_dim).normal_()
+        eps = torch.FloatTensor(n_samples, n_batch_data, latent_dim).normal_()
     eps = torch.autograd.Variable(eps)
-    z = eps * std + mu
-    z = z.squeeze()
-    return z
+
+    z = eps * std_expanded + mu_expanded
+    z_flat = z.resize(n_samples * n_batch_data, latent_dim)
+    z_flat = z_flat.squeeze()  # case where latent_dim = 1: squeeze last dim
+    return z_flat
 
 
-def sample_from_q(mu, logvar):
-    return reparametrize(mu, logvar)
+def sample_from_q(mu, logvar, n_samples=1):
+    return reparametrize(mu, logvar, n_samples)
 
 
 def sample_from_prior(latent_dim, n_samples=1):
