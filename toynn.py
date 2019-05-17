@@ -243,7 +243,7 @@ class Discriminator(nn.Module):
                 out_features=data_dim)
             self.layers.append(layer)
 
-        #for i in range(n_layers):
+        # for i in range(n_layers):
         #    layer = nn.Linear(
         #        in_features=int(data_dim / (2 ** i)),
         #        out_features=int(data_dim / (2 ** (i+1))))
