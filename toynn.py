@@ -63,9 +63,9 @@ def reparametrize(mu, logvar, n_samples=1):
     n_batch_data, latent_dim = mu.shape
 
     std = logvar.mul(0.5).exp_()
-    std_expanded = std.resize(
+    std_expanded = std.expand(
         n_samples, n_batch_data, latent_dim)
-    mu_expanded = mu.resize(
+    mu_expanded = mu.expand(
         n_samples, n_batch_data, latent_dim)
 
     if CUDA:
