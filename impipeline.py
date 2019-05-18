@@ -18,6 +18,7 @@ import torch.optim
 import torch.utils.data
 from torchvision import datasets, transforms
 
+import imnn
 import toylosses
 import toynn
 
@@ -122,7 +123,7 @@ class TrainVAE(luigi.Task):
 
             mu, logvar = encoder(batch_data)
 
-            z = toynn.sample_from_q(
+            z = imnn.sample_from_q(
                 mu, logvar, n_samples=N_MC_TOT).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
 
@@ -220,7 +221,7 @@ class TrainVAE(luigi.Task):
 
             mu, logvar = encoder(batch_data)
 
-            z = toynn.sample_from_q(
+            z = imnn.sample_from_q(
                 mu, logvar, n_samples=N_MC_TOT).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
 
@@ -302,7 +303,7 @@ class TrainVAE(luigi.Task):
         logging.info('-- Train tensor: (%d, %d)' % train_loader.dataset.shape)
         logging.info('-- Valid tensor: (%d, %d)' % val_loader.dataset.shape)
 
-        vae = toynn.VAE(
+        vae = imnn.VAE(
             latent_dim=LATENT_DIM,
             data_dim=DATA_DIM)
         vae.to(DEVICE)
@@ -397,7 +398,7 @@ class TrainIWAE(luigi.Task):
             end = time.time()
             total_time += end - start
 
-            z = toynn.sample_from_q(mu, logvar).to(DEVICE)
+            z = imnn.sample_from_q(mu, logvar).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
 
             loss_reconstruction = toylosses.reconstruction_loss(
@@ -492,7 +493,7 @@ class TrainIWAE(luigi.Task):
             end = time.time()
             total_time += end - start
 
-            z = toynn.sample_from_q(mu, logvar).to(DEVICE)
+            z = imnn.sample_from_q(mu, logvar).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
 
             loss_reconstruction = toylosses.reconstruction_loss(
@@ -572,7 +573,7 @@ class TrainIWAE(luigi.Task):
         logging.info('-- Train tensor: (%d, %d)' % train_loader.dataset.shape)
         logging.info('-- Valid tensor: (%d, %d)' % val_loader.dataset.shape)
 
-        vae = toynn.VAE(
+        vae = imnn.VAE(
             latent_dim=LATENT_DIM,
             data_dim=DATA_DIM)
         vae.to(DEVICE)
@@ -668,7 +669,7 @@ class TrainVEM(luigi.Task):
 
             mu, logvar = encoder(batch_data)
 
-            z = toynn.sample_from_q(
+            z = imnn.sample_from_q(
                 mu, logvar, n_samples=N_MC_ELBO).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
 
@@ -784,7 +785,7 @@ class TrainVEM(luigi.Task):
 
             mu, logvar = encoder(batch_data)
 
-            z = toynn.sample_from_q(
+            z = imnn.sample_from_q(
                 mu, logvar, n_samples=N_MC_ELBO).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
 
@@ -879,7 +880,7 @@ class TrainVEM(luigi.Task):
         logging.info('-- Train tensor: (%d, %d)' % train_loader.dataset.shape)
         logging.info('-- Valid tensor: (%d, %d)' % val_loader.dataset.shape)
 
-        vae = toynn.VAE(
+        vae = imnn.VAE(
             latent_dim=LATENT_DIM,
             data_dim=DATA_DIM)
         vae.to(DEVICE)
@@ -974,11 +975,11 @@ class TrainVEGAN(luigi.Task):
 
             mu, logvar = encoder(batch_data)
 
-            z = toynn.sample_from_q(
+            z = imnn.sample_from_q(
                     mu, logvar).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
 
-            z_from_prior = toynn.sample_from_prior(
+            z_from_prior = imnn.sample_from_prior(
                     LATENT_DIM, n_samples=n_batch_data).to(DEVICE)
             batch_from_prior, batch_logvarx_from_prior = decoder(
                     z_from_prior)
@@ -997,7 +998,7 @@ class TrainVEGAN(luigi.Task):
             n_from_prior = int(np.random.uniform(
                 low=n_batch_data - n_batch_data / 4,
                 high=n_batch_data + n_batch_data / 4))
-            z_from_prior = toynn.sample_from_prior(
+            z_from_prior = imnn.sample_from_prior(
                 LATENT_DIM, n_samples=n_from_prior)
             batch_recon_from_prior, batch_logvarx_from_prior = decoder(
                 z_from_prior)
@@ -1121,11 +1122,11 @@ class TrainVEGAN(luigi.Task):
 
             mu, logvar = encoder(batch_data)
 
-            z = toynn.sample_from_q(
+            z = imnn.sample_from_q(
                     mu, logvar).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
 
-            z_from_prior = toynn.sample_from_prior(
+            z_from_prior = imnn.sample_from_prior(
                     LATENT_DIM, n_samples=n_batch_data).to(DEVICE)
             batch_from_prior, batch_logvarx_from_prior = decoder(
                     z_from_prior)
@@ -1139,7 +1140,7 @@ class TrainVEGAN(luigi.Task):
             n_from_prior = int(np.random.uniform(
                 low=n_batch_data - n_batch_data / 4,
                 high=n_batch_data + n_batch_data / 4))
-            z_from_prior = toynn.sample_from_prior(
+            z_from_prior = imnn.sample_from_prior(
                 LATENT_DIM, n_samples=n_from_prior)
             batch_recon_from_prior, batch_logvarx_from_prior = decoder(
                 z_from_prior)
@@ -1237,7 +1238,7 @@ class TrainVEGAN(luigi.Task):
         logging.info('-- Train tensor: (%d, %d)' % train_loader.dataset.shape)
         logging.info('-- Valid tensor: (%d, %d)' % val_loader.dataset.shape)
 
-        vae = toynn.VAE(
+        vae = imnn.VAE(
             latent_dim=LATENT_DIM,
             data_dim=DATA_DIM)
         vae.to(DEVICE)
