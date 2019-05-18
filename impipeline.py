@@ -65,7 +65,7 @@ KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 PRINT_INTERVAL = 16
 torch.backends.cudnn.benchmark = True
 
-N_EPOCHS = 10
+N_EPOCHS = 80
 LR = 1e-3
 
 BETA1 = 0.5
@@ -125,14 +125,14 @@ class TrainVAE(luigi.Task):
             mu, logvar = encoder(batch_data)
 
             z = imnn.sample_from_q(
-                mu, logvar, n_samples=N_MC_TOT).to(DEVICE)
+                mu, logvar, n_samples=1).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
 
             # --- VAE: Train wrt Neg ELBO --- #
             batch_data_expanded = batch_data.expand(
-                N_MC_TOT, n_batch_data, DATA_DIM)
+                1, n_batch_data, DATA_DIM)
             batch_data_flat = batch_data_expanded.resize(
-                N_MC_TOT*n_batch_data, DATA_DIM)
+                1*n_batch_data, DATA_DIM)
 
             loss_reconstruction = toylosses.reconstruction_loss(
                 batch_data_flat, batch_recon, batch_logvarx)
@@ -224,13 +224,13 @@ class TrainVAE(luigi.Task):
             mu, logvar = encoder(batch_data)
 
             z = imnn.sample_from_q(
-                mu, logvar, n_samples=N_MC_TOT).to(DEVICE)
+                mu, logvar, n_samples=1).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
 
             batch_data_expanded = batch_data.expand(
-                N_MC_TOT, n_batch_data, DATA_DIM)
+                1, n_batch_data, DATA_DIM)
             batch_data_flat = batch_data_expanded.resize(
-                N_MC_TOT*n_batch_data, DATA_DIM)
+                1*n_batch_data, DATA_DIM)
 
             loss_reconstruction = toylosses.reconstruction_loss(
                 batch_data_flat, batch_recon, batch_logvarx)

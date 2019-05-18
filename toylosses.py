@@ -160,19 +160,6 @@ def neg_iwelbo(decoder, x, mu, logvar, n_is_samples):
     logvar_expanded_flat = logvar_expanded.resize(
         n_is_samples*n_batch_data, latent_dim)
 
-    # DEBUG ONLY - Test with zero z:
-    # z_expanded_flat = torch.zeros(
-    #     (n_is_samples * n_batch_data, latent_dim)).to(DEVICE)
-
-    # DEBUG ONLY - Test with non-zero z:
-    # z_expanded = torch.Tensor(
-    #    [[[1.], [2.], [-1.]],
-    #     [[0.], [-1.], [0.]]]
-    #        ).to(DEVICE)
-    # z_expanded_flat = z_expanded.resize(
-    #     n_is_samples * n_batch_data, latent_dim)
-
-    # DEBUG: Getting rid of randomness for debugging
     z_expanded_flat = toynn.sample_from_q(
         mu_expanded_flat, logvar_expanded_flat).to(DEVICE)
     z_expanded = z_expanded_flat.resize(
