@@ -148,7 +148,7 @@ def neg_iwelbo_loss_base(
     return neg_iwelbo
 
 
-def iwae_loss(decoder, x, mu, logvar, n_is_samples):
+def neg_iwelbo(decoder, x, mu, logvar, n_is_samples):
     n_batch_data, latent_dim = mu.shape
     _, data_dim = x.shape
 
