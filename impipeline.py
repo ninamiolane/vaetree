@@ -47,7 +47,7 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # NN architecture
-DATA_DIM = 784
+DATA_DIM = 784  # = 28 x 28, MNIST size
 LATENT_DIM = 20
 
 # MC samples for AVEM
@@ -65,7 +65,7 @@ KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 PRINT_INTERVAL = 16
 torch.backends.cudnn.benchmark = True
 
-N_EPOCHS = 40
+N_EPOCHS = 10
 LR = 1e-3
 
 BETA1 = 0.5
@@ -74,7 +74,7 @@ BETA2 = 0.999
 if DEBUG:
     BATCH_SIZE = 4
     N_SAMPLES = 20
-    N_MC_ELBO = 2
+    N_MC_ELBO = 5
     N_MC_IWELBO = 3
 
 # Report
@@ -113,6 +113,7 @@ class TrainVAE(luigi.Task):
             start = time.time()
 
             batch_data = batch_data[0].to(DEVICE)
+            batch_data = batch_data.view(-1, DATA_DIM)
             n_batch_data = len(batch_data)
 
             for optimizer in optimizers.values():
@@ -214,6 +215,7 @@ class TrainVAE(luigi.Task):
 
             start = time.time()
             batch_data = batch_data[0].to(DEVICE)
+            batch_data = batch_data.view(-1, DATA_DIM)
             n_batch_data = len(batch_data)
 
             encoder = modules['encoder']
@@ -300,8 +302,10 @@ class TrainVAE(luigi.Task):
             '../data', train=False, transform=transforms.ToTensor()),
             batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
 
-        logging.info('-- Train tensor: (%d, %d)' % train_loader.dataset.shape)
-        logging.info('-- Valid tensor: (%d, %d)' % val_loader.dataset.shape)
+        logging.info(
+            '-- Train tensor: (%d, %d, %d)' % train_loader.dataset.data.shape)
+        logging.info(
+            '-- Valid tensor: (%d, %d, %d)' % val_loader.dataset.data.shape)
 
         vae = imnn.VAE(
             latent_dim=LATENT_DIM,
@@ -386,6 +390,7 @@ class TrainIWAE(luigi.Task):
             start = time.time()
 
             batch_data = batch_data[0].to(DEVICE)
+            batch_data = batch_data.view(-1, DATA_DIM)
             n_batch_data = len(batch_data)
 
             for optimizer in optimizers.values():
@@ -484,6 +489,7 @@ class TrainIWAE(luigi.Task):
 
             start = time.time()
             batch_data = batch_data[0].to(DEVICE)
+            batch_data = batch_data.view(-1, DATA_DIM)
             n_batch_data = len(batch_data)
 
             encoder = modules['encoder']
@@ -570,8 +576,10 @@ class TrainIWAE(luigi.Task):
             '../data', train=False, transform=transforms.ToTensor()),
             batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
 
-        logging.info('-- Train tensor: (%d, %d)' % train_loader.dataset.shape)
-        logging.info('-- Valid tensor: (%d, %d)' % val_loader.dataset.shape)
+        logging.info(
+            '-- Train tensor: (%d, %d, %d)' % train_loader.dataset.data.shape)
+        logging.info(
+            '-- Valid tensor: (%d, %d, %d)' % val_loader.dataset.data.shape)
 
         vae = imnn.VAE(
             latent_dim=LATENT_DIM,
@@ -581,12 +589,6 @@ class TrainIWAE(luigi.Task):
         modules = {}
         modules['encoder'] = vae.encoder
         modules['decoder'] = vae.decoder
-
-        logging.info('Values of IWAE\'s decoder parameters before training:')
-        decoder = modules['decoder']
-        for name, param in decoder.named_parameters():
-            logging.info(name)
-            logging.info(param.data)
 
         optimizers = {}
         optimizers['encoder'] = torch.optim.Adam(
@@ -660,6 +662,7 @@ class TrainVEM(luigi.Task):
             start = time.time()
             batch_data = batch_data[0].to(DEVICE)
             n_batch_data = len(batch_data)
+            batch_data = batch_data.view(n_batch_data, DATA_DIM)
 
             for optimizer in optimizers.values():
                 optimizer.zero_grad()
@@ -676,14 +679,24 @@ class TrainVEM(luigi.Task):
             # --- VEM: Train encoder with NEG ELBO, proxy for KL --- #
             half = int(n_batch_data / 2)
             batch_data_first_half = batch_data[:half, ]
+            batch_recon_first_half = batch_recon[:half, ]
+            batch_logvarx_first_half = batch_logvarx[:half, ]
 
             batch_data_expanded = batch_data_first_half.expand(
                 N_MC_ELBO, half, DATA_DIM)
             batch_data_flat = batch_data_expanded.resize(
                 N_MC_ELBO*half, DATA_DIM)
+            batch_recon_expanded = batch_recon_first_half.expand(
+                N_MC_ELBO, half, DATA_DIM)
+            batch_recon_flat = batch_recon_expanded.resize(
+                N_MC_ELBO*half, DATA_DIM)
+            batch_logvarx_expanded = batch_logvarx_first_half.expand(
+                N_MC_ELBO, half, DATA_DIM)
+            batch_logvarx_flat = batch_logvarx_expanded.resize(
+                N_MC_ELBO*half, DATA_DIM)
 
             loss_reconstruction = toylosses.reconstruction_loss(
-                batch_data_flat, batch_recon[:half, ], batch_logvarx[:half, ])
+                batch_data_flat, batch_recon_flat, batch_logvarx_flat)
 
             loss_reconstruction.backward(retain_graph=True)
 
@@ -778,6 +791,7 @@ class TrainVEM(luigi.Task):
 
             start = time.time()
             batch_data = batch_data[0].to(DEVICE)
+            batch_data = batch_data.view(-1, DATA_DIM)
             n_batch_data = len(batch_data)
 
             encoder = modules['encoder']
@@ -792,14 +806,24 @@ class TrainVEM(luigi.Task):
             # --- VEM: Neg ELBO
             half = int(n_batch_data / 2)
             batch_data_first_half = batch_data[:half, ]
+            batch_recon_first_half = batch_recon[:half, ]
+            batch_logvarx_first_half = batch_logvarx[:half, ]
 
             batch_data_expanded = batch_data_first_half.expand(
                 N_MC_ELBO, half, DATA_DIM)
             batch_data_flat = batch_data_expanded.resize(
                 N_MC_ELBO*half, DATA_DIM)
+            batch_recon_expanded = batch_recon_first_half.expand(
+                N_MC_ELBO, half, DATA_DIM)
+            batch_recon_flat = batch_recon_expanded.resize(
+                N_MC_ELBO*half, DATA_DIM)
+            batch_logvarx_expanded = batch_logvarx_first_half.expand(
+                N_MC_ELBO, half, DATA_DIM)
+            batch_logvarx_flat = batch_logvarx_expanded.resize(
+                N_MC_ELBO*half, DATA_DIM)
 
             loss_reconstruction = toylosses.reconstruction_loss(
-                batch_data_flat, batch_recon[:half, ], batch_logvarx[:half, ])
+                batch_data_flat, batch_recon_flat, batch_logvarx_flat)
 
             loss_reconstruction.backward(retain_graph=True)
             loss_regularization = toylosses.regularization_loss(
@@ -877,8 +901,10 @@ class TrainVEM(luigi.Task):
             '../data', train=False, transform=transforms.ToTensor()),
             batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
 
-        logging.info('-- Train tensor: (%d, %d)' % train_loader.dataset.shape)
-        logging.info('-- Valid tensor: (%d, %d)' % val_loader.dataset.shape)
+        logging.info(
+            '-- Train tensor: (%d, %d, %d)' % train_loader.dataset.data.shape)
+        logging.info(
+            '-- Valid tensor: (%d, %d, %d)' % val_loader.dataset.data.shape)
 
         vae = imnn.VAE(
             latent_dim=LATENT_DIM,
@@ -888,12 +914,6 @@ class TrainVEM(luigi.Task):
         modules = {}
         modules['encoder'] = vae.encoder
         modules['decoder'] = vae.decoder
-
-        logging.info('Values of VAE\'s decoder parameters before training:')
-        decoder = modules['decoder']
-        for name, param in decoder.named_parameters():
-            logging.info(name)
-            logging.info(param.data)
 
         optimizers = {}
         optimizers['encoder'] = torch.optim.Adam(
@@ -965,6 +985,7 @@ class TrainVEGAN(luigi.Task):
                     continue
 
             batch_data = batch_data[0].to(DEVICE)
+            batch_data = batch_data.view(-1, DATA_DIM)
             n_batch_data = len(batch_data)
 
             for optimizer in optimizers.values():
@@ -1115,6 +1136,7 @@ class TrainVEGAN(luigi.Task):
                     continue
 
             batch_data = batch_data[0].to(DEVICE)
+            batch_data = batch_data.view(-1, DATA_DIM)
             n_batch_data = len(batch_data)
 
             encoder = modules['encoder']
@@ -1235,8 +1257,10 @@ class TrainVEGAN(luigi.Task):
             '../data', train=False, transform=transforms.ToTensor()),
             batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
 
-        logging.info('-- Train tensor: (%d, %d)' % train_loader.dataset.shape)
-        logging.info('-- Valid tensor: (%d, %d)' % val_loader.dataset.shape)
+        logging.info(
+            '-- Train tensor: (%d, %d, %d)' % train_loader.dataset.data.shape)
+        logging.info(
+            '-- Valid tensor: (%d, %, %d)' % val_loader.dataset.data.shape)
 
         vae = imnn.VAE(
             latent_dim=LATENT_DIM,

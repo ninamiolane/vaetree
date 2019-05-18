@@ -4,5 +4,6 @@ RUN conda install -c conda-forge matplotlib scikit-learn nibabel
 RUN conda install -c conda-forge ipywidgets
 RUN conda install -c anaconda luigi seaborn sympy
 WORKDIR /home/nina/
+ENV PYTHONPATH="/home/nina/code/vaetree"
 USER root
 CMD ["/home/user/miniconda/envs/py36/bin/jupyter", "notebook", "--allow-root", "--ip=0.0.0.0"]

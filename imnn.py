@@ -93,8 +93,7 @@ class VAE(nn.Module):
             data_dim=data_dim)
 
     def forward(self, x):
-        muz, logvarz = self.encoder(
-            x.view(-1, self.data_dim))
+        muz, logvarz = self.encoder(x)
         z = reparametrize(muz, logvarz)
         recon_x = self.decoder(z)
         return recon_x, muz, logvarz
