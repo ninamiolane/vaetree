@@ -132,11 +132,11 @@ def save_checkpoint(epoch, modules, optimizers, dir_path,
             module = modules[module_name]
             optimizer = optimizers[module_name]
             checkpoint[module_name] = {
-                'epoch': epoch,
                 'module_state_dict': module.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'train_losses': train_losses_all_epochs,
-                'val_losses': val_losses_all_epochs}
+                'optimizer_state_dict': optimizer.state_dict()}
+            checkpoint['epoch'] = epoch
+            checkpoint['train_losses'] = train_losses_all_epochs
+            checkpoint['val_losses'] = val_losses_all_epochs
 
         checkpoint_path = os.path.join(
             dir_path, 'epoch_%d_checkpoint.pth' % epoch)
@@ -175,9 +175,9 @@ def init_training(models_path, modules, optimizers):
             module.load_state_dict(module_ckpt['module_state_dict'])
             optimizer.load_state_dict(
                 module_ckpt['optimizer_state_dict'])
-            start_epoch = module_ckpt['epoch'] + 1
-            train_losses_all_epochs = module_ckpt['train_losses']
-            val_losses_all_epochs = module_ckpt['val_losses']
+            start_epoch = ckpt['epoch'] + 1
+            train_losses_all_epochs = ckpt['train_losses']
+            val_losses_all_epochs = ckpt['val_losses']
 
     return (modules, optimizers, start_epoch,
             train_losses_all_epochs, val_losses_all_epochs)
