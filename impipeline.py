@@ -34,7 +34,7 @@ TRAIN_VEM_DIR = os.path.join(OUTPUT_DIR, 'train_vem')
 TRAIN_VEGAN_DIR = os.path.join(OUTPUT_DIR, 'train_vegan')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
-DEBUG = True
+DEBUG = False
 
 CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if CUDA else "cpu")
@@ -79,10 +79,12 @@ BETA1 = 0.5
 BETA2 = 0.999
 
 if DEBUG:
+    N_EPOCHS = 3
     BATCH_SIZE = 4
     N_VEM_ELBO = 5
     N_VEM_IWELBO = 3
     N_MC_NLL = 50
+    CKPT_PERIOD = 1
 
 # Report
 LOADER = jinja2.FileSystemLoader('./templates/')
@@ -137,7 +139,7 @@ def save_checkpoint(epoch, modules, optimizers, dir_path,
                 'val_losses': val_losses_all_epochs}
 
         checkpoint_path = os.path.join(
-            dir_path, 'epoch_%d_checkpoint' % epoch)
+            dir_path, 'epoch_%d_checkpoint.pth' % epoch)
         torch.save(checkpoint, checkpoint_path)
 
 
@@ -152,31 +154,31 @@ def init_training(models_path, modules, optimizers):
     train_losses_all_epochs = []
     val_losses_all_epochs = []
 
-    string_base = os.path.join(
+    path_base = os.path.join(
         models_path, 'epoch_*_checkpoint.pth')
-    for module_name in modules.keys():
-        module_string_base = string_base % module_name
-        ckpts = glob.glob(module_string_base)
-        print(ckpts)
-        if len(ckpts) == 0:
-            for module in modules.values():
-                module.apply(init_xavier_normal)
-        else:
-            ckpts_ids_and_paths = [
-                (int(f.split('_')[1]), f) for f in ckpts]
-            ckpt_id, ckpt_path = max(
-                ckpts_ids_and_paths, key=lambda item: item[0])
-            ckpt = torch.load(ckpt_path, map_location=DEVICE)
-            for module_name in modules.keys():
-                module = modules[module_name]
-                optimizer = modules[module_name]
-                module_ckpt = ckpt[module_name]
-                module.load_state_dict(module_ckpt['model_state_dict'])
-                optimizer.load_state_dict(
-                    module_ckpt['optimizer_state_dict'])
-                start_epoch = module_ckpt['epoch']
-                train_losses_all_epochs = module_ckpt['train_losses']
-                val_losses_all_epochs = module_ckpt['val_losses']
+    ckpts = glob.glob(path_base)
+    if len(ckpts) == 0:
+        logging.info('No checkpoints found. Initializing with Xavier Normal.')
+        for module in modules.values():
+            module.apply(init_xavier_normal)
+    else:
+        ckpts_ids_and_paths = [
+            (int(f.split('_')[2]), f) for f in ckpts]
+        ckpt_id, ckpt_path = max(
+            ckpts_ids_and_paths, key=lambda item: item[0])
+        logging.info('Found checkpoints. Initializing with %s.' % ckpt_path)
+        ckpt = torch.load(ckpt_path, map_location=DEVICE)
+        for module_name in modules.keys():
+            module = modules[module_name]
+            optimizer = optimizers[module_name]
+            module_ckpt = ckpt[module_name]
+            module.load_state_dict(module_ckpt['module_state_dict'])
+            optimizer.load_state_dict(
+                module_ckpt['optimizer_state_dict'])
+            start_epoch = module_ckpt['epoch'] + 1
+            train_losses_all_epochs = module_ckpt['train_losses']
+            val_losses_all_epochs = module_ckpt['val_losses']
+
     return (modules, optimizers, start_epoch,
             train_losses_all_epochs, val_losses_all_epochs)
 
@@ -423,9 +425,6 @@ class TrainVAE(luigi.Task):
         train_losses_all_epochs, val_losses_all_epochs = t, v
 
         for epoch in range(start_epoch, N_EPOCHS):
-            if DEBUG:
-                if epoch > 2:
-                    break
             train_losses = self.train_vae(
                 epoch, train_loader, modules, optimizers)
             val_losses = self.val_vae(
@@ -435,7 +434,8 @@ class TrainVAE(luigi.Task):
             val_losses_all_epochs.append(val_losses)
 
             save_checkpoint(
-                epoch, modules, optimizers, self.models_path)
+                epoch, modules, optimizers, self.models_path,
+                train_losses_all_epochs, val_losses_all_epochs)
 
         for module_name, module in modules.items():
             module_path = os.path.join(
@@ -685,20 +685,11 @@ class TrainIWAE(luigi.Task):
         optimizers['decoder'] = torch.optim.Adam(
             modules['decoder'].parameters(), lr=LR, betas=(BETA1, BETA2))
 
-        def init_xavier_normal(m):
-            if type(m) == tnn.Linear:
-                tnn.init.xavier_normal_(m.weight)
+        m, o, s, t, v = init_training(self.models_path, modules, optimizers)
+        modules, optimizers, start_epoch = m, o, s
+        train_losses_all_epochs, val_losses_all_epochs = t, v
 
-        for module in modules.values():
-            module.apply(init_xavier_normal)
-
-        train_losses_all_epochs = []
-        val_losses_all_epochs = []
-
-        for epoch in range(N_EPOCHS):
-            if DEBUG:
-                if epoch > 2:
-                    break
+        for epoch in range(start_epoch, N_EPOCHS):
             train_losses = self.train_iwae(
                 epoch, train_loader, modules, optimizers)
             val_losses = self.val_iwae(
@@ -706,6 +697,10 @@ class TrainIWAE(luigi.Task):
 
             train_losses_all_epochs.append(train_losses)
             val_losses_all_epochs.append(val_losses)
+
+            save_checkpoint(
+                epoch, modules, optimizers, self.models_path,
+                train_losses_all_epochs, val_losses_all_epochs)
 
         for module_name, module in modules.items():
             module_path = os.path.join(
@@ -827,7 +822,7 @@ class TrainVEM(luigi.Task):
                 string_base = (
                     'Train Epoch: {} [{}/{} ({:.0f}%)]'
                     '\tBatch Neg ELBO: {:.6f}'
-                    + 'Batch Neg IWELBO: {:.4f}')
+                    '\tBatch Neg IWELBO: {:.4f}')
                 logging.info(
                     string_base.format(
                         epoch, batch_idx * n_batch_data, n_data,
@@ -947,7 +942,7 @@ class TrainVEM(luigi.Task):
                 string_base = (
                     'Val Epoch: {} [{}/{} ({:.0f}%)]'
                     '\tBatch Neg ELBO: {:.6f}'
-                    + 'Batch Neg IWELBO: {:.4f}')
+                    '\tBatch Neg IWELBO: {:.4f}')
                 logging.info(
                     string_base.format(
                         epoch, batch_idx * n_batch_data, n_data,
@@ -1012,26 +1007,21 @@ class TrainVEM(luigi.Task):
         optimizers['decoder'] = torch.optim.Adam(
             modules['decoder'].parameters(), lr=LR, betas=(BETA1, BETA2))
 
-        def init_xavier_normal(m):
-            if type(m) == tnn.Linear:
-                tnn.init.xavier_normal_(m.weight)
+        m, o, s, t, v = init_training(self.models_path, modules, optimizers)
+        modules, optimizers, start_epoch = m, o, s
+        train_losses_all_epochs, val_losses_all_epochs = t, v
 
-        for module in modules.values():
-            module.apply(init_xavier_normal)
-
-        train_losses_all_epochs = []
-        val_losses_all_epochs = []
-
-        for epoch in range(N_EPOCHS):
-            if DEBUG:
-                if epoch > 2:
-                    break
+        for epoch in range(start_epoch, N_EPOCHS):
             train_losses = self.train_vem(
                 epoch, train_loader, modules, optimizers)
             train_losses_all_epochs.append(train_losses)
             val_losses = self.val_vem(
                 epoch, val_loader, modules)
             val_losses_all_epochs.append(val_losses)
+
+            save_checkpoint(
+                epoch, modules, optimizers, self.models_path,
+                train_losses_all_epochs, val_losses_all_epochs)
 
         for module_name, module in modules.items():
             module_path = os.path.join(
@@ -1378,9 +1368,6 @@ class TrainVEGAN(luigi.Task):
         val_losses_all_epochs = []
 
         for epoch in range(N_EPOCHS):
-            if DEBUG:
-                if epoch > 2:
-                    break
             train_losses = self.train_vegan(
                 epoch, train_loader, modules, optimizers)
             train_losses_all_epochs.append(train_losses)
@@ -1445,8 +1432,6 @@ class Report(luigi.Task):
         return from_prior
 
     def run(self):
-        pass
-
         with open(self.output().path, 'w') as f:
             template = TEMPLATE_ENVIRONMENT.get_template(TEMPLATE_NAME)
             html = template.render('')
