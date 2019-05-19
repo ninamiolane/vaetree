@@ -1,4 +1,4 @@
-"""NN fabric."""
+
 
 import torch
 import torch.nn as nn
@@ -45,7 +45,7 @@ def sample_from_prior(latent_dim, n_samples=1):
 
 
 class Encoder(nn.Module):
-    def __init__(self, latent_dim=20, data_dim=784):
+    def __init__(self, latent_dim=2, data_dim=784):
         super(Encoder, self).__init__()
 
         self.latent_dim = latent_dim
@@ -62,6 +62,7 @@ class Encoder(nn.Module):
         self.fc22 = nn.Linear(400, latent_dim)
 
     def forward(self, x):
+        x = x.view(-1, self.data_dim)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc1a(x))
         x = F.relu(self.fc1b(x))
@@ -72,7 +73,7 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, latent_dim=20, data_dim=784):
+    def __init__(self, latent_dim=2, data_dim=784):
         super(Decoder, self).__init__()
 
         self.latent_dim = latent_dim
@@ -110,8 +111,8 @@ class VAE(nn.Module):
 
 
 class EncoderCNN(nn.Module):
-    def __init__(self, latent_dim=20, im_h=28, im_w=28):
-        super(Encoder, self).__init__()
+    def __init__(self, latent_dim=2, im_h=28, im_w=28):
+        super(EncoderCNN, self).__init__()
 
         self.latent_dim = latent_dim
         self.im_h = im_h
@@ -131,29 +132,38 @@ class EncoderCNN(nn.Module):
         self.relu = nn.ReLU()
 
     def forward(self, x):
+        print('x=', x)
         x = x.view(-1, 1, 28, 28)
-        x = F.elu(self.conv1(x))
-        x = F.elu(self.conv2(x))
+        print('x0=', x)
+        x = self.relu(self.conv1(x))
+        print('x1=', x)
+        x = self.relu(self.conv2(x))
+        print('x2=', x)
         x = x.view(-1, 128 * 28 * 28)
+        print('x3=', x)
 
-        muz = F.elu(self.fc11(x))
+        muz = self.relu(self.fc11(x))
+        print('muz1=', muz)
         muz = self.fc12(muz)
+        print('muz2=', muz)
 
-        logvarz = F.elu(self.fc21(x))
+        logvarz = self.relu(self.fc21(x))
+        print('logvarz1=', logvarz)
         logvarz = self.fc22(logvarz)
+        print('logvarz2=', logvarz)
 
         return muz, logvarz
 
 
 class DecoderCNN(nn.Module):
-    def __init__(self, latent_dim=20, im_h=28, im_w=28):
-        super(Decoder, self).__init__()
+    def __init__(self, latent_dim=2, im_h=28, im_w=28):
+        super(DecoderCNN, self).__init__()
 
         self.latent_dim = latent_dim
         self.im_h = im_h
         self.im_w = im_w
 
-        self.fc1 = nn.Linear(in_features=20, out_features=1024)
+        self.fc1 = nn.Linear(in_features=self.latent_dim, out_features=1024)
         self.fc2 = nn.Linear(in_features=1024, out_features=7 * 7 * 128)
         self.conv_t1 = nn.ConvTranspose2d(
             in_channels=128, out_channels=64,
@@ -169,8 +179,9 @@ class DecoderCNN(nn.Module):
         x = x.view(-1, 128, 7, 7)
         x = F.relu(self.conv_t1(x))
         recon_x = F.sigmoid(self.conv_t2(x))
+        recon_x = recon_x.view(-1, self.im_h * self.im_w)
         # Output flat recon_x
-        return recon_x.view(-1, 784), torch.zeros_like(recon_x)  # HACK
+        return recon_x, torch.zeros_like(recon_x)  # HACK
 
 
 class VAECNN(nn.Module):
@@ -178,8 +189,8 @@ class VAECNN(nn.Module):
     Inspired by
     github.com/atinghosh/VAE-pytorch/blob/master/VAE_CNN_BCEloss.py.
     """
-    def __init__(self, latent_dim=20, im_h=28, im_w=28):
-        super(VAE, self).__init__()
+    def __init__(self, latent_dim=2, im_h=28, im_w=28):
+        super(VAECNN, self).__init__()
         self.latent_dim = latent_dim
         self.im_h = im_h
         self.im_w = im_w

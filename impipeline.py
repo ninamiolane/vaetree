@@ -34,7 +34,7 @@ TRAIN_VEM_DIR = os.path.join(OUTPUT_DIR, 'train_vem')
 TRAIN_VEGAN_DIR = os.path.join(OUTPUT_DIR, 'train_vegan')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
-DEBUG = False
+DEBUG = True
 
 CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if CUDA else "cpu")
@@ -48,8 +48,11 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # NN architecture
-DATA_DIM = 784  # = 28 x 28, MNIST size
+IM_H = 28
+IM_W = 28
+DATA_DIM = 28 * 28  # MNIST size
 LATENT_DIM = 2
+CNN = True
 
 # MC samples
 N_VEM_ELBO = 1
@@ -212,7 +215,6 @@ class TrainVAE(luigi.Task):
             start = time.time()
 
             batch_data = batch_data[0].to(DEVICE)
-            batch_data = batch_data.view(-1, DATA_DIM)
             n_batch_data = len(batch_data)
 
             for optimizer in optimizers.values():
@@ -222,12 +224,18 @@ class TrainVAE(luigi.Task):
             decoder = modules['decoder']
 
             mu, logvar = encoder(batch_data)
+            print('mu=', mu)
+            print('logvar=', logvar)
 
             z = imnn.sample_from_q(
                 mu, logvar, n_samples=N_VAE).to(DEVICE)
+            print('z=', z)
             batch_recon, batch_logvarx = decoder(z)
+            print('batch_recon=', batch_recon)
+            print('batch_logvarx=', batch_logvarx)
 
             # --- VAE: Train wrt Neg ELBO --- #
+            batch_data = batch_data.view(-1, DATA_DIM)
             batch_data_expanded = batch_data.expand(
                 N_VAE, n_batch_data, DATA_DIM)
             batch_data_flat = batch_data_expanded.resize(
@@ -247,7 +255,11 @@ class TrainVAE(luigi.Task):
 
             neg_elbo = loss_reconstruction + loss_regularization
             if neg_elbo != neg_elbo:
-                raise ValueError()
+                print('elbo, then, recon, then regu')
+                print(neg_elbo)
+                print(loss_reconstruction)
+                print(loss_regularization)
+                raise ValueError('neg_elbo! ')
 
             end = time.time()
             total_time += end - start
@@ -321,7 +333,6 @@ class TrainVAE(luigi.Task):
 
             start = time.time()
             batch_data = batch_data[0].to(DEVICE)
-            batch_data = batch_data.view(-1, DATA_DIM)
             n_batch_data = len(batch_data)
 
             encoder = modules['encoder']
@@ -333,6 +344,7 @@ class TrainVAE(luigi.Task):
                 mu, logvar, n_samples=1).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
 
+            batch_data = batch_data.view(-1, DATA_DIM)
             batch_data_expanded = batch_data.expand(
                 N_VAE, n_batch_data, DATA_DIM)
             batch_data_flat = batch_data_expanded.resize(
@@ -405,10 +417,18 @@ class TrainVAE(luigi.Task):
 
         train_loader, val_loader = get_dataloaders()
 
-        vae = imnn.VAE(
-            latent_dim=LATENT_DIM,
-            data_dim=DATA_DIM)
-        vae.to(DEVICE)
+        if CNN:
+            vae = imnn.VAECNN(
+                latent_dim=LATENT_DIM,
+                im_h=IM_H,
+                im_w=IM_W)
+            vae.to(DEVICE)
+        else:
+            vae = imnn.VAE(
+                latent_dim=LATENT_DIM,
+                data_dim=DATA_DIM)
+            vae.to(DEVICE)
+
 
         modules = {}
         modules['encoder'] = vae.encoder
@@ -483,7 +503,6 @@ class TrainIWAE(luigi.Task):
             start = time.time()
 
             batch_data = batch_data[0].to(DEVICE)
-            batch_data = batch_data.view(-1, DATA_DIM)
             n_batch_data = len(batch_data)
 
             for optimizer in optimizers.values():
@@ -499,6 +518,7 @@ class TrainIWAE(luigi.Task):
             # z = imnn.sample_from_q(mu, logvar).to(DEVICE)
             # batch_recon, batch_logvarx = decoder(z)
 
+            # batch_data = batch_data.view(-1, DATA_DIM)
             # loss_reconstruction = toylosses.reconstruction_loss(
             #     batch_data, batch_recon, batch_logvarx)
             # loss_regularization = toylosses.regularization_loss(
@@ -508,6 +528,7 @@ class TrainIWAE(luigi.Task):
 
             # --- IWAE: Train wrt IWAE --- #
             start = time.time()
+            batch_data = batch_data.view(-1, DATA_DIM)
             neg_iwelbo = toylosses.neg_iwelbo(
                 decoder,
                 batch_data,
@@ -589,7 +610,6 @@ class TrainIWAE(luigi.Task):
 
             start = time.time()
             batch_data = batch_data[0].to(DEVICE)
-            batch_data = batch_data.view(-1, DATA_DIM)
             n_batch_data = len(batch_data)
 
             encoder = modules['encoder']
@@ -602,6 +622,7 @@ class TrainIWAE(luigi.Task):
             z = imnn.sample_from_q(mu, logvar).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
 
+            batch_data = batch_data.view(-1, DATA_DIM)
             loss_reconstruction = toylosses.reconstruction_loss(
                 batch_data, batch_recon, batch_logvarx)
             loss_regularization = toylosses.regularization_loss(
@@ -611,6 +632,7 @@ class TrainIWAE(luigi.Task):
 
             # --- IWAE --- #
             start = time.time()
+            batch_data = batch_data.view(-1, DATA_DIM)
             neg_iwelbo = toylosses.neg_iwelbo(
                 decoder, batch_data, mu, logvar, n_is_samples=N_VEM_IWELBO)
             end = time.time()
@@ -762,6 +784,7 @@ class TrainVEM(luigi.Task):
             batch_recon, batch_logvarx = decoder(z)
 
             # --- VEM: Train encoder with NEG ELBO, proxy for KL --- #
+            batch_data = batch_data.view(-1, DATA_DIM)
             half = int(n_batch_data / 2)
             batch_data_first_half = batch_data[:half, ]
             batch_recon_first_half = batch_recon[:half, ]
@@ -899,6 +922,7 @@ class TrainVEM(luigi.Task):
 
             # --- VEM: Neg ELBO
             half = int(n_batch_data / 2)
+            batch_data = batch_data.view(-1, DATA_DIM)
             batch_data_first_half = batch_data[:half, ]
             batch_recon_first_half = batch_recon[:half, ]
             batch_logvarx_first_half = batch_logvarx[:half, ]
