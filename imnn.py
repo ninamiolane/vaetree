@@ -52,11 +52,20 @@ class Encoder(nn.Module):
         self.data_dim = data_dim
 
         self.fc1 = nn.Linear(data_dim, 400)
+
+        # Decrease amortization error
+        self.fc1a = nn.Linear(400, 400)
+        self.fc1b = nn.Linear(400, 400)
+        self.fc1c = nn.Linear(400, 400)
+
         self.fc21 = nn.Linear(400, latent_dim)
         self.fc22 = nn.Linear(400, latent_dim)
 
     def forward(self, x):
-        h1 = F.relu(self.fc1(x))
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc1a(x))
+        x = F.relu(self.fc1b(x))
+        h1 = F.relu(self.fc1c(x))
         muz = self.fc21(h1)
         logvarz = self.fc22(h1)
         return muz, logvarz
@@ -79,6 +88,7 @@ class Decoder(nn.Module):
 
 
 class VAE(nn.Module):
+    """ Inspired by pytorch/examples VAE."""
     def __init__(self, latent_dim=20, data_dim=784):
         super(VAE, self).__init__()
         self.latent_dim = latent_dim
@@ -95,5 +105,95 @@ class VAE(nn.Module):
     def forward(self, x):
         muz, logvarz = self.encoder(x)
         z = reparametrize(muz, logvarz)
-        recon_x = self.decoder(z)
+        recon_x, _ = self.decoder(z)
+        return recon_x, muz, logvarz
+
+
+class EncoderCNN(nn.Module):
+    def __init__(self, latent_dim=20, im_h=28, im_w=28):
+        super(Encoder, self).__init__()
+
+        self.latent_dim = latent_dim
+        self.im_h = im_h
+        self.im_w = im_w
+
+        self.conv1 = nn.Conv2d(
+            in_channels=1, out_channels=64,
+            kernel_size=(4, 4), padding=(15, 15), stride=2)
+        self.conv2 = nn.Conv2d(
+            in_channels=64, out_channels=128,
+            kernel_size=(4, 4), padding=(15, 15), stride=2)
+        self.fc11 = nn.Linear(in_features=128 * 28 * 28, out_features=1024)
+        self.fc12 = nn.Linear(in_features=1024, out_features=self.latent_dim)
+
+        self.fc21 = nn.Linear(in_features=128 * 28 * 28, out_features=1024)
+        self.fc22 = nn.Linear(in_features=1024, out_features=self.latent_dim)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        x = x.view(-1, 1, 28, 28)
+        x = F.elu(self.conv1(x))
+        x = F.elu(self.conv2(x))
+        x = x.view(-1, 128 * 28 * 28)
+
+        muz = F.elu(self.fc11(x))
+        muz = self.fc12(muz)
+
+        logvarz = F.elu(self.fc21(x))
+        logvarz = self.fc22(logvarz)
+
+        return muz, logvarz
+
+
+class DecoderCNN(nn.Module):
+    def __init__(self, latent_dim=20, im_h=28, im_w=28):
+        super(Decoder, self).__init__()
+
+        self.latent_dim = latent_dim
+        self.im_h = im_h
+        self.im_w = im_w
+
+        self.fc1 = nn.Linear(in_features=20, out_features=1024)
+        self.fc2 = nn.Linear(in_features=1024, out_features=7 * 7 * 128)
+        self.conv_t1 = nn.ConvTranspose2d(
+            in_channels=128, out_channels=64,
+            kernel_size=4, padding=1, stride=2)
+        self.conv_t2 = nn.ConvTranspose2d(
+            in_channels=64, out_channels=1,
+            kernel_size=4, padding=1, stride=2)
+
+    def forward(self, z):
+
+        x = F.elu(self.fc1(z))
+        x = F.elu(self.fc2(x))
+        x = x.view(-1, 128, 7, 7)
+        x = F.relu(self.conv_t1(x))
+        recon_x = F.sigmoid(self.conv_t2(x))
+        # Output flat recon_x
+        return recon_x.view(-1, 784), torch.zeros_like(recon_x)  # HACK
+
+
+class VAECNN(nn.Module):
+    """
+    Inspired by
+    github.com/atinghosh/VAE-pytorch/blob/master/VAE_CNN_BCEloss.py.
+    """
+    def __init__(self, latent_dim=20, im_h=28, im_w=28):
+        super(VAE, self).__init__()
+        self.latent_dim = latent_dim
+        self.im_h = im_h
+        self.im_w = im_w
+
+        self.encoder = EncoderCNN(
+            latent_dim=latent_dim,
+            im_h=im_h, im_w=im_w)
+
+        self.decoder = DecoderCNN(
+            latent_dim=latent_dim,
+            im_h=im_h, im_w=im_w)
+
+    def forward(self, x):
+        muz, logvarz = self.encoder(x)
+        z = reparametrize(muz, logvarz)
+        recon_x, _ = self.decoder(z)
         return recon_x, muz, logvarz

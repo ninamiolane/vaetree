@@ -1,6 +1,7 @@
 """Data processing pipeline."""
 
 import datetime as dt
+import glob
 import jinja2
 import logging
 import luigi
@@ -33,7 +34,7 @@ TRAIN_VEM_DIR = os.path.join(OUTPUT_DIR, 'train_vem')
 TRAIN_VEGAN_DIR = os.path.join(OUTPUT_DIR, 'train_vegan')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
-DEBUG = False
+DEBUG = True
 
 CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if CUDA else "cpu")
@@ -48,34 +49,40 @@ torch.backends.cudnn.benchmark = False
 
 # NN architecture
 DATA_DIM = 784  # = 28 x 28, MNIST size
-LATENT_DIM = 20
+LATENT_DIM = 2
 
-# MC samples for AVEM
-N_MC_ELBO = 1
-N_MC_IWELBO = 99
+# MC samples
+N_VEM_ELBO = 1
+N_VEM_IWELBO = 99
+N_VAE = 1  # N_VEM_ELBO + N_VEM_IWELBO
+N_IWAE = N_VEM_ELBO + N_VEM_IWELBO
 
-# for ELBO in case of VAE; IWELBO in case of IWAE
-N_MC_TOT = N_MC_ELBO + N_MC_IWELBO
+# for IWELBO to estimate the NLL
+N_MC_NLL = 1000
 
 # Train
 
-BATCH_SIZE = 128
+FRAC_VAL = 0.2
+DATASET_NAME = 'mnist'
+
+BATCH_SIZE = 32
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 
 PRINT_INTERVAL = 16
 torch.backends.cudnn.benchmark = True
 
-N_EPOCHS = 80
-LR = 1e-3
+N_EPOCHS = 60
+CKPT_PERIOD = 10
+LR = 5 * 1e-3
 
 BETA1 = 0.5
 BETA2 = 0.999
 
 if DEBUG:
     BATCH_SIZE = 4
-    N_SAMPLES = 20
-    N_MC_ELBO = 5
-    N_MC_IWELBO = 3
+    N_VEM_ELBO = 5
+    N_VEM_IWELBO = 3
+    N_MC_NLL = 50
 
 # Report
 LOADER = jinja2.FileSystemLoader('./templates/')
@@ -83,6 +90,95 @@ TEMPLATE_ENVIRONMENT = jinja2.Environment(
     autoescape=False,
     loader=LOADER)
 TEMPLATE_NAME = 'report.jinja2'
+
+
+def get_dataloaders(dataset_name=DATASET_NAME,
+                    frac_val=FRAC_VAL, batch_size=BATCH_SIZE, kwargs=KWARGS):
+    if dataset_name == 'mnist':
+        dataset = datasets.MNIST(
+            '../data', train=True, download=True,
+            transform=transforms.ToTensor())
+    else:
+        raise ValueError('Unknown dataset name.')
+    length = len(dataset)
+    train_length = int((1 - frac_val) * length)
+    val_length = int(length - train_length)
+    train_dataset, val_dataset = torch.utils.data.random_split(
+        dataset, [train_length, val_length])
+
+    train_tensor = train_dataset.dataset.data[train_dataset.indices]
+    val_tensor = val_dataset.dataset.data[val_dataset.indices]
+
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset, batch_size=batch_size, shuffle=True, **kwargs)
+
+    logging.info(
+        '-- Train tensor: (%d, %d, %d)' % train_tensor.shape)
+    logging.info(
+        '-- Valid tensor: (%d, %d, %d)' % val_tensor.shape)
+    return train_loader, val_loader
+
+
+def save_checkpoint(epoch, modules, optimizers, dir_path,
+                    train_losses_all_epochs, val_losses_all_epochs,
+                    ckpt_period=CKPT_PERIOD):
+    if epoch % ckpt_period == 0:
+        checkpoint = {}
+        for module_name in modules.keys():
+            module = modules[module_name]
+            optimizer = optimizers[module_name]
+            checkpoint[module_name] = {
+                'epoch': epoch,
+                'module_state_dict': module.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'train_losses': train_losses_all_epochs,
+                'val_losses': val_losses_all_epochs}
+
+        checkpoint_path = os.path.join(
+            dir_path, 'epoch_%d_checkpoint' % epoch)
+        torch.save(checkpoint, checkpoint_path)
+
+
+def init_xavier_normal(m):
+    if type(m) == tnn.Linear:
+        tnn.init.xavier_normal_(m.weight)
+
+
+def init_training(models_path, modules, optimizers):
+    """Initialization: Load ckpts or xavier normal init."""
+    start_epoch = 0
+    train_losses_all_epochs = []
+    val_losses_all_epochs = []
+
+    string_base = os.path.join(
+        models_path, 'epoch_*_checkpoint.pth')
+    for module_name in modules.keys():
+        module_string_base = string_base % module_name
+        ckpts = glob.glob(module_string_base)
+        print(ckpts)
+        if len(ckpts) == 0:
+            for module in modules.values():
+                module.apply(init_xavier_normal)
+        else:
+            ckpts_ids_and_paths = [
+                (int(f.split('_')[1]), f) for f in ckpts]
+            ckpt_id, ckpt_path = max(
+                ckpts_ids_and_paths, key=lambda item: item[0])
+            ckpt = torch.load(ckpt_path, map_location=DEVICE)
+            for module_name in modules.keys():
+                module = modules[module_name]
+                optimizer = modules[module_name]
+                module_ckpt = ckpt[module_name]
+                module.load_state_dict(module_ckpt['model_state_dict'])
+                optimizer.load_state_dict(
+                    module_ckpt['optimizer_state_dict'])
+                start_epoch = module_ckpt['epoch']
+                train_losses_all_epochs = module_ckpt['train_losses']
+                val_losses_all_epochs = module_ckpt['val_losses']
+    return (modules, optimizers, start_epoch,
+            train_losses_all_epochs, val_losses_all_epochs)
 
 
 class TrainVAE(luigi.Task):
@@ -102,6 +198,7 @@ class TrainVAE(luigi.Task):
         total_loss_regularization = 0
         total_neg_elbo = 0
         total_neg_iwelbo = 0
+        total_neg_loglikelihood = 0
         total_time = 0
 
         n_data = len(train_loader.dataset)
@@ -125,14 +222,14 @@ class TrainVAE(luigi.Task):
             mu, logvar = encoder(batch_data)
 
             z = imnn.sample_from_q(
-                mu, logvar, n_samples=1).to(DEVICE)
+                mu, logvar, n_samples=N_VAE).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
 
             # --- VAE: Train wrt Neg ELBO --- #
             batch_data_expanded = batch_data.expand(
-                1, n_batch_data, DATA_DIM)
+                N_VAE, n_batch_data, DATA_DIM)
             batch_data_flat = batch_data_expanded.resize(
-                1*n_batch_data, DATA_DIM)
+                N_VAE*n_batch_data, DATA_DIM)
 
             loss_reconstruction = toylosses.reconstruction_loss(
                 batch_data_flat, batch_recon, batch_logvarx)
@@ -147,12 +244,18 @@ class TrainVAE(luigi.Task):
             # ------------------------------- #
 
             neg_elbo = loss_reconstruction + loss_regularization
+            if neg_elbo != neg_elbo:
+                raise ValueError()
 
             end = time.time()
             total_time += end - start
 
-            neg_iwelbo = toylosses.neg_iwelbo(
-                decoder, batch_data, mu, logvar, n_is_samples=N_MC_TOT)
+            # neg_iwelbo = toylosses.neg_iwelbo(
+            #     decoder, batch_data, mu, logvar, n_is_samples=N_IWAE)
+
+            # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
+            # neg_loglikelihood = toylosses.neg_iwelbo(
+            #     decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -171,7 +274,8 @@ class TrainVAE(luigi.Task):
             total_loss_regularization += (
                 n_batch_data * loss_regularization.item())
             total_neg_elbo += n_batch_data * neg_elbo.item()
-            total_neg_iwelbo += n_batch_data * neg_iwelbo.item()
+            # total_neg_iwelbo += n_batch_data * neg_iwelbo.item()
+            # total_neg_loglikelihood +=n_batch_data * neg_loglikelihood.item()
             end = time.time()
             total_time += end - start
 
@@ -180,10 +284,9 @@ class TrainVAE(luigi.Task):
         average_loss_regularization = total_loss_regularization / n_data
         average_neg_elbo = total_neg_elbo / n_data
         average_neg_iwelbo = total_neg_iwelbo / n_data
+        # average_neg_loglikelihood = total_neg_loglikelihood / n_data
         end = time.time()
         total_time += end - start
-
-        neg_loglikelihood = 0.  # Placeholder for AIS
 
         logging.info('====> Epoch: {} Average Neg ELBO: {:.4f}'.format(
                 epoch, average_neg_elbo))
@@ -191,7 +294,7 @@ class TrainVAE(luigi.Task):
         train_losses = {}
         train_losses['reconstruction'] = average_loss_reconstruction
         train_losses['regularization'] = average_loss_regularization
-        train_losses['neg_loglikelihood'] = neg_loglikelihood
+        train_losses['neg_loglikelihood'] = 0  # average_neg_loglikelihood
         train_losses['neg_elbo'] = average_neg_elbo
         train_losses['neg_iwelbo'] = average_neg_iwelbo
         train_losses['total_time'] = total_time
@@ -204,6 +307,7 @@ class TrainVAE(luigi.Task):
         total_loss_regularization = 0
         total_neg_elbo = 0
         total_neg_iwelbo = 0
+        total_neg_loglikelihood = 0
         total_time = 0
 
         n_data = len(val_loader.dataset)
@@ -228,9 +332,9 @@ class TrainVAE(luigi.Task):
             batch_recon, batch_logvarx = decoder(z)
 
             batch_data_expanded = batch_data.expand(
-                1, n_batch_data, DATA_DIM)
+                N_VAE, n_batch_data, DATA_DIM)
             batch_data_flat = batch_data_expanded.resize(
-                1*n_batch_data, DATA_DIM)
+                N_VAE*n_batch_data, DATA_DIM)
 
             loss_reconstruction = toylosses.reconstruction_loss(
                 batch_data_flat, batch_recon, batch_logvarx)
@@ -242,8 +346,12 @@ class TrainVAE(luigi.Task):
             end = time.time()
             total_time += end - start
 
-            neg_iwelbo = toylosses.neg_iwelbo(
-                decoder, batch_data, mu, logvar, n_is_samples=N_MC_TOT)
+            # neg_iwelbo = toylosses.neg_iwelbo(
+            #     decoder, batch_data, mu, logvar, n_is_samples=N_MC_TOT)
+
+            # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
+            neg_loglikelihood = toylosses.neg_iwelbo(
+                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -262,7 +370,8 @@ class TrainVAE(luigi.Task):
             total_loss_regularization += (
                 n_batch_data * loss_regularization.item())
             total_neg_elbo += n_batch_data * neg_elbo.item()
-            total_neg_iwelbo += n_batch_data * neg_iwelbo.item()
+            # total_neg_iwelbo += n_batch_data * neg_iwelbo.item()
+            total_neg_loglikelihood += n_batch_data * neg_loglikelihood.item()
             end = time.time()
             total_time += end - start
 
@@ -270,11 +379,10 @@ class TrainVAE(luigi.Task):
         average_loss_reconstruction = total_loss_reconstruction / n_data
         average_loss_regularization = total_loss_regularization / n_data
         average_neg_elbo = total_neg_elbo / n_data
-        average_neg_iwelbo = total_neg_iwelbo / n_data
+        # average_neg_iwelbo = total_neg_iwelbo / n_data
+        average_neg_loglikelihood = total_neg_loglikelihood / n_data
         end = time.time()
         total_time += end - start
-
-        neg_loglikelihood = 0.
 
         logging.info('====> Val Epoch: {} Average Neg ELBO: {:.4f}'.format(
                 epoch, average_neg_elbo))
@@ -282,9 +390,9 @@ class TrainVAE(luigi.Task):
         val_losses = {}
         val_losses['reconstruction'] = average_loss_reconstruction
         val_losses['regularization'] = average_loss_regularization
-        val_losses['neg_loglikelihood'] = neg_loglikelihood
+        val_losses['neg_loglikelihood'] = average_neg_loglikelihood
         val_losses['neg_elbo'] = average_neg_elbo
-        val_losses['neg_iwelbo'] = average_neg_iwelbo
+        val_losses['neg_iwelbo'] = 0.  # average_neg_iwelbo
         val_losses['total_time'] = total_time
         return val_losses
 
@@ -293,19 +401,7 @@ class TrainVAE(luigi.Task):
             os.mkdir(self.models_path)
             os.chmod(self.models_path, 0o777)
 
-        train_loader = torch.utils.data.DataLoader(datasets.MNIST(
-            '../data', train=True, download=True,
-            transform=transforms.ToTensor()),
-            batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
-
-        val_loader = torch.utils.data.DataLoader(datasets.MNIST(
-            '../data', train=False, transform=transforms.ToTensor()),
-            batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
-
-        logging.info(
-            '-- Train tensor: (%d, %d, %d)' % train_loader.dataset.data.shape)
-        logging.info(
-            '-- Valid tensor: (%d, %d, %d)' % val_loader.dataset.data.shape)
+        train_loader, val_loader = get_dataloaders()
 
         vae = imnn.VAE(
             latent_dim=LATENT_DIM,
@@ -322,17 +418,11 @@ class TrainVAE(luigi.Task):
         optimizers['decoder'] = torch.optim.Adam(
             modules['decoder'].parameters(), lr=LR, betas=(BETA1, BETA2))
 
-        def init_xavier_normal(m):
-            if type(m) == tnn.Linear:
-                tnn.init.xavier_normal_(m.weight)
+        m, o, s, t, v = init_training(self.models_path, modules, optimizers)
+        modules, optimizers, start_epoch = m, o, s
+        train_losses_all_epochs, val_losses_all_epochs = t, v
 
-        for module in modules.values():
-            module.apply(init_xavier_normal)
-
-        train_losses_all_epochs = []
-        val_losses_all_epochs = []
-
-        for epoch in range(N_EPOCHS):
+        for epoch in range(start_epoch, N_EPOCHS):
             if DEBUG:
                 if epoch > 2:
                     break
@@ -344,10 +434,12 @@ class TrainVAE(luigi.Task):
             train_losses_all_epochs.append(train_losses)
             val_losses_all_epochs.append(val_losses)
 
+            save_checkpoint(
+                epoch, modules, optimizers, self.models_path)
+
         for module_name, module in modules.items():
             module_path = os.path.join(
-                self.models_path,
-                '{}.pth'.format(module_name))
+                self.models_path, '{}.pth'.format(module_name))
             torch.save(module, module_path)
 
         with open(self.output()['train_losses'].path, 'wb') as pkl:
@@ -378,6 +470,7 @@ class TrainIWAE(luigi.Task):
         total_loss_regularization = 0
         total_neg_elbo = 0
         total_neg_iwelbo = 0
+        total_neg_loglikelihood = 0
         total_time = 0
 
         n_data = len(train_loader.dataset)
@@ -403,15 +496,15 @@ class TrainIWAE(luigi.Task):
             end = time.time()
             total_time += end - start
 
-            z = imnn.sample_from_q(mu, logvar).to(DEVICE)
-            batch_recon, batch_logvarx = decoder(z)
+            # z = imnn.sample_from_q(mu, logvar).to(DEVICE)
+            # batch_recon, batch_logvarx = decoder(z)
 
-            loss_reconstruction = toylosses.reconstruction_loss(
-                batch_data, batch_recon, batch_logvarx)
-            loss_regularization = toylosses.regularization_loss(
-                mu, logvar)  # kld
+            # loss_reconstruction = toylosses.reconstruction_loss(
+            #     batch_data, batch_recon, batch_logvarx)
+            # loss_regularization = toylosses.regularization_loss(
+            #     mu, logvar)  # kld
 
-            neg_elbo = loss_reconstruction + loss_regularization
+            # neg_elbo = loss_reconstruction + loss_regularization
 
             # --- IWAE: Train wrt IWAE --- #
             start = time.time()
@@ -419,8 +512,10 @@ class TrainIWAE(luigi.Task):
                 decoder,
                 batch_data,
                 mu, logvar,
-                n_is_samples=N_MC_TOT)
+                n_is_samples=N_IWAE)
 
+            if neg_iwelbo != neg_iwelbo:
+                raise ValueError()
             neg_iwelbo.backward()
 
             optimizers['encoder'].step()
@@ -428,6 +523,10 @@ class TrainIWAE(luigi.Task):
             end = time.time()
             total_time += end - start
             # ---------------------------- #
+
+            # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
+            # neg_loglikelihood = toylosses.neg_iwelbo(
+            #     decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -440,34 +539,34 @@ class TrainIWAE(luigi.Task):
                         neg_iwelbo))
 
             start = time.time()
-            total_loss_reconstruction += (
-                n_batch_data * loss_reconstruction.item())
-            total_loss_regularization += (
-                n_batch_data * loss_regularization.item())
-            total_neg_elbo += n_batch_data * neg_elbo.item()
+            # total_loss_reconstruction += (
+            #     n_batch_data * loss_reconstruction.item())
+            # total_loss_regularization += (
+            #     n_batch_data * loss_regularization.item())
+            # total_neg_elbo += n_batch_data * neg_elbo.item()
             total_neg_iwelbo += n_batch_data * neg_iwelbo.item()
+            # total_neg_loglikelihood +=n_batch_data * neg_loglikelihood.item()
             end = time.time()
             total_time += end - start
 
         start = time.time()
-        average_loss_reconstruction = total_loss_reconstruction / n_data
-        average_loss_regularization = total_loss_regularization / n_data
-        average_neg_elbo = total_neg_elbo / n_data
+        # average_loss_reconstruction = total_loss_reconstruction / n_data
+        # average_loss_regularization = total_loss_regularization / n_data
+        # average_neg_elbo = total_neg_elbo / n_data
         average_neg_iwelbo = total_neg_iwelbo / n_data
+        # average_neg_loglikelihood = total_neg_loglikelihood / n_data
         end = time.time()
         total_time += end - start
-
-        neg_loglikelihood = 0.
 
         logging.info('====> Epoch: {} Average NEG IWELBO: {:.4f}'.format(
                 epoch, average_neg_iwelbo))
 
         train_losses = {}
-        train_losses['reconstruction'] = average_loss_reconstruction
-        train_losses['regularization'] = average_loss_regularization
-        train_losses['neg_loglikelihood'] = neg_loglikelihood
+        train_losses['reconstruction'] = 0.  # average_loss_reconstruction
+        train_losses['regularization'] = 0.  # average_loss_regularization
+        train_losses['neg_loglikelihood'] = 0.  # average_neg_loglikelihood
         train_losses['neg_iwelbo'] = average_neg_iwelbo
-        train_losses['neg_elbo'] = average_neg_elbo
+        train_losses['neg_elbo'] = 0.  # average_neg_elbo
         train_losses['total_time'] = total_time
         return train_losses
 
@@ -478,6 +577,7 @@ class TrainIWAE(luigi.Task):
         total_loss_regularization = 0
         total_neg_elbo = 0
         total_neg_iwelbo = 0
+        total_neg_loglikelihood = 0
         total_time = 0
 
         n_data = len(val_loader.dataset)
@@ -512,13 +612,14 @@ class TrainIWAE(luigi.Task):
             # --- IWAE --- #
             start = time.time()
             neg_iwelbo = toylosses.neg_iwelbo(
-                decoder,
-                batch_data,
-                mu, logvar,
-                n_is_samples=N_MC_TOT)
+                decoder, batch_data, mu, logvar, n_is_samples=N_VEM_IWELBO)
             end = time.time()
             total_time += end - start
             # ------------ #
+
+            # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
+            neg_loglikelihood = toylosses.neg_iwelbo(
+                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -537,6 +638,7 @@ class TrainIWAE(luigi.Task):
                 n_batch_data * loss_regularization.item())
             total_neg_elbo += n_batch_data * neg_elbo.item()
             total_neg_iwelbo += n_batch_data * neg_iwelbo.item()
+            total_neg_loglikelihood += n_batch_data * neg_loglikelihood.item()
             end = time.time()
             total_time += end - start
 
@@ -545,10 +647,9 @@ class TrainIWAE(luigi.Task):
         average_loss_regularization = total_loss_regularization / n_data
         average_neg_elbo = total_neg_elbo / n_data
         average_neg_iwelbo = total_neg_iwelbo / n_data
+        average_neg_loglikelihood = total_neg_loglikelihood / n_data
         end = time.time()
         total_time += end - start
-
-        neg_loglikelihood = 0.
 
         logging.info('====> Val Epoch: {} Average NEG IWELBO: {:.4f}'.format(
                 epoch, average_neg_iwelbo))
@@ -556,7 +657,7 @@ class TrainIWAE(luigi.Task):
         val_losses = {}
         val_losses['reconstruction'] = average_loss_reconstruction
         val_losses['regularization'] = average_loss_regularization
-        val_losses['neg_loglikelihood'] = neg_loglikelihood
+        val_losses['neg_loglikelihood'] = average_neg_loglikelihood
         val_losses['neg_iwelbo'] = average_neg_iwelbo
         val_losses['neg_elbo'] = average_neg_elbo
         val_losses['total_time'] = total_time
@@ -567,19 +668,7 @@ class TrainIWAE(luigi.Task):
             os.mkdir(self.models_path)
             os.chmod(self.models_path, 0o777)
 
-        train_loader = torch.utils.data.DataLoader(datasets.MNIST(
-            '../data', train=True, download=True,
-            transform=transforms.ToTensor()),
-            batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
-
-        val_loader = torch.utils.data.DataLoader(datasets.MNIST(
-            '../data', train=False, transform=transforms.ToTensor()),
-            batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
-
-        logging.info(
-            '-- Train tensor: (%d, %d, %d)' % train_loader.dataset.data.shape)
-        logging.info(
-            '-- Valid tensor: (%d, %d, %d)' % val_loader.dataset.data.shape)
+        train_loader, val_loader = get_dataloaders()
 
         vae = imnn.VAE(
             latent_dim=LATENT_DIM,
@@ -650,6 +739,7 @@ class TrainVEM(luigi.Task):
         total_loss_regularization = 0
         total_neg_elbo = 0
         total_neg_iwelbo = 0
+        total_neg_loglikelihood = 0
         total_time = 0
 
         n_data = len(train_loader.dataset)
@@ -673,7 +763,7 @@ class TrainVEM(luigi.Task):
             mu, logvar = encoder(batch_data)
 
             z = imnn.sample_from_q(
-                mu, logvar, n_samples=N_MC_ELBO).to(DEVICE)
+                mu, logvar, n_samples=N_VEM_ELBO).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
 
             # --- VEM: Train encoder with NEG ELBO, proxy for KL --- #
@@ -683,17 +773,17 @@ class TrainVEM(luigi.Task):
             batch_logvarx_first_half = batch_logvarx[:half, ]
 
             batch_data_expanded = batch_data_first_half.expand(
-                N_MC_ELBO, half, DATA_DIM)
+                N_VEM_ELBO, half, DATA_DIM)
             batch_data_flat = batch_data_expanded.resize(
-                N_MC_ELBO*half, DATA_DIM)
+                N_VEM_ELBO*half, DATA_DIM)
             batch_recon_expanded = batch_recon_first_half.expand(
-                N_MC_ELBO, half, DATA_DIM)
+                N_VEM_ELBO, half, DATA_DIM)
             batch_recon_flat = batch_recon_expanded.resize(
-                N_MC_ELBO*half, DATA_DIM)
+                N_VEM_ELBO*half, DATA_DIM)
             batch_logvarx_expanded = batch_logvarx_first_half.expand(
-                N_MC_ELBO, half, DATA_DIM)
+                N_VEM_ELBO, half, DATA_DIM)
             batch_logvarx_flat = batch_logvarx_expanded.resize(
-                N_MC_ELBO*half, DATA_DIM)
+                N_VEM_ELBO*half, DATA_DIM)
 
             loss_reconstruction = toylosses.reconstruction_loss(
                 batch_data_flat, batch_recon_flat, batch_logvarx_flat)
@@ -706,6 +796,8 @@ class TrainVEM(luigi.Task):
 
             optimizers['encoder'].step()
             neg_elbo = loss_reconstruction + loss_regularization
+            if neg_elbo != neg_elbo:
+                raise ValueError()
             # ----------------------------------------------------- #
 
             # --- VEM: Train decoder with IWAE, proxy for NLL --- #
@@ -717,13 +809,19 @@ class TrainVEM(luigi.Task):
                 decoder,
                 batch_data_second_half,
                 mu[half:, ], logvar[half:, ],
-                n_is_samples=N_MC_IWELBO)
+                n_is_samples=N_VEM_IWELBO)
             # This also fills the encoder, but we do not step
             neg_iwelbo.backward()
+            if neg_iwelbo != neg_iwelbo:
+                raise ValueError()
             optimizers['decoder'].step()
             # ----------------------------------------------------- #
             end = time.time()
             total_time += end - start
+
+            # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
+            # neg_loglikelihood = toylosses.neg_iwelbo(
+            #     decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -744,6 +842,7 @@ class TrainVEM(luigi.Task):
                 n_batch_data * loss_regularization.item())
             total_neg_elbo += n_batch_data * neg_elbo.item()
             total_neg_iwelbo += n_batch_data * neg_iwelbo.item()
+            # total_neg_loglikelihood +=n_batch_data * neg_loglikelihood.item()
             end = time.time()
             total_time += end - start
 
@@ -752,10 +851,9 @@ class TrainVEM(luigi.Task):
         average_loss_regularization = total_loss_regularization / n_data
         average_neg_elbo = total_neg_elbo / n_data
         average_neg_iwelbo = total_neg_iwelbo / n_data
+        # average_neg_loglikelihood = total_neg_loglikelihood / n_data
         end = time.time()
         total_time += end - start
-
-        neg_loglikelihood = 0.
 
         logging.info(
             '====> Epoch: {} '
@@ -766,7 +864,7 @@ class TrainVEM(luigi.Task):
         train_losses = {}
         train_losses['reconstruction'] = average_loss_reconstruction
         train_losses['regularization'] = average_loss_regularization
-        train_losses['neg_loglikelihood'] = neg_loglikelihood
+        train_losses['neg_loglikelihood'] = 0.  # average_neg_loglikelihood
         train_losses['neg_elbo'] = average_neg_elbo
         train_losses['neg_iwelbo'] = average_neg_iwelbo
         train_losses['total_time'] = total_time
@@ -780,6 +878,7 @@ class TrainVEM(luigi.Task):
         total_loss_regularization = 0
         total_neg_elbo = 0
         total_neg_iwelbo = 0
+        total_neg_loglikelihood = 0
         total_time = 0
 
         n_data = len(val_loader.dataset)
@@ -800,7 +899,7 @@ class TrainVEM(luigi.Task):
             mu, logvar = encoder(batch_data)
 
             z = imnn.sample_from_q(
-                mu, logvar, n_samples=N_MC_ELBO).to(DEVICE)
+                mu, logvar, n_samples=N_VEM_ELBO).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
 
             # --- VEM: Neg ELBO
@@ -810,17 +909,17 @@ class TrainVEM(luigi.Task):
             batch_logvarx_first_half = batch_logvarx[:half, ]
 
             batch_data_expanded = batch_data_first_half.expand(
-                N_MC_ELBO, half, DATA_DIM)
+                N_VEM_ELBO, half, DATA_DIM)
             batch_data_flat = batch_data_expanded.resize(
-                N_MC_ELBO*half, DATA_DIM)
+                N_VEM_ELBO*half, DATA_DIM)
             batch_recon_expanded = batch_recon_first_half.expand(
-                N_MC_ELBO, half, DATA_DIM)
+                N_VEM_ELBO, half, DATA_DIM)
             batch_recon_flat = batch_recon_expanded.resize(
-                N_MC_ELBO*half, DATA_DIM)
+                N_VEM_ELBO*half, DATA_DIM)
             batch_logvarx_expanded = batch_logvarx_first_half.expand(
-                N_MC_ELBO, half, DATA_DIM)
+                N_VEM_ELBO, half, DATA_DIM)
             batch_logvarx_flat = batch_logvarx_expanded.resize(
-                N_MC_ELBO*half, DATA_DIM)
+                N_VEM_ELBO*half, DATA_DIM)
 
             loss_reconstruction = toylosses.reconstruction_loss(
                 batch_data_flat, batch_recon_flat, batch_logvarx_flat)
@@ -836,9 +935,13 @@ class TrainVEM(luigi.Task):
                 decoder,
                 batch_data_second_half,
                 mu[half:, ], logvar[half:, ],
-                n_is_samples=N_MC_TOT)
+                n_is_samples=N_VEM_IWELBO)
             end = time.time()
             total_time += end - start
+
+            # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
+            neg_loglikelihood = toylosses.neg_iwelbo(
+                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -859,6 +962,7 @@ class TrainVEM(luigi.Task):
                 n_batch_data * loss_regularization.item())
             total_neg_elbo += n_batch_data * neg_elbo.item()
             total_neg_iwelbo += n_batch_data * neg_iwelbo.item()
+            total_neg_loglikelihood += n_batch_data * neg_loglikelihood.item()
             end = time.time()
             total_time += end - start
 
@@ -867,10 +971,9 @@ class TrainVEM(luigi.Task):
         average_loss_regularization = total_loss_regularization / n_data
         average_neg_elbo = total_neg_elbo / n_data
         average_neg_iwelbo = total_neg_iwelbo / n_data
+        average_neg_loglikelihood = total_neg_loglikelihood / n_data
         end = time.time()
         total_time += end - start
-
-        neg_loglikelihood = 0.
 
         logging.info(
             '====> Val Epoch: {} '
@@ -881,7 +984,7 @@ class TrainVEM(luigi.Task):
         val_losses = {}
         val_losses['reconstruction'] = average_loss_reconstruction
         val_losses['regularization'] = average_loss_regularization
-        val_losses['neg_loglikelihood'] = neg_loglikelihood
+        val_losses['neg_loglikelihood'] = average_neg_loglikelihood
         val_losses['neg_elbo'] = average_neg_elbo
         val_losses['neg_iwelbo'] = average_neg_iwelbo
         val_losses['total_time'] = total_time
@@ -892,19 +995,7 @@ class TrainVEM(luigi.Task):
             os.mkdir(self.models_path)
             os.chmod(self.models_path, 0o777)
 
-        train_loader = torch.utils.data.DataLoader(datasets.MNIST(
-            '../data', train=True, download=True,
-            transform=transforms.ToTensor()),
-            batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
-
-        val_loader = torch.utils.data.DataLoader(datasets.MNIST(
-            '../data', train=False, transform=transforms.ToTensor()),
-            batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
-
-        logging.info(
-            '-- Train tensor: (%d, %d, %d)' % train_loader.dataset.data.shape)
-        logging.info(
-            '-- Valid tensor: (%d, %d, %d)' % val_loader.dataset.data.shape)
+        train_loader, val_loader = get_dataloaders()
 
         vae = imnn.VAE(
             latent_dim=LATENT_DIM,
@@ -1104,10 +1195,9 @@ class TrainVEGAN(luigi.Task):
         average_loss_regularization = total_loss_regularization / n_data
         average_loss = total_loss / n_data
 
-        weight = decoder.layers[0].weight[[0]]
-        train_data = torch.Tensor(train_loader.dataset)
-        neg_loglikelihood = toylosses.fa_neg_loglikelihood(
-            weight, train_data)
+        # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
+        neg_loglikelihood = toylosses.neg_iwelbo(
+                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL)
 
         logging.info('====> Epoch: {} Average loss: {:.4f}'.format(
                 epoch, average_loss))
@@ -1229,10 +1319,9 @@ class TrainVEGAN(luigi.Task):
         average_loss_regularization = total_loss_regularization / n_data
         average_loss = total_loss / n_data
 
-        weight = decoder.layers[0].weight[[0]]
-        val_data = torch.Tensor(val_loader.dataset)
-        neg_loglikelihood = toylosses.fa_neg_loglikelihood(
-            weight, val_data)
+        # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
+        neg_loglikelihood = toylosses.neg_iwelbo(
+                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL)
 
         logging.info('====> Val Epoch: {} Average loss: {:.4f}'.format(
                 epoch, average_loss))
@@ -1248,19 +1337,7 @@ class TrainVEGAN(luigi.Task):
             os.mkdir(self.models_path)
             os.chmod(self.models_path, 0o777)
 
-        train_loader = torch.utils.data.DataLoader(datasets.MNIST(
-            '../data', train=True, download=True,
-            transform=transforms.ToTensor()),
-            batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
-
-        val_loader = torch.utils.data.DataLoader(datasets.MNIST(
-            '../data', train=False, transform=transforms.ToTensor()),
-            batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
-
-        logging.info(
-            '-- Train tensor: (%d, %d, %d)' % train_loader.dataset.data.shape)
-        logging.info(
-            '-- Valid tensor: (%d, %, %d)' % val_loader.dataset.data.shape)
+        train_loader, val_loader = get_dataloaders()
 
         vae = imnn.VAE(
             latent_dim=LATENT_DIM,

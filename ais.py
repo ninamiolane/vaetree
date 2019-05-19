@@ -46,11 +46,22 @@ class ProblemVAE(object):
         """
         Compute the exact *log* partition function
         of the initial distribution q(z|x).
+        Note: q(z|x) is normalized, so Z = 1.
         """
+        return 0
 
     def step(self, state, t):
+        """
+        Given the current state,
+        take an MCMC step with inverse temperature t,
+        and return the new state.
+        """
 
     def joint_prob(self, state, t):
+        """
+        Return the joint unnormalized probability of a state,
+        with inverse temperature t.
+        """
 
 
 

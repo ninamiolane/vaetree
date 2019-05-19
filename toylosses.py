@@ -132,6 +132,7 @@ def neg_iwelbo_loss_base(
     log_Pz = torch.sum(-0.5 * z_expanded ** 2, dim=-1)
     log_Pz += - 0.5 * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)[0]
 
+    # These 4 lines are the reconstruction term: change here.
     log_PxGz = torch.sum(
         - 0.5 * (x_expanded - recon_x_expanded) ** 2 / varx_expanded
         - 0.5 * logvarx_expanded, dim=-1)
