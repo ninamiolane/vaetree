@@ -121,6 +121,13 @@ def regularization_loss(mu, logvar):
     return loss_regularization
 
 
+def neg_elbo(x, recon_x, logvarx, mu, logvar, bce=False):
+    recon_loss = reconstruction_loss(x, recon_x, logvarx, bce)
+    regu_loss = regularization_loss(mu, logvar)
+    neg_elbo = recon_loss + regu_loss
+    return neg_elbo
+
+
 def neg_iwelbo_loss_base(
         x_expanded, recon_x_expanded,
         logvarx_expanded, mu_expanded, logvar_expanded, z_expanded, bce=False):
@@ -128,17 +135,18 @@ def neg_iwelbo_loss_base(
     The _expanded means that the tensor is of shape:
     n_is_samples x n_batch_data x tensor_dim.
     """
-    n_is_samples, n_batch_data, _ = x_expanded.shape
+    n_is_samples, n_batch_data, data_dim = x_expanded.shape
+    _, _, latent_dim = mu_expanded.shape
     var_expanded = torch.exp(logvar_expanded)
     varx_expanded = torch.exp(logvarx_expanded)
 
     log_QzGx = torch.sum(
         - 0.5 * (z_expanded - mu_expanded) ** 2 / var_expanded
         - 0.5 * logvar_expanded, dim=-1)
-    log_QzGx += - 0.5 * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)
+    log_QzGx += - 0.5 * latent_dim * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)
 
     log_Pz = torch.sum(-0.5 * z_expanded ** 2, dim=-1)
-    log_Pz += - 0.5 * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)[0]
+    log_Pz += - 0.5 * latent_dim * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)[0]
 
     # These 4 lines are the reconstruction term: change here.
     if bce:
@@ -151,12 +159,14 @@ def neg_iwelbo_loss_base(
         log_PxGz = torch.sum(
             - 0.5 * (x_expanded - recon_x_expanded) ** 2 / varx_expanded
             - 0.5 * logvarx_expanded, dim=-1)
-        log_PxGz += - 0.5 * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)
+        log_PxGz += - 0.5 * data_dim * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)
 
     log_weight = log_Pz + log_PxGz - log_QzGx
+    print('log_weight = ', log_weight)
     assert log_weight.shape == (n_is_samples, n_batch_data)
 
     iwelbo = log_mean_exp(log_weight, dim=0)
+    print('iwelbo = ', iwelbo)
     assert iwelbo.shape == (n_batch_data,)
 
     iwelbo = torch.mean(iwelbo)

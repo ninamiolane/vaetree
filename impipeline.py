@@ -34,7 +34,7 @@ TRAIN_VEM_DIR = os.path.join(OUTPUT_DIR, 'train_vem')
 TRAIN_VEGAN_DIR = os.path.join(OUTPUT_DIR, 'train_vegan')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
-DEBUG = True
+DEBUG = False
 
 CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if CUDA else "cpu")
@@ -53,31 +53,31 @@ IM_W = 28
 DATA_DIM = 28 * 28  # MNIST size
 LATENT_DIM = 2
 CNN = False
-BCE = True
+BCE = False
 
 # MC samples
 N_VEM_ELBO = 1
-N_VEM_IWELBO = 99
+N_VEM_IWELBO = 299
 N_VAE = 1  # N_VEM_ELBO + N_VEM_IWELBO
-N_IWAE = N_VEM_ELBO + N_VEM_IWELBO
+N_IWAE = 299  # N_VEM_ELBO + N_VEM_IWELBO
 
 # for IWELBO to estimate the NLL
-N_MC_NLL = 1000
+N_MC_NLL = 5000
 
 # Train
 
 FRAC_VAL = 0.2
 DATASET_NAME = 'mnist'
 
-BATCH_SIZE = 32
+BATCH_SIZE = 16
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 
-PRINT_INTERVAL = 16
+PRINT_INTERVAL = 64
 torch.backends.cudnn.benchmark = True
 
-N_EPOCHS = 60
-CKPT_PERIOD = 10
-LR = 5 * 1e-3
+N_EPOCHS = 6
+CKPT_PERIOD = 2
+LR = 1e-2
 
 BETA1 = 0.5
 BETA2 = 0.999
@@ -259,6 +259,15 @@ class TrainVAE(luigi.Task):
 
             end = time.time()
             total_time += end - start
+
+            neg_iwelbo1 = toylosses.neg_iwelbo(
+                decoder, batch_data, mu, logvar, n_is_samples=1, bce=BCE)
+            neg_iwelbo100 = toylosses.neg_iwelbo(
+                decoder, batch_data, mu, logvar, n_is_samples=100, bce=BCE)
+            neg_iwelbo5000 = toylosses.neg_iwelbo(
+                decoder, batch_data, mu, logvar, n_is_samples=5000, bce=BCE)
+            print('Neg ELBO: {:.4f}\t Neg IWELBO1: {:.4f};   Neg IWELBO100: {:.4f};   Neg IWELBO5000: {:.4f}'.format(
+                neg_elbo, neg_iwelbo1, neg_iwelbo100, neg_iwelbo5000))
 
             # neg_iwelbo = toylosses.neg_iwelbo(
             #     decoder, batch_data, mu, logvar, n_is_samples=N_IWAE, bce=BCE)
@@ -531,8 +540,29 @@ class TrainIWAE(luigi.Task):
                 mu, logvar,
                 n_is_samples=N_IWAE, bce=BCE)
 
-            if neg_iwelbo != neg_iwelbo:
-                raise ValueError()
+            if neg_iwelbo != neg_iwelbo or neg_iwelbo > 1e6:
+                print('mu = ', mu)
+                print('logvar = ', logvar)
+                z = imnn.sample_from_q(mu, logvar).to(DEVICE)
+                print('z = ', z)
+                batch_recon, batch_logvarx = decoder(z)
+                print('batch_logvarx = ', batch_logvarx)
+                print('batch_recon = ', batch_recon)
+                print('neg_iwelbo pipeline = ', neg_iwelbo)
+                neg_iwelbo_bis = toylosses.neg_iwelbo(
+                    decoder,
+                    batch_data,
+                    mu, logvar,
+                    n_is_samples=N_IWAE, bce=BCE)
+                print('neg_iwelbo bis = ', neg_iwelbo_bis)
+                neg_iwelbo_ter = toylosses.neg_iwelbo(
+                    decoder,
+                    batch_data,
+                    mu, torch.zeros_like(mu),
+                    n_is_samples=N_IWAE, bce=BCE)
+
+                neg_iwelbo = neg_iwelbo_ter  # HACK
+                # raise ValueError()
             neg_iwelbo.backward()
 
             optimizers['encoder'].step()
@@ -815,7 +845,9 @@ class TrainVEM(luigi.Task):
             # ----------------------------------------------------- #
 
             # --- VEM: Train decoder with IWAE, proxy for NLL --- #
+            half = 0   # DEBUG - delete this line
             batch_data_second_half = batch_data[half:, ]
+            batch_data_second_half = batch_data_second_half.view(-1, DATA_DIM)
 
             optimizers['decoder'].zero_grad()
 
@@ -827,8 +859,28 @@ class TrainVEM(luigi.Task):
                 bce=BCE)
             # This also fills the encoder, but we do not step
             neg_iwelbo.backward()
-            if neg_iwelbo != neg_iwelbo:
-                raise ValueError()
+            if neg_iwelbo != neg_iwelbo or neg_iwelbo > 1e6:
+                print('mu = ', mu)
+                print('logvar = ', logvar)
+                z = imnn.sample_from_q(mu, logvar).to(DEVICE)
+                print('z = ', z)
+                batch_recon, batch_logvarx = decoder(z)
+                print('batch_logvarx = ', batch_logvarx)
+                print('batch_recon = ', batch_recon)
+                print('neg_iwelbo pipeline = ', neg_iwelbo)
+                neg_iwelbo_bis = toylosses.neg_iwelbo(
+                    decoder,
+                    batch_data,
+                    mu, logvar,
+                    n_is_samples=N_IWAE, bce=BCE)
+                print('neg_iwelbo bis = ', neg_iwelbo_bis)
+                neg_iwelbo_ter = toylosses.neg_iwelbo(
+                    decoder,
+                    batch_data,
+                    mu, torch.zeros_like(mu),
+                    n_is_samples=N_IWAE, bce=BCE)
+
+                neg_iwelbo = neg_iwelbo_ter  # HACK
             optimizers['decoder'].step()
             # ----------------------------------------------------- #
             end = time.time()

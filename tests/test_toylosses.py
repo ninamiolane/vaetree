@@ -58,13 +58,31 @@ class TestToylosses(unittest.TestCase):
         result = result.cpu().numpy()
         self.assertTrue(np.allclose(result, expected), result)
 
-    def test_iwae_loss_base(self):
-        n_is_samples = 2
+    def test_neg_elbo_d_dim(self):
         n_batch_data = 3
         latent_dim = 1
-        data_dim = 1
+        data_dim = 5
 
-        # Test all zeros
+        x = torch.zeros((n_batch_data, data_dim)).to(DEVICE)
+        recon_x = torch.zeros_like(x).to(DEVICE)
+        logvarx = torch.zeros_like(x).to(DEVICE)
+
+        mu = torch.zeros((n_batch_data, latent_dim)).to(DEVICE)
+        logvar = torch.zeros_like(mu).to(DEVICE)
+
+        expected = 0.5 * data_dim * np.log(2 * np.pi)
+        result = toylosses.neg_elbo(x, recon_x, logvarx, mu, logvar)
+        result = result.cpu().numpy()
+
+        self.assertTrue(np.allclose(result, expected), result)
+
+    def test_neg_iwelbo_d_dim(self):
+        n_is_samples = 1
+        n_batch_data = 3
+        latent_dim = 1
+        data_dim = 5
+
+        # Test all zeros - 1 iw sample
         x_expanded = torch.zeros(
             (n_is_samples, n_batch_data, data_dim)).to(DEVICE)
         recon_x_expanded = torch.zeros_like(x_expanded).to(DEVICE)
@@ -75,21 +93,25 @@ class TestToylosses(unittest.TestCase):
         logvar_expanded = torch.zeros_like(mu_expanded).to(DEVICE)
         z_expanded = torch.zeros_like(mu_expanded).to(DEVICE)
 
-        result = toylosses.iwae_loss_base(
+        expected = 0.5 * data_dim * np.log(2 * np.pi)
+        result = toylosses.neg_iwelbo_loss_base(
             x_expanded, recon_x_expanded,
             logvarx_expanded, mu_expanded, logvar_expanded,
             z_expanded)
         result = result.cpu().numpy()
 
-        expected = - (- 0.5 * np.log(2 * np.pi))
+        print('expected = ', expected)
+        print('result = ', result)
         self.assertTrue(np.allclose(result, expected), result)
 
-        # Test all zeros except x_expanded
-        x_expanded = torch.Tensor(
-            [[[1.], [2.], [3.]],
-             [[2.], [-1.], [0.]]]
-                ).to(DEVICE)
-        assert x_expanded.shape == (n_is_samples, n_batch_data, data_dim)
+        n_is_samples = 10
+        n_batch_data = 3
+        latent_dim = 1
+        data_dim = 5
+
+        # Test all zeros - multiple iw samples
+        x_expanded = torch.zeros(
+            (n_is_samples, n_batch_data, data_dim)).to(DEVICE)
         recon_x_expanded = torch.zeros_like(x_expanded).to(DEVICE)
         logvarx_expanded = torch.zeros_like(x_expanded).to(DEVICE)
 
@@ -98,82 +120,133 @@ class TestToylosses(unittest.TestCase):
         logvar_expanded = torch.zeros_like(mu_expanded).to(DEVICE)
         z_expanded = torch.zeros_like(mu_expanded).to(DEVICE)
 
-        result = toylosses.iwae_loss_base(
+        expected = 0.5 * data_dim * np.log(2 * np.pi)
+        result = toylosses.neg_iwelbo_loss_base(
             x_expanded, recon_x_expanded,
             logvarx_expanded, mu_expanded, logvar_expanded,
             z_expanded)
         result = result.cpu().numpy()
 
-        expected = 1.45118
-        self.assertTrue(np.allclose(result, expected), result)
-
-    def test_iwae_loss(self):
-        # The expected result is on average the result for mu = 0.
-        DATA_DIM = 1
-        LATENT_DIM = 1
-        N_DECODER_LAYERS = 1
-        NONLINEARITY = False
-        N_IS_SAMPLES = 3 #5000
-        WITH_BIASX = False
-        WITH_LOGVARX = False
-
-        W_TRUE = {}
-        B_TRUE = {}
-
-        W_TRUE[0] = [[2.]]
-
-        if WITH_LOGVARX:
-            assert len(W_TRUE) == N_DECODER_LAYERS + 1, len(W_TRUE)
-        else:
-            assert len(W_TRUE) == N_DECODER_LAYERS
-
-        decoder = toynn.make_decoder_true(
-            w_true=W_TRUE, b_true=B_TRUE, latent_dim=LATENT_DIM,
-            data_dim=DATA_DIM, n_layers=N_DECODER_LAYERS,
-            nonlinearity=NONLINEARITY,
-            with_biasx=WITH_BIASX, with_logvarx=WITH_LOGVARX)
-
-        # Test all zeros
-        # NB: Put z_expanded_flat all zeros in the toylosses' code
-        #n_batch_data = 3
-        #data_dim = DATA_DIM
-        #latent_dim = LATENT_DIM
-
-        #x = torch.zeros((n_batch_data, data_dim)).to(DEVICE)
-        #mu = torch.zeros((n_batch_data, latent_dim)).to(DEVICE)
-        #logvar = torch.zeros_like(mu).to(DEVICE)
-
-        #expected = - (- 0.5 * np.log(2 * np.pi))
-        #result = toylosses.iwae_loss(
-        #    decoder, x, mu, logvar, n_is_samples=N_IS_SAMPLES)
-        #result = result.detach().cpu().numpy()
-
-        #self.assertTrue(np.allclose(result, expected), result)
-
-        # Test with non-zero z
-        # NB: Put:
-        # z_expanded = torch.Tensor(
-        #    [[[1.], [2.], [-1.]],
-        #     [[0.], [-1.], [0.]]]
-        #        ).to(DEVICE)
-        # in the toylosses' code
-        n_batch_data = 3
-        data_dim = DATA_DIM
-        latent_dim = LATENT_DIM
-        N_IS_SAMPLES = 2
-
-        x = torch.zeros((n_batch_data, data_dim)).to(DEVICE)
-        mu = torch.zeros((n_batch_data, latent_dim)).to(DEVICE)
-        logvar = torch.zeros_like(mu).to(DEVICE)
-
-        expected = 1.7494846
-        result = toylosses.iwae_loss(
-            decoder, x, mu, logvar, n_is_samples=N_IS_SAMPLES)
-        result = result.detach().cpu().numpy()
-
         print('expected = ', expected)
         print('result = ', result)
         self.assertTrue(np.allclose(result, expected), result)
+
+    # def test_neg_iwelbo_loss_base(self):
+    #     n_is_samples = 2
+    #     n_batch_data = 3
+    #     latent_dim = 1
+    #     data_dim = 1
+
+    #     # Test all zeros
+    #     x_expanded = torch.zeros(
+    #         (n_is_samples, n_batch_data, data_dim)).to(DEVICE)
+    #     recon_x_expanded = torch.zeros_like(x_expanded).to(DEVICE)
+    #     logvarx_expanded = torch.zeros_like(x_expanded).to(DEVICE)
+
+    #     mu_expanded = torch.zeros(
+    #         (n_is_samples, n_batch_data, latent_dim)).to(DEVICE)
+    #     logvar_expanded = torch.zeros_like(mu_expanded).to(DEVICE)
+    #     z_expanded = torch.zeros_like(mu_expanded).to(DEVICE)
+
+    #     result = toylosses.neg_iwelbo_loss_base(
+    #         x_expanded, recon_x_expanded,
+    #         logvarx_expanded, mu_expanded, logvar_expanded,
+    #         z_expanded)
+    #     result = result.cpu().numpy()
+
+    #     expected = - (- 0.5 * np.log(2 * np.pi))
+    #     self.assertTrue(np.allclose(result, expected), result)
+
+    #     # Test all zeros except x_expanded
+    #     x_expanded = torch.Tensor(
+    #         [[[1.], [2.], [3.]],
+    #          [[2.], [-1.], [0.]]]
+    #             ).to(DEVICE)
+    #     assert x_expanded.shape == (n_is_samples, n_batch_data, data_dim)
+    #     recon_x_expanded = torch.zeros_like(x_expanded).to(DEVICE)
+    #     logvarx_expanded = torch.zeros_like(x_expanded).to(DEVICE)
+
+    #     mu_expanded = torch.zeros(
+    #         (n_is_samples, n_batch_data, latent_dim)).to(DEVICE)
+    #     logvar_expanded = torch.zeros_like(mu_expanded).to(DEVICE)
+    #     z_expanded = torch.zeros_like(mu_expanded).to(DEVICE)
+
+    #     result = toylosses.neg_iwelbo_loss_base(
+    #         x_expanded, recon_x_expanded,
+    #         logvarx_expanded, mu_expanded, logvar_expanded,
+    #         z_expanded)
+    #     result = result.cpu().numpy()
+
+    #     expected = 1.80746
+    #     self.assertTrue(np.allclose(result, expected), result)
+
+    # def test_neg_iwelbo(self):
+    #     # The expected result is on average the result for mu = 0.
+    #     DATA_DIM = 1
+    #     LATENT_DIM = 1
+    #     N_DECODER_LAYERS = 1
+    #     NONLINEARITY = False
+    #     N_IS_SAMPLES = 3 #5000
+    #     WITH_BIASX = False
+    #     WITH_LOGVARX = False
+
+    #     W_TRUE = {}
+    #     B_TRUE = {}
+
+    #     W_TRUE[0] = [[2.]]
+
+    #     if WITH_LOGVARX:
+    #         assert len(W_TRUE) == N_DECODER_LAYERS + 1, len(W_TRUE)
+    #     else:
+    #         assert len(W_TRUE) == N_DECODER_LAYERS
+
+    #     decoder = toynn.make_decoder_true(
+    #         w_true=W_TRUE, b_true=B_TRUE, latent_dim=LATENT_DIM,
+    #         data_dim=DATA_DIM, n_layers=N_DECODER_LAYERS,
+    #         nonlinearity=NONLINEARITY,
+    #         with_biasx=WITH_BIASX, with_logvarx=WITH_LOGVARX)
+
+    #     # Test all zeros
+    #     # NB: Put z_expanded_flat all zeros in the toylosses' code
+    #     #n_batch_data = 3
+    #     #data_dim = DATA_DIM
+    #     #latent_dim = LATENT_DIM
+
+    #     #x = torch.zeros((n_batch_data, data_dim)).to(DEVICE)
+    #     #mu = torch.zeros((n_batch_data, latent_dim)).to(DEVICE)
+    #     #logvar = torch.zeros_like(mu).to(DEVICE)
+
+    #     #expected = - (- 0.5 * np.log(2 * np.pi))
+    #     #result = toylosses.iwae_loss(
+    #     #    decoder, x, mu, logvar, n_is_samples=N_IS_SAMPLES)
+    #     #result = result.detach().cpu().numpy()
+
+    #     #self.assertTrue(np.allclose(result, expected), result)
+
+    #     # Test with non-zero z
+    #     # NB: Put:
+    #     # z_expanded = torch.Tensor(
+    #     #    [[[1.], [2.], [-1.]],
+    #     #     [[0.], [-1.], [0.]]]
+    #     #        ).to(DEVICE)
+    #     # in the toylosses' code
+    #     n_batch_data = 3
+    #     data_dim = DATA_DIM
+    #     latent_dim = LATENT_DIM
+    #     N_IS_SAMPLES = 2
+
+    #     x = torch.zeros((n_batch_data, data_dim)).to(DEVICE)
+    #     mu = torch.zeros((n_batch_data, latent_dim)).to(DEVICE)
+    #     logvar = torch.zeros_like(mu).to(DEVICE)
+
+    #     expected = 1.7494846
+    #     result = toylosses.iwae_loss(
+    #         decoder, x, mu, logvar, n_is_samples=N_IS_SAMPLES)
+    #     result = result.detach().cpu().numpy()
+
+    #     print('expected = ', expected)
+    #     print('result = ', result)
+    #     self.assertTrue(np.allclose(result, expected), result)
 
 
 if __name__ == '__main__':
