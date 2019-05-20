@@ -52,7 +52,8 @@ IM_H = 28
 IM_W = 28
 DATA_DIM = 28 * 28  # MNIST size
 LATENT_DIM = 2
-CNN = True
+CNN = False
+BCE = True
 
 # MC samples
 N_VEM_ELBO = 1
@@ -224,15 +225,10 @@ class TrainVAE(luigi.Task):
             decoder = modules['decoder']
 
             mu, logvar = encoder(batch_data)
-            print('mu=', mu)
-            print('logvar=', logvar)
 
             z = imnn.sample_from_q(
                 mu, logvar, n_samples=N_VAE).to(DEVICE)
-            print('z=', z)
             batch_recon, batch_logvarx = decoder(z)
-            print('batch_recon=', batch_recon)
-            print('batch_logvarx=', batch_logvarx)
 
             # --- VAE: Train wrt Neg ELBO --- #
             batch_data = batch_data.view(-1, DATA_DIM)
@@ -242,7 +238,7 @@ class TrainVAE(luigi.Task):
                 N_VAE*n_batch_data, DATA_DIM)
 
             loss_reconstruction = toylosses.reconstruction_loss(
-                batch_data_flat, batch_recon, batch_logvarx)
+                batch_data_flat, batch_recon, batch_logvarx, bce=BCE)
             loss_reconstruction.backward(retain_graph=True)
 
             loss_regularization = toylosses.regularization_loss(
@@ -265,11 +261,11 @@ class TrainVAE(luigi.Task):
             total_time += end - start
 
             # neg_iwelbo = toylosses.neg_iwelbo(
-            #     decoder, batch_data, mu, logvar, n_is_samples=N_IWAE)
+            #     decoder, batch_data, mu, logvar, n_is_samples=N_IWAE, bce=BCE)
 
             # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
             # neg_loglikelihood = toylosses.neg_iwelbo(
-            #     decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL)
+            #     decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, bce=BCE)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -351,7 +347,7 @@ class TrainVAE(luigi.Task):
                 N_VAE*n_batch_data, DATA_DIM)
 
             loss_reconstruction = toylosses.reconstruction_loss(
-                batch_data_flat, batch_recon, batch_logvarx)
+                batch_data_flat, batch_recon, batch_logvarx, bce=BCE)
 
             loss_regularization = toylosses.regularization_loss(
                 mu, logvar)  # kld
@@ -361,11 +357,11 @@ class TrainVAE(luigi.Task):
             total_time += end - start
 
             # neg_iwelbo = toylosses.neg_iwelbo(
-            #     decoder, batch_data, mu, logvar, n_is_samples=N_MC_TOT)
+            #     decoder, batch_data, mu, logvar, n_is_samples=N_MC_TOT, bce=BCE)
 
             # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
             neg_loglikelihood = toylosses.neg_iwelbo(
-                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL)
+                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, bce=BCE)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -520,7 +516,7 @@ class TrainIWAE(luigi.Task):
 
             # batch_data = batch_data.view(-1, DATA_DIM)
             # loss_reconstruction = toylosses.reconstruction_loss(
-            #     batch_data, batch_recon, batch_logvarx)
+            #     batch_data, batch_recon, batch_logvarx, bce=BCE)
             # loss_regularization = toylosses.regularization_loss(
             #     mu, logvar)  # kld
 
@@ -533,7 +529,7 @@ class TrainIWAE(luigi.Task):
                 decoder,
                 batch_data,
                 mu, logvar,
-                n_is_samples=N_IWAE)
+                n_is_samples=N_IWAE, bce=BCE)
 
             if neg_iwelbo != neg_iwelbo:
                 raise ValueError()
@@ -547,7 +543,7 @@ class TrainIWAE(luigi.Task):
 
             # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
             # neg_loglikelihood = toylosses.neg_iwelbo(
-            #     decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL)
+            #     decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, bce=BCE)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -624,7 +620,7 @@ class TrainIWAE(luigi.Task):
 
             batch_data = batch_data.view(-1, DATA_DIM)
             loss_reconstruction = toylosses.reconstruction_loss(
-                batch_data, batch_recon, batch_logvarx)
+                batch_data, batch_recon, batch_logvarx, bce=BCE)
             loss_regularization = toylosses.regularization_loss(
                 mu, logvar)  # kld
 
@@ -634,14 +630,14 @@ class TrainIWAE(luigi.Task):
             start = time.time()
             batch_data = batch_data.view(-1, DATA_DIM)
             neg_iwelbo = toylosses.neg_iwelbo(
-                decoder, batch_data, mu, logvar, n_is_samples=N_VEM_IWELBO)
+                decoder, batch_data, mu, logvar, n_is_samples=N_VEM_IWELBO, bce=BCE)
             end = time.time()
             total_time += end - start
             # ------------ #
 
             # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
             neg_loglikelihood = toylosses.neg_iwelbo(
-                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL)
+                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, bce=BCE)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -804,7 +800,7 @@ class TrainVEM(luigi.Task):
                 N_VEM_ELBO*half, DATA_DIM)
 
             loss_reconstruction = toylosses.reconstruction_loss(
-                batch_data_flat, batch_recon_flat, batch_logvarx_flat)
+                batch_data_flat, batch_recon_flat, batch_logvarx_flat, bce=BCE)
 
             loss_reconstruction.backward(retain_graph=True)
 
@@ -827,7 +823,8 @@ class TrainVEM(luigi.Task):
                 decoder,
                 batch_data_second_half,
                 mu[half:, ], logvar[half:, ],
-                n_is_samples=N_VEM_IWELBO)
+                n_is_samples=N_VEM_IWELBO,
+                bce=BCE)
             # This also fills the encoder, but we do not step
             neg_iwelbo.backward()
             if neg_iwelbo != neg_iwelbo:
@@ -839,7 +836,7 @@ class TrainVEM(luigi.Task):
 
             # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
             # neg_loglikelihood = toylosses.neg_iwelbo(
-            #     decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL)
+            #     decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, bce=BCE)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -941,7 +938,7 @@ class TrainVEM(luigi.Task):
                 N_VEM_ELBO*half, DATA_DIM)
 
             loss_reconstruction = toylosses.reconstruction_loss(
-                batch_data_flat, batch_recon_flat, batch_logvarx_flat)
+                batch_data_flat, batch_recon_flat, batch_logvarx_flat, bce=BCE)
 
             loss_reconstruction.backward(retain_graph=True)
             loss_regularization = toylosses.regularization_loss(
@@ -954,13 +951,14 @@ class TrainVEM(luigi.Task):
                 decoder,
                 batch_data_second_half,
                 mu[half:, ], logvar[half:, ],
-                n_is_samples=N_VEM_IWELBO)
+                n_is_samples=N_VEM_IWELBO,
+                bce=BCE)
             end = time.time()
             total_time += end - start
 
             # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
             neg_loglikelihood = toylosses.neg_iwelbo(
-                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL)
+                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, bce=BCE)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -1111,7 +1109,7 @@ class TrainVEGAN(luigi.Task):
                     z_from_prior)
 
             loss_reconstruction = toylosses.reconstruction_loss(
-                batch_data, batch_recon, batch_logvarx)
+                batch_data, batch_recon, batch_logvarx, bce=BCE)
             loss_reconstruction.backward(retain_graph=True)
             loss_regularization = toylosses.regularization_loss(
                 mu, logvar)  # kld
@@ -1211,7 +1209,7 @@ class TrainVEGAN(luigi.Task):
 
         # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
         neg_loglikelihood = toylosses.neg_iwelbo(
-                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL)
+                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, bce=BCE)
 
         logging.info('====> Epoch: {} Average loss: {:.4f}'.format(
                 epoch, average_loss))
@@ -1258,7 +1256,7 @@ class TrainVEGAN(luigi.Task):
                     z_from_prior)
 
             loss_reconstruction = toylosses.reconstruction_loss(
-                batch_data, batch_recon, batch_logvarx)
+                batch_data, batch_recon, batch_logvarx, bce=BCE)
             loss_reconstruction.backward(retain_graph=True)
             loss_regularization = toylosses.regularization_loss(
                 mu, logvar)  # kld
@@ -1335,7 +1333,7 @@ class TrainVEGAN(luigi.Task):
 
         # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
         neg_loglikelihood = toylosses.neg_iwelbo(
-                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL)
+                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, bce=BCE)
 
         logging.info('====> Val Epoch: {} Average loss: {:.4f}'.format(
                 epoch, average_loss))

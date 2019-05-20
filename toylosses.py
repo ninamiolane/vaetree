@@ -7,6 +7,8 @@ import torch.nn
 
 import toynn
 
+import losses
+
 CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if CUDA else "cpu")
 
@@ -53,7 +55,7 @@ def fa_neg_loglikelihood(weight, data):
     return neg_loglikelihood
 
 
-def reconstruction_loss(batch_data, batch_recon, batch_logvarx):
+def reconstruction_loss(batch_data, batch_recon, batch_logvarx, bce=False):
     """
     First compute the expected l_uvae data per data (line by line).
     Then take the average.
@@ -61,6 +63,10 @@ def reconstruction_loss(batch_data, batch_recon, batch_logvarx):
     """
     n_batch_data, data_dim = batch_data.shape
     assert batch_data.shape == batch_recon.shape
+
+    if bce:
+        return losses.bce_on_intensities(
+            batch_data, batch_recon, batch_logvarx)
 
     batch_logvarx = batch_logvarx.squeeze()
     if batch_logvarx.shape == (n_batch_data,):
@@ -100,6 +106,8 @@ def reconstruction_loss(batch_data, batch_recon, batch_logvarx):
     assert ssd_term.shape == (n_batch_data,), ssd_term
     l_uvae = cst_term + scale_term + ssd_term
     expected_l_uvae = torch.mean(l_uvae)
+
+    # Make it a loss: -
     loss_reconstruction = -expected_l_uvae
     return loss_reconstruction
 
@@ -115,7 +123,7 @@ def regularization_loss(mu, logvar):
 
 def neg_iwelbo_loss_base(
         x_expanded, recon_x_expanded,
-        logvarx_expanded, mu_expanded, logvar_expanded, z_expanded):
+        logvarx_expanded, mu_expanded, logvar_expanded, z_expanded, bce=False):
     """
     The _expanded means that the tensor is of shape:
     n_is_samples x n_batch_data x tensor_dim.
@@ -133,10 +141,17 @@ def neg_iwelbo_loss_base(
     log_Pz += - 0.5 * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)[0]
 
     # These 4 lines are the reconstruction term: change here.
-    log_PxGz = torch.sum(
-        - 0.5 * (x_expanded - recon_x_expanded) ** 2 / varx_expanded
-        - 0.5 * logvarx_expanded, dim=-1)
-    log_PxGz += - 0.5 * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)
+    if bce:
+        log_PxGz = torch.sum(
+            x_expanded * torch.log(recon_x_expanded)
+            + (1 - x_expanded) * torch.log(1 - recon_x_expanded),
+            dim=-1)
+
+    else:
+        log_PxGz = torch.sum(
+            - 0.5 * (x_expanded - recon_x_expanded) ** 2 / varx_expanded
+            - 0.5 * logvarx_expanded, dim=-1)
+        log_PxGz += - 0.5 * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)
 
     log_weight = log_Pz + log_PxGz - log_QzGx
     assert log_weight.shape == (n_is_samples, n_batch_data)
@@ -149,7 +164,7 @@ def neg_iwelbo_loss_base(
     return neg_iwelbo
 
 
-def neg_iwelbo(decoder, x, mu, logvar, n_is_samples):
+def neg_iwelbo(decoder, x, mu, logvar, n_is_samples, bce=False):
     n_batch_data, latent_dim = mu.shape
     _, data_dim = x.shape
 
