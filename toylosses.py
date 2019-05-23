@@ -135,18 +135,31 @@ def neg_iwelbo_loss_base(
     The _expanded means that the tensor is of shape:
     n_is_samples x n_batch_data x tensor_dim.
     """
+    assert not torch.isnan(x_expanded).any()
+    assert not torch.isnan(recon_x_expanded).any()
+    assert not torch.isnan(logvarx_expanded).any()
+    assert not torch.isnan(mu_expanded).any()
+    assert not torch.isnan(logvar_expanded).any()
+    assert not torch.isnan(z_expanded).any()
     n_is_samples, n_batch_data, data_dim = x_expanded.shape
     _, _, latent_dim = mu_expanded.shape
     var_expanded = torch.exp(logvar_expanded)
     varx_expanded = torch.exp(logvarx_expanded)
 
+    assert not torch.isnan(var_expanded).any()
+    #print('var_expanded = ', var_expanded)
+    assert not torch.isnan(varx_expanded).any()
     log_QzGx = torch.sum(
-        - 0.5 * (z_expanded - mu_expanded) ** 2 / var_expanded
-        - 0.5 * logvar_expanded, dim=-1)
+        - 0.5 * (z_expanded - mu_expanded) ** 2 / var_expanded, dim=-1)
+    assert not torch.isnan(log_QzGx).any()
+    log_QzGx += torch.sum(- 0.5 * logvar_expanded, dim=-1)
+    assert not torch.isnan(log_QzGx).any()
     log_QzGx += - 0.5 * latent_dim * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)
+    assert not torch.isnan(log_QzGx).any()
 
     log_Pz = torch.sum(-0.5 * z_expanded ** 2, dim=-1)
     log_Pz += - 0.5 * latent_dim * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)[0]
+    assert not torch.isnan(log_Pz).any()
 
     # These 4 lines are the reconstruction term: change here.
     if bce:
@@ -161,15 +174,19 @@ def neg_iwelbo_loss_base(
             - 0.5 * logvarx_expanded, dim=-1)
         log_PxGz += - 0.5 * data_dim * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)
 
+    assert not torch.isnan(log_PxGz).any()
     log_weight = log_Pz + log_PxGz - log_QzGx
-    print('log_weight = ', log_weight)
+    #print('log_weight = ', log_weight)
     assert log_weight.shape == (n_is_samples, n_batch_data)
+    assert not torch.isnan(log_weight).any()
 
     iwelbo = log_mean_exp(log_weight, dim=0)
-    print('iwelbo = ', iwelbo)
+    #print('iwelbo = ', iwelbo)
+    assert not torch.isnan(iwelbo).any()
     assert iwelbo.shape == (n_batch_data,)
 
     iwelbo = torch.mean(iwelbo)
+    assert not torch.isnan(iwelbo).any()
     neg_iwelbo = -iwelbo
     return neg_iwelbo
 

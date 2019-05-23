@@ -34,7 +34,7 @@ TRAIN_VEM_DIR = os.path.join(OUTPUT_DIR, 'train_vem')
 TRAIN_VEGAN_DIR = os.path.join(OUTPUT_DIR, 'train_vegan')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
-DEBUG = False
+DEBUG = True
 
 CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if CUDA else "cpu")
@@ -51,15 +51,15 @@ torch.backends.cudnn.benchmark = False
 IM_H = 28
 IM_W = 28
 DATA_DIM = 28 * 28  # MNIST size
-LATENT_DIM = 2
+LATENT_DIM = 10
 CNN = False
 BCE = False
 
 # MC samples
 N_VEM_ELBO = 1
-N_VEM_IWELBO = 299
+N_VEM_IWELBO = 399
 N_VAE = 1  # N_VEM_ELBO + N_VEM_IWELBO
-N_IWAE = 299  # N_VEM_ELBO + N_VEM_IWELBO
+N_IWAE = N_VEM_ELBO + N_VEM_IWELBO
 
 # for IWELBO to estimate the NLL
 N_MC_NLL = 5000
@@ -82,13 +82,18 @@ LR = 1e-2
 BETA1 = 0.5
 BETA2 = 0.999
 
+N_BATCH_PER_EPOCH = 1e10
+
 if DEBUG:
-    N_EPOCHS = 3
-    BATCH_SIZE = 4
-    N_VEM_ELBO = 5
-    N_VEM_IWELBO = 3
+    N_EPOCHS = 6
+    BATCH_SIZE = 16
+    N_VEM_ELBO = 1
+    N_VEM_IWELBO = 399
+    N_VAE = 1
+    N_IWAE = 400
     N_MC_NLL = 50
     CKPT_PERIOD = 1
+    N_BATCH_PER_EPOCH = 1e10
 
 # Report
 LOADER = jinja2.FileSystemLoader('./templates/')
@@ -114,6 +119,12 @@ def get_dataloaders(dataset_name=DATASET_NAME,
 
     train_tensor = train_dataset.dataset.data[train_dataset.indices]
     val_tensor = val_dataset.dataset.data[val_dataset.indices]
+
+    train_tensor = train_tensor / 255.
+    val_tensor = val_tensor / 255.
+
+    print('train_tensor max:', torch.max(train_tensor))
+    print('train_tensor min:', torch.min(train_tensor))
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
@@ -210,9 +221,8 @@ class TrainVAE(luigi.Task):
         n_data = len(train_loader.dataset)
         n_batches = len(train_loader)
         for batch_idx, batch_data in enumerate(train_loader):
-            if DEBUG:
-                if batch_idx > 3:
-                    continue
+            if DEBUG and batch_idx > N_BATCH_PER_EPOCH:
+                continue
             start = time.time()
 
             batch_data = batch_data[0].to(DEVICE)
@@ -260,14 +270,14 @@ class TrainVAE(luigi.Task):
             end = time.time()
             total_time += end - start
 
-            neg_iwelbo1 = toylosses.neg_iwelbo(
-                decoder, batch_data, mu, logvar, n_is_samples=1, bce=BCE)
-            neg_iwelbo100 = toylosses.neg_iwelbo(
-                decoder, batch_data, mu, logvar, n_is_samples=100, bce=BCE)
-            neg_iwelbo5000 = toylosses.neg_iwelbo(
-                decoder, batch_data, mu, logvar, n_is_samples=5000, bce=BCE)
-            print('Neg ELBO: {:.4f}\t Neg IWELBO1: {:.4f};   Neg IWELBO100: {:.4f};   Neg IWELBO5000: {:.4f}'.format(
-                neg_elbo, neg_iwelbo1, neg_iwelbo100, neg_iwelbo5000))
+            # neg_iwelbo1 = toylosses.neg_iwelbo(
+            #     decoder, batch_data, mu, logvar, n_is_samples=1, bce=BCE)
+            # neg_iwelbo100 = toylosses.neg_iwelbo(
+            #     decoder, batch_data, mu, logvar, n_is_samples=100, bce=BCE)
+            # neg_iwelbo5000 = toylosses.neg_iwelbo(
+            #     decoder, batch_data, mu, logvar, n_is_samples=5000, bce=BCE)
+            # print('Neg ELBO: {:.4f}\t Neg IWELBO1: {:.4f};   Neg IWELBO100: {:.4f};   Neg IWELBO5000: {:.4f}'.format(
+            #     neg_elbo, neg_iwelbo1, neg_iwelbo100, neg_iwelbo5000))
 
             # neg_iwelbo = toylosses.neg_iwelbo(
             #     decoder, batch_data, mu, logvar, n_is_samples=N_IWAE, bce=BCE)
@@ -332,9 +342,8 @@ class TrainVAE(luigi.Task):
         n_data = len(val_loader.dataset)
         n_batches = len(val_loader)
         for batch_idx, batch_data in enumerate(val_loader):
-            if DEBUG:
-                if batch_idx > 3:
-                    continue
+            if DEBUG and batch_idx > N_BATCH_PER_EPOCH:
+                continue
 
             start = time.time()
             batch_data = batch_data[0].to(DEVICE)
@@ -452,8 +461,8 @@ class TrainVAE(luigi.Task):
         for epoch in range(start_epoch, N_EPOCHS):
             train_losses = self.train_vae(
                 epoch, train_loader, modules, optimizers)
-            val_losses = self.val_vae(
-                epoch, val_loader, modules)
+            val_losses = 0. #self.val_vae(
+                #epoch, val_loader, modules)
 
             train_losses_all_epochs.append(train_losses)
             val_losses_all_epochs.append(val_losses)
@@ -501,9 +510,8 @@ class TrainIWAE(luigi.Task):
         n_data = len(train_loader.dataset)
         n_batches = len(train_loader)
         for batch_idx, batch_data in enumerate(train_loader):
-            if DEBUG:
-                if batch_idx > 3:
-                    continue
+            if DEBUG and batch_idx > N_BATCH_PER_EPOCH:
+                continue
 
             start = time.time()
 
@@ -540,14 +548,15 @@ class TrainIWAE(luigi.Task):
                 mu, logvar,
                 n_is_samples=N_IWAE, bce=BCE)
 
+            # print('Anyway: neg_iwelbo pipeline = ', neg_iwelbo)
             if neg_iwelbo != neg_iwelbo or neg_iwelbo > 1e6:
-                print('mu = ', mu)
-                print('logvar = ', logvar)
+                #print('mu = ', mu)
+                #print('logvar = ', logvar)
                 z = imnn.sample_from_q(mu, logvar).to(DEVICE)
-                print('z = ', z)
+                #print('z = ', z)
                 batch_recon, batch_logvarx = decoder(z)
-                print('batch_logvarx = ', batch_logvarx)
-                print('batch_recon = ', batch_recon)
+                #print('batch_logvarx = ', batch_logvarx)
+                #print('batch_recon = ', batch_recon)
                 print('neg_iwelbo pipeline = ', neg_iwelbo)
                 neg_iwelbo_bis = toylosses.neg_iwelbo(
                     decoder,
@@ -561,7 +570,8 @@ class TrainIWAE(luigi.Task):
                     mu, torch.zeros_like(mu),
                     n_is_samples=N_IWAE, bce=BCE)
 
-                neg_iwelbo = neg_iwelbo_ter  # HACK
+                print('neg_iwelbo_ter = ', neg_iwelbo_ter)
+                # neg_iwelbo = neg_iwelbo_ter  # HACK
                 # raise ValueError()
             neg_iwelbo.backward()
 
@@ -630,9 +640,8 @@ class TrainIWAE(luigi.Task):
         n_data = len(val_loader.dataset)
         n_batches = len(val_loader)
         for batch_idx, batch_data in enumerate(val_loader):
-            if DEBUG:
-                if batch_idx > 3:
-                    continue
+            if DEBUG and batch_idx > N_BATCH_PER_EPOCH:
+                continue
 
             start = time.time()
             batch_data = batch_data[0].to(DEVICE)
@@ -740,8 +749,8 @@ class TrainIWAE(luigi.Task):
         for epoch in range(start_epoch, N_EPOCHS):
             train_losses = self.train_iwae(
                 epoch, train_loader, modules, optimizers)
-            val_losses = self.val_iwae(
-                epoch, val_loader, modules)
+            val_losses = 0 #self.val_iwae(
+                #epoch, val_loader, modules)
 
             train_losses_all_epochs.append(train_losses)
             val_losses_all_epochs.append(val_losses)
@@ -788,9 +797,8 @@ class TrainVEM(luigi.Task):
         n_data = len(train_loader.dataset)
         n_batches = len(train_loader)
         for batch_idx, batch_data in enumerate(train_loader):
-            if DEBUG:
-                if batch_idx > 3:
-                    continue
+            if DEBUG and batch_idx > N_BATCH_PER_EPOCH:
+                continue
 
             start = time.time()
             batch_data = batch_data[0].to(DEVICE)
@@ -831,7 +839,30 @@ class TrainVEM(luigi.Task):
 
             loss_reconstruction = toylosses.reconstruction_loss(
                 batch_data_flat, batch_recon_flat, batch_logvarx_flat, bce=BCE)
+            if loss_reconstruction != loss_reconstruction or loss_reconstruction > 5e4:
+                print('Error in loss recon', loss_reconstruction)
+                batch_recon, batch_logvarx = decoder(mu)
+                batch_data = batch_data.view(-1, DATA_DIM)
+                half = int(n_batch_data / 2)
+                batch_data_first_half = batch_data[:half, ]
+                batch_recon_first_half = batch_recon[:half, ]
+                batch_logvarx_first_half = batch_logvarx[:half, ]
 
+                batch_data_expanded = batch_data_first_half.expand(
+                    N_VEM_ELBO, half, DATA_DIM)
+                batch_data_flat = batch_data_expanded.resize(
+                    N_VEM_ELBO*half, DATA_DIM)
+                batch_recon_expanded = batch_recon_first_half.expand(
+                    N_VEM_ELBO, half, DATA_DIM)
+                batch_recon_flat = batch_recon_expanded.resize(
+                    N_VEM_ELBO*half, DATA_DIM)
+                batch_logvarx_expanded = batch_logvarx_first_half.expand(
+                    N_VEM_ELBO, half, DATA_DIM)
+                batch_logvarx_flat = batch_logvarx_expanded.resize(
+                    N_VEM_ELBO*half, DATA_DIM)
+
+                loss_reconstruction = toylosses.reconstruction_loss(
+                    batch_data_flat, batch_recon_flat, batch_logvarx_flat, bce=BCE)
             loss_reconstruction.backward(retain_graph=True)
 
             loss_regularization = toylosses.regularization_loss(
@@ -840,8 +871,7 @@ class TrainVEM(luigi.Task):
 
             optimizers['encoder'].step()
             neg_elbo = loss_reconstruction + loss_regularization
-            if neg_elbo != neg_elbo:
-                raise ValueError()
+
             # ----------------------------------------------------- #
 
             # --- VEM: Train decoder with IWAE, proxy for NLL --- #
@@ -859,7 +889,7 @@ class TrainVEM(luigi.Task):
                 bce=BCE)
             # This also fills the encoder, but we do not step
             neg_iwelbo.backward()
-            if neg_iwelbo != neg_iwelbo or neg_iwelbo > 1e6:
+            if neg_iwelbo != neg_iwelbo or neg_iwelbo > 5e4:
                 print('mu = ', mu)
                 print('logvar = ', logvar)
                 z = imnn.sample_from_q(mu, logvar).to(DEVICE)
@@ -951,9 +981,8 @@ class TrainVEM(luigi.Task):
         n_data = len(val_loader.dataset)
         n_batches = len(val_loader)
         for batch_idx, batch_data in enumerate(val_loader):
-            if DEBUG:
-                if batch_idx > 3:
-                    continue
+            if DEBUG and batch_idx > N_BATCH_PER_EPOCH:
+                continue
 
             start = time.time()
             batch_data = batch_data[0].to(DEVICE)
@@ -1089,8 +1118,8 @@ class TrainVEM(luigi.Task):
             train_losses = self.train_vem(
                 epoch, train_loader, modules, optimizers)
             train_losses_all_epochs.append(train_losses)
-            val_losses = self.val_vem(
-                epoch, val_loader, modules)
+            val_losses =  0. # self.val_vem(
+                #epoch, val_loader, modules)
             val_losses_all_epochs.append(val_losses)
 
             save_checkpoint(
@@ -1135,9 +1164,8 @@ class TrainVEGAN(luigi.Task):
         n_batches = len(train_loader)
 
         for batch_idx, batch_data in enumerate(train_loader):
-            if DEBUG:
-                if batch_idx > 3:
-                    continue
+            if DEBUG and batch_idx > N_BATCH_PER_EPOCH:
+                continue
 
             batch_data = batch_data[0].to(DEVICE)
             batch_data = batch_data.view(-1, DATA_DIM)
@@ -1285,9 +1313,8 @@ class TrainVEGAN(luigi.Task):
         n_batches = len(val_loader)
 
         for batch_idx, batch_data in enumerate(val_loader):
-            if DEBUG:
-                if batch_idx > 3:
-                    continue
+            if DEBUG and batch_idx > N_BATCH_PER_EPOCH:
+                continue
 
             batch_data = batch_data[0].to(DEVICE)
             batch_data = batch_data.view(-1, DATA_DIM)
@@ -1470,7 +1497,7 @@ class Report(luigi.Task):
     report_path = os.path.join(REPORT_DIR, 'report.html')
 
     def requires(self):
-        return TrainVAE(), TrainIWAE(), TrainVEM()
+        return TrainIWAE(), TrainVAE(), TrainVEM()
 
     def get_last_epoch(self):
         # Placeholder

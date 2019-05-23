@@ -54,21 +54,41 @@ class Encoder(nn.Module):
         self.fc1 = nn.Linear(data_dim, 400)
 
         # Decrease amortization error
-        self.fc1a = nn.Linear(400, 400)
-        self.fc1b = nn.Linear(400, 400)
-        self.fc1c = nn.Linear(400, 400)
+        #self.fc1a = nn.Linear(400, 400)
+        #self.fc1b = nn.Linear(400, 400)
+        #self.fc1c = nn.Linear(400, 400)
 
         self.fc21 = nn.Linear(400, latent_dim)
         self.fc22 = nn.Linear(400, latent_dim)
 
+        self.leakyrelu = nn.LeakyReLU(0.2)
+        self.sigmoid = nn.Sigmoid()
+
     def forward(self, x):
         x = x.view(-1, self.data_dim)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc1a(x))
-        x = F.relu(self.fc1b(x))
-        h1 = F.relu(self.fc1c(x))
+        #print('x = ', x)
+        n_batch_data, _ = x.shape
+        assert not torch.isnan(x).any()
+        #print('x1 = ', x)
+        assert not torch.isnan(x).any()
+        h1 = self.leakyrelu(self.fc1(x))
+        #print('x2 = ', x)
+        assert not torch.isnan(x).any()
+        #x = self.leakyrelu(self.fc1a(x))
+        #print('x3 = ', x)
+        assert not torch.isnan(x).any()
+        #x = self.leakyrelu(self.fc1b(x))
+        #print('x4 = ', x)
+        assert not torch.isnan(x).any()
+        #h1 = self.leakyrelu(self.fc1c(x))
+        #print('h1 = ', h1)
+        assert not torch.isnan(h1).any()
         muz = self.fc21(h1)
+        assert not torch.isnan(muz).any()
+        #print('muz = ', muz)
         logvarz = self.fc22(h1)
+        assert not torch.isnan(logvarz).any()
+        print('logvarz = ', logvarz)
         return muz, logvarz
 
 
@@ -81,9 +101,11 @@ class Decoder(nn.Module):
 
         self.fc3 = nn.Linear(latent_dim, 400)
         self.fc4 = nn.Linear(400, data_dim)
+        self.leakyrelu = nn.LeakyReLU(0.2)
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, z):
-        h3 = F.relu(self.fc3(z))
+        h3 = self.leakyrelu(self.fc3(z))
         recon_x = torch.sigmoid(self.fc4(h3))
         return recon_x, torch.zeros_like(recon_x)  # HACK
 
@@ -129,25 +151,28 @@ class EncoderCNN(nn.Module):
 
         self.fc21 = nn.Linear(in_features=128 * 28 * 28, out_features=1024)
         self.fc22 = nn.Linear(in_features=1024, out_features=self.latent_dim)
-        self.relu = nn.ReLU()
+
+        # self.leakyrelu = nn.ReLU()
+        self.leakyrelu = nn.LeakyReLU(0.2)
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
         print('x=', x)
         x = x.view(-1, 1, 28, 28)
         print('x0=', x)
-        x = self.relu(self.conv1(x))
+        x = self.leakyrelu(self.conv1(x))
         print('x1=', x)
-        x = self.relu(self.conv2(x))
+        x = self.leakyrelu(self.conv2(x))
         print('x2=', x)
         x = x.view(-1, 128 * 28 * 28)
         print('x3=', x)
 
-        muz = self.relu(self.fc11(x))
+        muz = self.leakyrelu(self.fc11(x))
         print('muz1=', muz)
         muz = self.fc12(muz)
         print('muz2=', muz)
 
-        logvarz = self.relu(self.fc21(x))
+        logvarz = self.leakyrelu(self.fc21(x))
         print('logvarz1=', logvarz)
         logvarz = self.fc22(logvarz)
         print('logvarz2=', logvarz)
@@ -172,13 +197,16 @@ class DecoderCNN(nn.Module):
             in_channels=64, out_channels=1,
             kernel_size=4, padding=1, stride=2)
 
+        self.leakyrelu = nn.LeakyReLU(0.2)
+        self.sigmoid = nn.Sigmoid()
+
     def forward(self, z):
 
         x = F.elu(self.fc1(z))
         x = F.elu(self.fc2(x))
         x = x.view(-1, 128, 7, 7)
-        x = F.relu(self.conv_t1(x))
-        recon_x = F.sigmoid(self.conv_t2(x))
+        x = self.leakyrelu(self.conv_t1(x))
+        recon_x = self.sigmoid(self.conv_t2(x))
         recon_x = recon_x.view(-1, self.im_h * self.im_w)
         # Output flat recon_x
         return recon_x, torch.zeros_like(recon_x)  # HACK
