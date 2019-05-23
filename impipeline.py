@@ -63,7 +63,7 @@ N_VAE = 1  # N_VEM_ELBO + N_VEM_IWELBO
 N_IWAE = N_VEM_ELBO + N_VEM_IWELBO
 
 # for IWELBO to estimate the NLL
-N_MC_NLL = 5000
+N_MC_NLL = 200 #5000
 
 # Train
 
@@ -76,7 +76,7 @@ KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 PRINT_INTERVAL = 64
 torch.backends.cudnn.benchmark = True
 
-N_EPOCHS = 6
+N_EPOCHS = 15
 CKPT_PERIOD = 2
 LR = 1e-3
 
@@ -471,8 +471,8 @@ class TrainVAE(luigi.Task):
         for epoch in range(start_epoch, N_EPOCHS):
             train_losses = self.train_vae(
                 epoch, train_loader, modules, optimizers)
-            val_losses = 0. #self.val_vae(
-                #epoch, val_loader, modules)
+            val_losses = self.val_vae(
+                epoch, val_loader, modules)
 
             train_losses_all_epochs.append(train_losses)
             val_losses_all_epochs.append(val_losses)
@@ -759,8 +759,8 @@ class TrainIWAE(luigi.Task):
         for epoch in range(start_epoch, N_EPOCHS):
             train_losses = self.train_iwae(
                 epoch, train_loader, modules, optimizers)
-            val_losses = 0 #self.val_iwae(
-                #epoch, val_loader, modules)
+            val_losses = self.val_iwae(
+                epoch, val_loader, modules)
 
             train_losses_all_epochs.append(train_losses)
             val_losses_all_epochs.append(val_losses)
@@ -1128,8 +1128,8 @@ class TrainVEM(luigi.Task):
             train_losses = self.train_vem(
                 epoch, train_loader, modules, optimizers)
             train_losses_all_epochs.append(train_losses)
-            val_losses =  0. # self.val_vem(
-                #epoch, val_loader, modules)
+            val_losses = self.val_vem(
+                epoch, val_loader, modules)
             val_losses_all_epochs.append(val_losses)
 
             save_checkpoint(
