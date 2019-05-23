@@ -4,6 +4,7 @@ import math
 import numpy as np
 import torch
 import torch.nn
+from torch.nn import functional as F
 
 import toynn
 
@@ -163,17 +164,20 @@ def neg_iwelbo_loss_base(
 
     # These 4 lines are the reconstruction term: change here.
     if bce:
-        log_PxGz = torch.sum(
-            x_expanded * torch.log(recon_x_expanded)
-            + (1 - x_expanded) * torch.log(1 - recon_x_expanded),
-            dim=-1)
-
+        #log_PxGz = torch.sum(
+        #    x_expanded * torch.log(recon_x_expanded)
+        #    + (1 - x_expanded) * torch.log(1 - recon_x_expanded),
+        #    dim=-1)
+        log_PxGz = F.binary_cross_entropy(recon_x_expanded, x_expanded, reduction='none')
+        log_PxGz = torch.sum(log_PxGz, dim=-1)
+        assert log_PxGz.shape == (n_is_samples, n_batch_data), log_PxGz.shape
     else:
         log_PxGz = torch.sum(
             - 0.5 * (x_expanded - recon_x_expanded) ** 2 / varx_expanded
             - 0.5 * logvarx_expanded, dim=-1)
         log_PxGz += - 0.5 * data_dim * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)
 
+    #print(log_PxGz)
     assert not torch.isnan(log_PxGz).any()
     log_weight = log_Pz + log_PxGz - log_QzGx
     #print('log_weight = ', log_weight)

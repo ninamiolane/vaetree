@@ -211,6 +211,59 @@ class TestToylosses(unittest.TestCase):
 
         self.assertTrue(np.allclose(result, expected), result)
 
+    def test_neg_iwelbo_d_dim_l_dim_bce(self):
+        # Test all zeros, ones logvar- 1 iw sample
+        n_is_samples = 1
+        n_batch_data = 3
+        latent_dim = 4
+        data_dim = 5
+
+        x_expanded = torch.zeros(
+            (n_is_samples, n_batch_data, data_dim)).to(DEVICE)
+        recon_x_expanded = torch.zeros_like(x_expanded).to(DEVICE)
+        logvarx_expanded = torch.zeros_like(x_expanded).to(DEVICE)
+
+        mu_expanded = torch.zeros(
+            (n_is_samples, n_batch_data, latent_dim)).to(DEVICE)
+        logvar_expanded = torch.ones_like(mu_expanded).to(DEVICE)
+        z_expanded = torch.zeros_like(mu_expanded).to(DEVICE)
+
+        expected = - 2.
+        result = toylosses.neg_iwelbo_loss_base(
+            x_expanded, recon_x_expanded,
+            logvarx_expanded, mu_expanded, logvar_expanded,
+            z_expanded,
+            bce=True)
+        result = result.cpu().numpy()
+
+        self.assertTrue(np.allclose(result, expected), result)
+
+        # Test all zeros, ones for logvar - multiple iw samples
+        n_is_samples = 10
+        n_batch_data = 3
+        latent_dim = 4
+        data_dim = 5
+
+        x_expanded = torch.zeros(
+            (n_is_samples, n_batch_data, data_dim)).to(DEVICE)
+        recon_x_expanded = torch.zeros_like(x_expanded).to(DEVICE)
+        logvarx_expanded = torch.zeros_like(x_expanded).to(DEVICE)
+
+        mu_expanded = torch.zeros(
+            (n_is_samples, n_batch_data, latent_dim)).to(DEVICE)
+        logvar_expanded = torch.ones_like(mu_expanded).to(DEVICE)
+        z_expanded = torch.zeros_like(mu_expanded).to(DEVICE)
+
+        expected = - 2.
+        result = toylosses.neg_iwelbo_loss_base(
+            x_expanded, recon_x_expanded,
+            logvarx_expanded, mu_expanded, logvar_expanded,
+            z_expanded,
+            bce=True)
+        result = result.cpu().numpy()
+
+        self.assertTrue(np.allclose(result, expected), result)
+
     def test_neg_iwelbo_loss_base(self):
         n_is_samples = 2
         n_batch_data = 3

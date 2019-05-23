@@ -34,7 +34,7 @@ TRAIN_VEM_DIR = os.path.join(OUTPUT_DIR, 'train_vem')
 TRAIN_VEGAN_DIR = os.path.join(OUTPUT_DIR, 'train_vegan')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
-DEBUG = True
+DEBUG = False
 CATASTROPHE = False
 
 CUDA = torch.cuda.is_available()
@@ -60,7 +60,7 @@ BCE = True
 N_VEM_ELBO = 1
 N_VEM_IWELBO = 399
 N_VAE = 1  # N_VEM_ELBO + N_VEM_IWELBO
-N_IWAE = N_VEM_ELBO + N_VEM_IWELBO
+N_IWAE = 1 #N_VEM_ELBO + N_VEM_IWELBO
 
 # for IWELBO to estimate the NLL
 N_MC_NLL = 5000
@@ -253,11 +253,10 @@ class TrainVAE(luigi.Task):
 
             # --- VAE: Train wrt Neg ELBO --- #
             batch_data = batch_data.view(-1, DATA_DIM)
-            #batch_data_expanded = batch_data.expand(
-            #    N_VAE, n_batch_data, DATA_DIM)
-            #batch_data_flat = batch_data_expanded.resize(
-            #    N_VAE*n_batch_data, DATA_DIM)
-            batch_data_flat = batch_data
+            batch_data_expanded = batch_data.expand(
+                N_VAE, n_batch_data, DATA_DIM)
+            batch_data_flat = batch_data_expanded.resize(
+                N_VAE*n_batch_data, DATA_DIM)
 
             loss_reconstruction = toylosses.reconstruction_loss(
                 batch_data_flat, batch_recon, batch_logvarx, bce=BCE)
@@ -1508,7 +1507,7 @@ class Report(luigi.Task):
     report_path = os.path.join(REPORT_DIR, 'report.html')
 
     def requires(self):
-        return TrainVAE(), #    TrainIWAE(), TrainVAE(), TrainVEM()
+        return TrainVAE(), TrainIWAE() #, TrainVAE(), TrainVEM()
 
     def get_last_epoch(self):
         # Placeholder
