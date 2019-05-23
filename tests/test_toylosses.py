@@ -5,7 +5,6 @@ import numpy as np
 import torch
 
 import toylosses
-import toynn
 
 DEVICE = 'cuda'
 
@@ -264,6 +263,32 @@ class TestToylosses(unittest.TestCase):
 
         self.assertTrue(np.allclose(result, expected), result)
 
+        # Test all ones - multiple iw samples
+        n_is_samples = 10
+        n_batch_data = 3
+        latent_dim = 4
+        data_dim = 5
+
+        x_expanded = torch.ones(
+            (n_is_samples, n_batch_data, data_dim)).to(DEVICE)
+        recon_x_expanded = torch.ones_like(x_expanded).to(DEVICE)
+        logvarx_expanded = torch.ones_like(x_expanded).to(DEVICE)
+
+        mu_expanded = torch.ones(
+            (n_is_samples, n_batch_data, latent_dim)).to(DEVICE)
+        logvar_expanded = torch.ones_like(mu_expanded).to(DEVICE)
+        z_expanded = torch.ones_like(mu_expanded).to(DEVICE)
+
+        expected = 0.
+        result = toylosses.neg_iwelbo_loss_base(
+            x_expanded, recon_x_expanded,
+            logvarx_expanded, mu_expanded, logvar_expanded,
+            z_expanded,
+            bce=True)
+        result = result.cpu().numpy()
+
+        self.assertTrue(np.allclose(result, expected), result)
+
     def test_neg_iwelbo_loss_base(self):
         n_is_samples = 2
         n_batch_data = 3
@@ -312,6 +337,117 @@ class TestToylosses(unittest.TestCase):
 
         expected = 1.80746
         self.assertTrue(np.allclose(result, expected), result)
+
+    def test_compare_neg_elbo_neg_iwelbo_bce(self):
+        n_is_samples = 1
+        n_batch_data = 3
+        latent_dim = 1
+        data_dim = 1
+
+        x_expanded = torch.Tensor(
+            [[[0.5], [0.2], [0.3]]]
+                ).to(DEVICE)
+        recon_x_expanded = torch.zeros_like(x_expanded).to(DEVICE)
+        logvarx_expanded = torch.zeros_like(x_expanded).to(DEVICE)
+
+        mu_expanded = torch.zeros(
+            (n_is_samples, n_batch_data, latent_dim)).to(DEVICE)
+        logvar_expanded = torch.zeros_like(mu_expanded).to(DEVICE)
+        z_expanded = torch.zeros_like(mu_expanded).to(DEVICE)
+
+        result_iwelbo = toylosses.neg_iwelbo_loss_base(
+            x_expanded, recon_x_expanded,
+            logvarx_expanded, mu_expanded, logvar_expanded,
+            z_expanded, bce=True)
+        result_iwelbo = result_iwelbo.cpu().numpy()
+
+        x = x_expanded.view(-1, data_dim)
+        recon_x = recon_x_expanded.view(-1, data_dim)
+        logvarx = logvarx_expanded.view(-1, data_dim)
+        mu = mu_expanded.view(-1, latent_dim)
+        logvar = logvar_expanded.view(-1, latent_dim)
+
+        result_elbo = toylosses.neg_elbo(
+            x, recon_x, logvarx, mu, logvar, bce=True)
+        result_elbo = result_elbo.cpu().numpy()
+        self.assertTrue(np.allclose(result_elbo, result_iwelbo))
+
+        ###
+        n_is_samples = 1
+        n_batch_data = 3
+        latent_dim = 1
+        data_dim = 2
+
+        x_expanded = torch.Tensor(
+            [[[0.5, 0.1], [0.2, 1.], [0.3, 0.4]]]
+                ).to(DEVICE)
+        recon_x_expanded = torch.zeros_like(x_expanded).to(DEVICE)
+        logvarx_expanded = torch.zeros_like(x_expanded).to(DEVICE)
+
+        mu_expanded = torch.Tensor(
+            [[[0.5], [0.2], [0.3]]]
+                ).to(DEVICE)
+        logvar_expanded = torch.zeros_like(mu_expanded).to(DEVICE)
+        z_expanded = torch.zeros_like(mu_expanded).to(DEVICE)
+
+        result_iwelbo = toylosses.neg_iwelbo_loss_base(
+            x_expanded, recon_x_expanded,
+            logvarx_expanded, mu_expanded, logvar_expanded,
+            z_expanded, bce=True)
+        result_iwelbo = result_iwelbo.cpu().numpy()
+
+        x = x_expanded.view(-1, data_dim)
+        recon_x = recon_x_expanded.view(-1, data_dim)
+        logvarx = logvarx_expanded.view(-1, data_dim)
+        mu = mu_expanded.view(-1, latent_dim)
+        logvar = logvar_expanded.view(-1, latent_dim)
+
+        result_elbo = toylosses.neg_elbo(
+            x, recon_x, logvarx, mu, logvar, bce=True)
+        result_elbo = result_elbo.cpu().numpy()
+        print('result_elbo = ', result_elbo)
+        print('result_iwelbo = ', result_iwelbo)
+        # self.assertTrue(np.allclose(result_elbo, result_iwelbo))
+
+        n_is_samples = 1
+        n_batch_data = 3
+        latent_dim = 1
+        data_dim = 2
+
+        x_expanded = torch.Tensor(
+            [[[0., 0.], [0., 0.], [0., 0.]]]
+                ).to(DEVICE)
+        recon_x_expanded = torch.zeros_like(x_expanded).to(DEVICE)
+        logvarx_expanded = torch.zeros_like(x_expanded).to(DEVICE)
+
+        mu_expanded = torch.Tensor(
+            [[[0.], [0.], [0.]]]
+                ).to(DEVICE)
+        logvar_expanded = torch.Tensor(
+            [[[0.], [0.], [10.]]]
+                ).to(DEVICE)
+        z_expanded = torch.Tensor(
+            [[[-0.], [0.], [0.]]]
+                ).to(DEVICE)
+
+        result_iwelbo = toylosses.neg_iwelbo_loss_base(
+            x_expanded, recon_x_expanded,
+            logvarx_expanded, mu_expanded, logvar_expanded,
+            z_expanded, bce=True)
+        result_iwelbo = result_iwelbo.cpu().numpy()
+
+        x = x_expanded.view(-1, data_dim)
+        recon_x = recon_x_expanded.view(-1, data_dim)
+        logvarx = logvarx_expanded.view(-1, data_dim)
+        mu = mu_expanded.view(-1, latent_dim)
+        logvar = logvar_expanded.view(-1, latent_dim)
+
+        result_elbo = toylosses.neg_elbo(
+            x, recon_x, logvarx, mu, logvar, bce=True)
+        result_elbo = result_elbo.cpu().numpy()
+        print('result_elbo = ', result_elbo)
+        print('result_iwelbo = ', result_iwelbo)
+        # self.assertTrue(np.allclose(result_elbo, result_iwelbo))
 
     # def test_neg_iwelbo(self):
     #     # The expected result is on average the result for mu = 0.

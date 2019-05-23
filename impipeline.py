@@ -54,13 +54,13 @@ IM_W = 28
 DATA_DIM = 28 * 28  # MNIST size
 LATENT_DIM = 20
 CNN = False
-BCE = True
+BCE = False
 
 # MC samples
 N_VEM_ELBO = 1
-N_VEM_IWELBO = 399
+N_VEM_IWELBO = 99
 N_VAE = 1  # N_VEM_ELBO + N_VEM_IWELBO
-N_IWAE = 1 #N_VEM_ELBO + N_VEM_IWELBO
+N_IWAE = N_VEM_ELBO + N_VEM_IWELBO
 
 # for IWELBO to estimate the NLL
 N_MC_NLL = 5000
@@ -1507,7 +1507,7 @@ class Report(luigi.Task):
     report_path = os.path.join(REPORT_DIR, 'report.html')
 
     def requires(self):
-        return TrainVAE(), TrainIWAE() #, TrainVAE(), TrainVEM()
+        return TrainVAE(), TrainIWAE(), TrainVEM()
 
     def get_last_epoch(self):
         # Placeholder

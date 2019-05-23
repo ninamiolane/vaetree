@@ -168,7 +168,7 @@ def neg_iwelbo_loss_base(
         #    x_expanded * torch.log(recon_x_expanded)
         #    + (1 - x_expanded) * torch.log(1 - recon_x_expanded),
         #    dim=-1)
-        log_PxGz = F.binary_cross_entropy(recon_x_expanded, x_expanded, reduction='none')
+        log_PxGz = -F.binary_cross_entropy(recon_x_expanded, x_expanded, reduction='none')
         log_PxGz = torch.sum(log_PxGz, dim=-1)
         assert log_PxGz.shape == (n_is_samples, n_batch_data), log_PxGz.shape
     else:
