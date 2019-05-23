@@ -70,7 +70,7 @@ N_MC_NLL = 5000
 FRAC_VAL = 0.2
 DATASET_NAME = 'mnist'
 
-BATCH_SIZE = 16
+BATCH_SIZE = 128
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 
 PRINT_INTERVAL = 64
@@ -78,7 +78,7 @@ torch.backends.cudnn.benchmark = True
 
 N_EPOCHS = 6
 CKPT_PERIOD = 2
-LR = 1e-2
+LR = 1e-3
 
 BETA1 = 0.5
 BETA2 = 0.999
@@ -87,7 +87,7 @@ N_BATCH_PER_EPOCH = 1e10
 
 if DEBUG:
     N_EPOCHS = 10
-    BATCH_SIZE = 16
+    BATCH_SIZE = 128
     N_VEM_ELBO = 1
     N_VEM_IWELBO = 399
     N_VAE = 1
@@ -120,12 +120,6 @@ def get_dataloaders(dataset_name=DATASET_NAME,
 
     train_tensor = train_dataset.dataset.data[train_dataset.indices]
     val_tensor = val_dataset.dataset.data[val_dataset.indices]
-
-    train_tensor = train_tensor / 255.
-    val_tensor = val_tensor / 255.
-
-    # print('train_tensor max:', torch.max(train_tensor))
-    # print('train_tensor min:', torch.min(train_tensor))
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
@@ -259,10 +253,11 @@ class TrainVAE(luigi.Task):
 
             # --- VAE: Train wrt Neg ELBO --- #
             batch_data = batch_data.view(-1, DATA_DIM)
-            batch_data_expanded = batch_data.expand(
-                N_VAE, n_batch_data, DATA_DIM)
-            batch_data_flat = batch_data_expanded.resize(
-                N_VAE*n_batch_data, DATA_DIM)
+            #batch_data_expanded = batch_data.expand(
+            #    N_VAE, n_batch_data, DATA_DIM)
+            #batch_data_flat = batch_data_expanded.resize(
+            #    N_VAE*n_batch_data, DATA_DIM)
+            batch_data_flat = batch_data
 
             loss_reconstruction = toylosses.reconstruction_loss(
                 batch_data_flat, batch_recon, batch_logvarx, bce=BCE)
@@ -459,7 +454,6 @@ class TrainVAE(luigi.Task):
                 latent_dim=LATENT_DIM,
                 data_dim=DATA_DIM)
             vae.to(DEVICE)
-
 
         modules = {}
         modules['encoder'] = vae.encoder

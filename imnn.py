@@ -61,35 +61,37 @@ class Encoder(nn.Module):
         self.fc21 = nn.Linear(latent_dim ** 2, latent_dim)
         self.fc22 = nn.Linear(latent_dim ** 2, latent_dim)
 
-        self.leakyrelu = nn.LeakyReLU(0.2)
-        self.sigmoid = nn.Sigmoid()
+        #self.leakyrelu = nn.LeakyReLU(0.2)
+        #self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
         x = x.view(-1, self.data_dim)
-        #print('x = ', x)
-        n_batch_data, _ = x.shape
-        assert not torch.isnan(x).any()
-        #print('x1 = ', x)
-        assert not torch.isnan(x).any()
-        h1 = self.leakyrelu(self.fc1(x))
-        #print('x2 = ', x)
-        assert not torch.isnan(x).any()
-        #x = self.leakyrelu(self.fc1a(x))
-        #print('x3 = ', x)
-        assert not torch.isnan(x).any()
-        #x = self.leakyrelu(self.fc1b(x))
-        #print('x4 = ', x)
-        assert not torch.isnan(x).any()
-        #h1 = self.leakyrelu(self.fc1c(x))
-        #print('h1 = ', h1)
-        assert not torch.isnan(h1).any()
-        muz = self.fc21(h1)
-        assert not torch.isnan(muz).any()
-        #print('muz = ', muz)
-        logvarz = self.fc22(h1)
-        assert not torch.isnan(logvarz).any()
-        #print('logvarz = ', logvarz)
-        return muz, logvarz
+        h1 = F.relu(self.fc1(x))
+        return self.fc21(h1), self.fc22(h1)
+        ##print('x = ', x)
+        #n_batch_data, _ = x.shape
+        #assert not torch.isnan(x).any()
+        ##print('x1 = ', x)
+        #assert not torch.isnan(x).any()
+        #h1 = self.leakyrelu(self.fc1(x))
+        ##print('x2 = ', x)
+        #assert not torch.isnan(x).any()
+        ##x = self.leakyrelu(self.fc1a(x))
+        ##print('x3 = ', x)
+        #assert not torch.isnan(x).any()
+        ##x = self.leakyrelu(self.fc1b(x))
+        ##print('x4 = ', x)
+        #assert not torch.isnan(x).any()
+        ##h1 = self.leakyrelu(self.fc1c(x))
+        ##print('h1 = ', h1)
+        #assert not torch.isnan(h1).any()
+        #muz = self.fc21(h1)
+        #assert not torch.isnan(muz).any()
+        ##print('muz = ', muz)
+        #logvarz = self.fc22(h1)
+        #assert not torch.isnan(logvarz).any()
+        ##print('logvarz = ', logvarz)
+        #return muz, logvarz
 
 
 class Decoder(nn.Module):
@@ -101,12 +103,14 @@ class Decoder(nn.Module):
 
         self.fc3 = nn.Linear(latent_dim, latent_dim ** 2)
         self.fc4 = nn.Linear(latent_dim ** 2, data_dim)
-        self.leakyrelu = nn.LeakyReLU(0.2)
-        self.sigmoid = nn.Sigmoid()
+        #self.leakyrelu = nn.LeakyReLU(0.2)
+        #self.sigmoid = nn.Sigmoid()
 
     def forward(self, z):
-        h3 = self.leakyrelu(self.fc3(z))
-        recon_x = torch.sigmoid(self.fc4(h3))
+        h3 = F.relu(self.fc3(z))
+        recon_x =  torch.sigmoid(self.fc4(h3))
+        #h3 = self.leakyrelu(self.fc3(z))
+        #recon_x = torch.sigmoid(self.fc4(h3))
         return recon_x, torch.zeros_like(recon_x)  # HACK
 
 
@@ -125,9 +129,14 @@ class VAE(nn.Module):
             latent_dim=latent_dim,
             data_dim=data_dim)
 
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5*logvar)
+        eps = torch.randn_like(std)
+        return mu + eps*std
+
     def forward(self, x):
         muz, logvarz = self.encoder(x)
-        z = reparametrize(muz, logvarz)
+        z = self.reparametrize(muz, logvarz)  # self.repar
         recon_x, _ = self.decoder(z)
         return recon_x, muz, logvarz
 

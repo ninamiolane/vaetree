@@ -66,7 +66,7 @@ def reconstruction_loss(batch_data, batch_recon, batch_logvarx, bce=False):
 
     if bce:
         return losses.bce_on_intensities(
-            batch_data, batch_recon, batch_logvarx)
+            batch_data, batch_recon, batch_logvarx) / n_batch_data
 
     batch_logvarx = batch_logvarx.squeeze()
     if batch_logvarx.shape == (n_batch_data,):
