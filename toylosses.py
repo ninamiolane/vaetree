@@ -116,8 +116,8 @@ def regularization_loss(mu, logvar):
     n_batch_data, _ = logvar.shape
     assert logvar.shape == mu.shape
     loss_regularization = -0.5 * torch.sum(
-        1 + logvar - mu.pow(2) - logvar.exp())
-    loss_regularization /= n_batch_data
+        1 + logvar - mu.pow(2) - logvar.exp(), dim=1)
+    loss_regularization = torch.mean(loss_regularization)
     return loss_regularization
 
 

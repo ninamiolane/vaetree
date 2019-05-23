@@ -35,6 +35,7 @@ TRAIN_VEGAN_DIR = os.path.join(OUTPUT_DIR, 'train_vegan')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
 DEBUG = True
+CATASTROPHE = False
 
 CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if CUDA else "cpu")
@@ -51,9 +52,9 @@ torch.backends.cudnn.benchmark = False
 IM_H = 28
 IM_W = 28
 DATA_DIM = 28 * 28  # MNIST size
-LATENT_DIM = 10
+LATENT_DIM = 20
 CNN = False
-BCE = False
+BCE = True
 
 # MC samples
 N_VEM_ELBO = 1
@@ -85,7 +86,7 @@ BETA2 = 0.999
 N_BATCH_PER_EPOCH = 1e10
 
 if DEBUG:
-    N_EPOCHS = 6
+    N_EPOCHS = 10
     BATCH_SIZE = 16
     N_VEM_ELBO = 1
     N_VEM_IWELBO = 399
@@ -123,8 +124,8 @@ def get_dataloaders(dataset_name=DATASET_NAME,
     train_tensor = train_tensor / 255.
     val_tensor = val_tensor / 255.
 
-    print('train_tensor max:', torch.max(train_tensor))
-    print('train_tensor min:', torch.min(train_tensor))
+    # print('train_tensor max:', torch.max(train_tensor))
+    # print('train_tensor min:', torch.min(train_tensor))
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
@@ -235,10 +236,26 @@ class TrainVAE(luigi.Task):
             decoder = modules['decoder']
 
             mu, logvar = encoder(batch_data)
+            #logging.info('Values of true \'encoder\' parameters:')
+            #for name, param in encoder.named_parameters():
+            #    logging.info(name)
+            #    logging.info(param.data)
 
             z = imnn.sample_from_q(
                 mu, logvar, n_samples=N_VAE).to(DEVICE)
             batch_recon, batch_logvarx = decoder(z)
+            if CATASTROPHE:
+                print(
+                    'norm(mu) = {:.4f}'
+                    '\t norm(logvar) = {:.4f}'
+                    '\t norm(z) = {:.4f}'
+                    '\t norm(batch_recon) = {:.4f}'
+                    '\t norm(batch_data) = {:.4f}'.format(
+                        torch.norm(mu),
+                        torch.norm(logvar),
+                        torch.norm(z),
+                        torch.norm(batch_recon),
+                        torch.norm(batch_data)))
 
             # --- VAE: Train wrt Neg ELBO --- #
             batch_data = batch_data.view(-1, DATA_DIM)
@@ -1497,7 +1514,7 @@ class Report(luigi.Task):
     report_path = os.path.join(REPORT_DIR, 'report.html')
 
     def requires(self):
-        return TrainIWAE(), TrainVAE(), TrainVEM()
+        return TrainVAE(), #    TrainIWAE(), TrainVAE(), TrainVEM()
 
     def get_last_epoch(self):
         # Placeholder

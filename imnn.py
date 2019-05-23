@@ -45,21 +45,21 @@ def sample_from_prior(latent_dim, n_samples=1):
 
 
 class Encoder(nn.Module):
-    def __init__(self, latent_dim=2, data_dim=784):
+    def __init__(self, latent_dim=20, data_dim=784):
         super(Encoder, self).__init__()
 
         self.latent_dim = latent_dim
         self.data_dim = data_dim
 
-        self.fc1 = nn.Linear(data_dim, 400)
+        self.fc1 = nn.Linear(data_dim, latent_dim ** 2)
 
         # Decrease amortization error
         #self.fc1a = nn.Linear(400, 400)
         #self.fc1b = nn.Linear(400, 400)
         #self.fc1c = nn.Linear(400, 400)
 
-        self.fc21 = nn.Linear(400, latent_dim)
-        self.fc22 = nn.Linear(400, latent_dim)
+        self.fc21 = nn.Linear(latent_dim ** 2, latent_dim)
+        self.fc22 = nn.Linear(latent_dim ** 2, latent_dim)
 
         self.leakyrelu = nn.LeakyReLU(0.2)
         self.sigmoid = nn.Sigmoid()
@@ -88,19 +88,19 @@ class Encoder(nn.Module):
         #print('muz = ', muz)
         logvarz = self.fc22(h1)
         assert not torch.isnan(logvarz).any()
-        print('logvarz = ', logvarz)
+        #print('logvarz = ', logvarz)
         return muz, logvarz
 
 
 class Decoder(nn.Module):
-    def __init__(self, latent_dim=2, data_dim=784):
+    def __init__(self, latent_dim=20, data_dim=784):
         super(Decoder, self).__init__()
 
         self.latent_dim = latent_dim
         self.data_dim = data_dim
 
-        self.fc3 = nn.Linear(latent_dim, 400)
-        self.fc4 = nn.Linear(400, data_dim)
+        self.fc3 = nn.Linear(latent_dim, latent_dim ** 2)
+        self.fc4 = nn.Linear(latent_dim ** 2, data_dim)
         self.leakyrelu = nn.LeakyReLU(0.2)
         self.sigmoid = nn.Sigmoid()
 

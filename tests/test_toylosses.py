@@ -24,7 +24,7 @@ class TestToylosses(unittest.TestCase):
         result = toylosses.fa_neg_loglikelihood(weight, data)
         self.assertTrue(np.allclose(result, expected), result)
 
-    def test_regularization_loss(self):
+    def test_regularization_loss_1d(self):
         mu = torch.Tensor([[1.], [2.]])
         logvar = torch.Tensor([[0.], [0.]])
         expected = 1.25
@@ -34,6 +34,19 @@ class TestToylosses(unittest.TestCase):
         mu = torch.Tensor([[1.], [2.], [3.]])
         logvar = torch.Tensor([[0.], [0.], [0.]])
         expected = 7. / 3.
+        result = toylosses.regularization_loss(mu, logvar)
+        self.assertTrue(np.allclose(result, expected), result)
+
+    def test_regularization_loss_l_dim(self):
+        mu = torch.Tensor([
+            [1., 0.],
+            [0., 0.],
+            [1., 1.]])
+        logvar = torch.Tensor([
+            [1., 2.],
+            [0., 0.],
+            [1., 2.]])
+        expected = 2.20245
         result = toylosses.regularization_loss(mu, logvar)
         self.assertTrue(np.allclose(result, expected), result)
 
