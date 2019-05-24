@@ -68,7 +68,7 @@ WITH_BIASZ = False
 WITH_LOGVARZ = False
 
 # MC samples for AVEM
-N_MC_ELBO = 1
+N_MC_ELBO = 51
 N_MC_IWELBO = 99
 
 # for ELBO in case of VAE; IWELBO in case of IWAE
@@ -77,14 +77,14 @@ N_MC_TOT = N_MC_ELBO + N_MC_IWELBO
 # Train
 FRAC_VAL = 0.2
 
-BATCH_SIZE = 32
+BATCH_SIZE = 256
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 
 PRINT_INTERVAL = 16
 torch.backends.cudnn.benchmark = True
 
-N_EPOCHS = 80
-LR = 1e-3
+N_EPOCHS = 200
+LR = 5e-5
 
 BETA1 = 0.5
 BETA2 = 0.999
@@ -802,8 +802,20 @@ class TrainVEM(luigi.Task):
             batch_data_flat = batch_data_expanded.resize(
                 N_MC_ELBO*half, DATA_DIM)
 
+            batch_recon_first_half = batch_recon[:half, ]
+            batch_recon_expanded = batch_recon_first_half.expand(
+                N_MC_ELBO, half, DATA_DIM)
+            batch_recon_flat = batch_recon_expanded.resize(
+                N_MC_ELBO*half, DATA_DIM)
+
+            batch_logvarx_first_half = batch_logvarx[:half, ]
+            batch_logvarx_expanded = batch_logvarx_first_half.expand(
+                N_MC_ELBO, half, DATA_DIM)
+            batch_logvarx_flat = batch_logvarx_expanded.resize(
+                N_MC_ELBO*half, DATA_DIM)
+
             loss_reconstruction = toylosses.reconstruction_loss(
-                batch_data_flat, batch_recon[:half, ], batch_logvarx[:half, ])
+                batch_data_flat, batch_recon_flat, batch_logvarx_flat)
 
             loss_reconstruction.backward(retain_graph=True)
 
@@ -924,8 +936,20 @@ class TrainVEM(luigi.Task):
             batch_data_flat = batch_data_expanded.resize(
                 N_MC_ELBO*half, DATA_DIM)
 
+            batch_recon_first_half = batch_recon[:half, ]
+            batch_recon_expanded = batch_recon_first_half.expand(
+                N_MC_ELBO, half, DATA_DIM)
+            batch_recon_flat = batch_recon_expanded.resize(
+                N_MC_ELBO*half, DATA_DIM)
+
+            batch_logvarx_first_half = batch_logvarx[:half, ]
+            batch_logvarx_expanded = batch_logvarx_first_half.expand(
+                N_MC_ELBO, half, DATA_DIM)
+            batch_logvarx_flat = batch_logvarx_expanded.resize(
+                N_MC_ELBO*half, DATA_DIM)
+
             loss_reconstruction = toylosses.reconstruction_loss(
-                batch_data_flat, batch_recon[:half, ], batch_logvarx[:half, ])
+                batch_data_flat, batch_recon_flat, batch_logvarx_flat)
 
             loss_reconstruction.backward(retain_graph=True)
             loss_regularization = toylosses.regularization_loss(

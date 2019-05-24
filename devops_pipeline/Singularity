@@ -11,16 +11,15 @@ From: ../../simgs/base.simg
 
 %post
     #pip3 install --upgrade pip
-    apt-get install curl
-    curl http://neuro.debian.net/lists/xenial.de-m.full | tee /etc/apt/sources.list.d/neurodebian.sources.list
-    apt-key adv --recv-keys --keyserver hkp://pool.sks-keyservers.net:80 0xA5D32F012649A5A9
-    apt-get update
-    apt-get -y install ants
+    #apt-get install curl
+    #curl http://neuro.debian.net/lists/xenial.de-m.full | tee /etc/apt/sources.list.d/neurodebian.sources.list
+    #apt-key adv --recv-keys --keyserver hkp://pool.sks-keyservers.net:80 0xA5D32F012649A5A9
+    #apt-get update
+    #apt-get -y install ants
     pip3 install luigi \
                  nibabel \
                  numpy \
                  scikit-learn \
-                 scikit-image \
                  seaborn \
                  sympy \
                  torch \
@@ -31,4 +30,4 @@ From: ../../simgs/base.simg
                  visdom
 
 %runscript
-    exec /usr/bin/python3 -u impipeline.py
+    exec /usr/bin/python3 -u toypipeline.py

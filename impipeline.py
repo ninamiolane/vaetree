@@ -63,22 +63,22 @@ N_VAE = 1  # N_VEM_ELBO + N_VEM_IWELBO
 N_IWAE = N_VEM_ELBO + N_VEM_IWELBO
 
 # for IWELBO to estimate the NLL
-N_MC_NLL = 200 #5000
+N_MC_NLL = 5000
 
 # Train
 
 FRAC_VAL = 0.2
-DATASET_NAME = 'mnist'
+DATASET_NAME = 'omniglot'
 
-BATCH_SIZE = 128
+BATCH_SIZE = 20
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 
 PRINT_INTERVAL = 64
 torch.backends.cudnn.benchmark = True
 
-N_EPOCHS = 15
-CKPT_PERIOD = 2
-LR = 1e-3
+N_EPOCHS = 25
+CKPT_PERIOD = 1
+LR = 1e-4
 
 BETA1 = 0.5
 BETA2 = 0.999
@@ -110,6 +110,10 @@ def get_dataloaders(dataset_name=DATASET_NAME,
         dataset = datasets.MNIST(
             '../data', train=True, download=True,
             transform=transforms.ToTensor())
+    if dataset_name == 'omniglot':
+        dataset = datasets.Omniglot(
+            '../data', download=True,
+            transform=transforms.Compose([transforms.Resize((28, 28)), transforms.ToTensor()]))
     else:
         raise ValueError('Unknown dataset name.')
     length = len(dataset)
@@ -118,18 +122,19 @@ def get_dataloaders(dataset_name=DATASET_NAME,
     train_dataset, val_dataset = torch.utils.data.random_split(
         dataset, [train_length, val_length])
 
-    train_tensor = train_dataset.dataset.data[train_dataset.indices]
-    val_tensor = val_dataset.dataset.data[val_dataset.indices]
+    if dataset_name == 'mnist':
+        train_tensor = train_dataset.dataset.data[train_dataset.indices]
+        val_tensor = val_dataset.dataset.data[val_dataset.indices]
+        logging.info(
+            '-- Train tensor: (%d, %d, %d)' % train_tensor.shape)
+        logging.info(
+            '-- Valid tensor: (%d, %d, %d)' % val_tensor.shape)
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=batch_size, shuffle=True, **kwargs)
 
-    logging.info(
-        '-- Train tensor: (%d, %d, %d)' % train_tensor.shape)
-    logging.info(
-        '-- Valid tensor: (%d, %d, %d)' % val_tensor.shape)
     return train_loader, val_loader
 
 
