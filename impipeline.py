@@ -52,7 +52,7 @@ torch.backends.cudnn.benchmark = False
 IM_H = 28
 IM_W = 28
 DATA_DIM = 28 * 28  # MNIST size
-LATENT_DIM = 20
+LATENT_DIM = 10
 CNN = False
 BCE = False
 
@@ -68,7 +68,7 @@ N_MC_NLL = 5000
 # Train
 
 FRAC_VAL = 0.2
-DATASET_NAME = 'omniglot'
+DATASET_NAME = 'mnist'
 
 BATCH_SIZE = 20
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
@@ -110,12 +110,12 @@ def get_dataloaders(dataset_name=DATASET_NAME,
         dataset = datasets.MNIST(
             '../data', train=True, download=True,
             transform=transforms.ToTensor())
-    if dataset_name == 'omniglot':
+    elif dataset_name == 'omniglot':
         dataset = datasets.Omniglot(
             '../data', download=True,
             transform=transforms.Compose([transforms.Resize((28, 28)), transforms.ToTensor()]))
     else:
-        raise ValueError('Unknown dataset name.')
+        raise ValueError('Unknown dataset name: %s' % dataset_name)
     length = len(dataset)
     train_length = int((1 - frac_val) * length)
     val_length = int(length - train_length)
