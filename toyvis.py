@@ -1,6 +1,8 @@
 """ Visualization for toy experiments."""
 
 import glob
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 import numpy as np
 import pickle
 import seaborn as sns
@@ -8,6 +10,7 @@ import torch
 
 from scipy.stats import gaussian_kde
 
+import imnn
 import toylosses
 import toynn
 
@@ -27,6 +30,8 @@ CRIT_STRINGS = {
 TRAIN_VAL_STRINGS = {'train': 'Train', 'val': 'Valid'}
 COLOR_DICT = {'neg_elbo': 'red', 'neg_iwelbo': 'orange'}
 ALGO_COLOR_DICT = {'vae': 'red', 'iwae': 'orange', 'vem': 'blue'}
+cmaps_dict = {'vae': 'Reds', 'iwae': 'Oranges', 'vem': 'Blues'}
+
 
 FRAC_VAL = 0.2
 N_SAMPLES = 10000
@@ -456,3 +461,68 @@ def plot_kl(ax, output_dir, algo_name, from_epoch=0, to_epoch=1000):
         color=ALGO_COLOR_DICT[algo_name], dashes=True)
 
     return ax
+
+
+def load_module(output_dir, algo_name='vae', module_name='encoder',
+                latent_dim=20, data_dim=784):
+    # TODO(nina): Delete the need of knowing the VAE's architecture
+    # in order to load it
+    module_path = glob.glob(
+        '%s/train_%s/models/%s.pth' % (
+             output_dir, algo_name, module_name))
+    if len(module_path) == 0:
+        ckpts = glob.glob(
+            '%s/train_%s/models/epoch_*_checkpoint.pth' % (
+                output_dir, algo_name))
+        if len(ckpts) == 0:
+            print('No module found. No checkpoints found.')
+        else:
+            ckpts_ids_and_paths = [(int(f.split('_')[2]), f) for f in ckpts]
+            ckpt_id, ckpt_path = max(
+                ckpts_ids_and_paths, key=lambda item: item[0])
+            print('Found checkpoints. Getting: %s.' % ckpt_path)
+            ckpt = torch.load(ckpt_path, map_location=DEVICE)
+
+            vae = imnn.VAE(
+                latent_dim=latent_dim,
+                data_dim=data_dim)
+            vae.to(DEVICE)
+
+            modules = {}
+            modules['encoder'] = vae.encoder
+            modules['decoder'] = vae.decoder
+            module = modules[module_name]
+            module_ckpt = ckpt[module_name]
+            module.load_state_dict(module_ckpt['module_state_dict'])
+
+    else:
+        module_path = module_path[0]
+        print('Loading: %s' % module_path)
+        module = torch.load(module_path, map_location=DEVICE)
+    return module
+
+
+def show_samples(output_dir, fig, outer, i, algo_name='vae',
+                 latent_dim=20, data_dim=784, sqrt_n_samples=10):
+    n_samples = sqrt_n_samples ** 2
+
+    decoder = load_module(
+        output_dir, algo_name=algo_name, module_name='decoder',
+        latent_dim=latent_dim, data_dim=data_dim)
+
+    z_from_prior = imnn.sample_from_prior(
+        latent_dim=latent_dim, n_samples=n_samples)
+    x_recon, _ = decoder(z_from_prior)
+    x_recon = x_recon.cpu().detach().numpy()
+
+    inner = gridspec.GridSpecFromSubplotSpec(
+        sqrt_n_samples, sqrt_n_samples,
+        subplot_spec=outer[i], wspace=0., hspace=0.)
+
+    for i_recon, one_x_recon in enumerate(x_recon):
+        ax = plt.Subplot(fig, inner[i_recon])
+        one_x_recon = one_x_recon.reshape((28, 28))
+        ax.imshow(one_x_recon, cmap=cmaps_dict[algo_name])
+        ax.get_yaxis().set_visible(False)
+        ax.get_xaxis().set_visible(False)
+        fig.add_subplot(ax)
