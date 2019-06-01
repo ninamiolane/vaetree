@@ -53,11 +53,11 @@ torch.manual_seed(SEED)
 # Decide on using segmentations or image intensities
 DATA_TYPE = 'segmentation'
 
-IMG_WIDTH = 128
-IMG_HEIGHT = 128
+IMG_WIDTH = 64  #128
+IMG_HEIGHT = 64  #128
 IMG_SHAPE = (IMG_WIDTH, IMG_HEIGHT)
 IMG_DIM = len(IMG_SHAPE)
-BATCH_SIZES = {64: 64, 128: 16}
+BATCH_SIZES = {64: 16, 128: 16}
 BATCH_SIZE = BATCH_SIZES[IMG_WIDTH]
 
 PRINT_INTERVAL = 10
