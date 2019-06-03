@@ -63,7 +63,7 @@ def reconstruction_loss(batch_data, batch_recon, batch_logvarx, bce=False):
     Then take the inverse, as we want a loss.
     """
     n_batch_data, data_dim = batch_data.shape
-    assert batch_data.shape == batch_recon.shape
+    assert batch_data.shape == batch_recon.shape, batch_recon.shape
 
     if bce:
         return losses.bce_on_intensities(
