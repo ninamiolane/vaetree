@@ -30,7 +30,7 @@ CRIT_STRINGS = {
 TRAIN_VAL_STRINGS = {'train': 'Train', 'val': 'Valid'}
 COLOR_DICT = {'neg_elbo': 'red', 'neg_iwelbo': 'orange'}
 ALGO_COLOR_DICT = {'vae': 'red', 'iwae': 'orange', 'vem': 'blue'}
-cmaps_dict = {'vae': 'Reds', 'iwae': 'Oranges', 'vem': 'Blues'}
+CMAPS_DICT = {'vae': 'Reds', 'iwae': 'Oranges', 'vem': 'Blues'}
 
 
 FRAC_VAL = 0.2
@@ -282,9 +282,12 @@ def plot_kl_posterior_bis(ax, output_dir, algo_name='vae', mode='train',
                           from_epoch=0, to_epoch=1000, color='blue',
                           dashes=False):
 
-    neg_elbo = get_losses(algo_name=algo_name, crit_name='neg_elbo', mode=mode)
+    neg_elbo = get_losses(
+        output_dir=output_dir, algo_name=algo_name,
+        crit_name='neg_elbo', mode=mode)
     neg_ll = get_losses(
-        algo_name=algo_name, crit_name='neg_loglikelihood', mode=mode)
+        output_dir=output_dir, algo_name=algo_name,
+        crit_name='neg_loglikelihood', mode=mode)
 
     kl = [nelbo - nll for (nelbo, nll) in zip(neg_elbo, neg_ll)]
 
@@ -503,7 +506,10 @@ def load_module(output_dir, algo_name='vae', module_name='encoder',
 
 
 def show_samples(output_dir, fig, outer, i, algo_name='vae',
-                 latent_dim=20, data_dim=784, sqrt_n_samples=10):
+                 latent_dim=20, data_dim=784, sqrt_n_samples=10,
+                 cmap=None):
+    if cmap is None:
+        cmap = CMAPS_DICT[algo_name]
     n_samples = sqrt_n_samples ** 2
 
     decoder = load_module(
@@ -522,7 +528,7 @@ def show_samples(output_dir, fig, outer, i, algo_name='vae',
     for i_recon, one_x_recon in enumerate(x_recon):
         ax = plt.Subplot(fig, inner[i_recon])
         one_x_recon = one_x_recon.reshape((28, 28))
-        ax.imshow(one_x_recon, cmap=cmaps_dict[algo_name])
+        ax.imshow(one_x_recon, cmap=cmap)
         ax.get_yaxis().set_visible(False)
         ax.get_xaxis().set_visible(False)
         fig.add_subplot(ax)

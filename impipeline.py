@@ -10,6 +10,7 @@ import os
 import pickle
 import random
 import time
+import skimage.transform
 
 import torch
 import torch.autograd
@@ -52,7 +53,7 @@ torch.backends.cudnn.benchmark = False
 IM_H = 28
 IM_W = 28
 DATA_DIM = 28 * 28  # MNIST size
-LATENT_DIM = 10
+LATENT_DIM = 30
 CNN = False
 BCE = False
 
@@ -68,7 +69,7 @@ N_MC_NLL = 5000
 # Train
 
 FRAC_VAL = 0.2
-DATASET_NAME = 'mnist'
+DATASET_NAME = 'cryo'
 
 BATCH_SIZE = 20
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
@@ -87,7 +88,7 @@ N_BATCH_PER_EPOCH = 1e10
 
 if DEBUG:
     N_EPOCHS = 10
-    BATCH_SIZE = 128
+    BATCH_SIZE = 16
     N_VEM_ELBO = 1
     N_VEM_IWELBO = 399
     N_VAE = 1
@@ -106,6 +107,7 @@ TEMPLATE_NAME = 'report.jinja2'
 
 def get_dataloaders(dataset_name=DATASET_NAME,
                     frac_val=FRAC_VAL, batch_size=BATCH_SIZE, kwargs=KWARGS):
+    logging.info('Loading data from dataset: %s' % dataset_name)
     if dataset_name == 'mnist':
         dataset = datasets.MNIST(
             '../data', train=True, download=True,
@@ -113,7 +115,20 @@ def get_dataloaders(dataset_name=DATASET_NAME,
     elif dataset_name == 'omniglot':
         dataset = datasets.Omniglot(
             '../data', download=True,
-            transform=transforms.Compose([transforms.Resize((28, 28)), transforms.ToTensor()]))
+            transform=transforms.Compose(
+                [transforms.Resize((IM_H, IM_W)), transforms.ToTensor()]))
+    elif dataset_name == 'cryo':
+        paths = glob.glob('/cryo/job40_vs_job034/*.pkl')
+        all_datasets = []
+        for path in paths:
+            with open(path, 'rb') as pkl:
+                data = pickle.load(pkl)
+                dataset = data['ParticleStack']
+                dataset = skimage.transform.resize(
+                    dataset, (len(dataset), IM_H, IM_W))
+                all_datasets.append(dataset)
+        all_datasets = np.vstack([d for d in all_datasets])
+        dataset = torch.Tensor(all_datasets)
     else:
         raise ValueError('Unknown dataset name: %s' % dataset_name)
     length = len(dataset)
@@ -122,7 +137,7 @@ def get_dataloaders(dataset_name=DATASET_NAME,
     train_dataset, val_dataset = torch.utils.data.random_split(
         dataset, [train_length, val_length])
 
-    if dataset_name == 'mnist':
+    if dataset_name == 'mnist' or dataset_name == 'cryo':
         train_tensor = train_dataset.dataset.data[train_dataset.indices]
         val_tensor = val_dataset.dataset.data[val_dataset.indices]
         logging.info(
@@ -225,7 +240,11 @@ class TrainVAE(luigi.Task):
                 continue
             start = time.time()
 
-            batch_data = batch_data[0].to(DEVICE)
+            if DATASET_NAME == 'cryo':
+                batch_data = np.vstack([torch.unsqueeze(b, 0) for b in batch_data])
+                batch_data = torch.Tensor(batch_data).to(DEVICE)
+            else:
+                batch_data = batch_data[0].to(DEVICE)
             n_batch_data = len(batch_data)
 
             for optimizer in optimizers.values():
@@ -362,7 +381,11 @@ class TrainVAE(luigi.Task):
                 continue
 
             start = time.time()
-            batch_data = batch_data[0].to(DEVICE)
+            if DATASET_NAME == 'cryo':
+                batch_data = np.vstack([torch.unsqueeze(b, 0) for b in batch_data])
+                batch_data = torch.Tensor(batch_data).to(DEVICE)
+            else:
+                batch_data = batch_data[0].to(DEVICE)
             n_batch_data = len(batch_data)
 
             encoder = modules['encoder']
