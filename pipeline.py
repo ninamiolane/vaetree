@@ -61,7 +61,7 @@ IMG_HEIGHT = 64
 IMG_SHAPE = (IMG_WIDTH, IMG_HEIGHT)
 DEFAULT_FMRI_SHAPE = (128, 128, 52)
 IMG_DIM = len(IMG_SHAPE)
-BATCH_SIZES = {64: 16, 128: 8}
+BATCH_SIZES = {64: 32, 128: 8}
 BATCH_SIZE = BATCH_SIZES[IMG_WIDTH]
 FRAC_TEST = 0.1
 FRAC_VAL = 0.2
@@ -72,7 +72,7 @@ if DEBUG:
 PRINT_INTERVAL = 10
 torch.backends.cudnn.benchmark = True
 
-RECONSTRUCTIONS = ('mse_on_features', 'adversarial')
+RECONSTRUCTIONS = ('bce_on_intensities', 'adversarial')
 REGULARIZATIONS = ('kullbackleibler',)
 WEIGHTS_INIT = 'custom'
 REGU_FACTOR = 0.003
@@ -84,7 +84,7 @@ if DEBUG:
 
 LATENT_DIM = 50
 
-LR = 1e-4
+LR = 15e-6
 if 'adversarial' in RECONSTRUCTIONS:
     LR = 0.0002
 BETA1 = 0.5
