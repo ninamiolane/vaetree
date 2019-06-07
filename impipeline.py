@@ -20,6 +20,7 @@ import torch.optim
 import torch.utils.data
 from torchvision import datasets, transforms
 
+import datasets
 import imnn
 import toylosses
 import toynn
@@ -72,8 +73,6 @@ FRAC_VAL = 0.2
 DATASET_NAME = 'mnist'
 
 BATCH_SIZE = 20
-KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
-
 PRINT_INTERVAL = 64
 torch.backends.cudnn.benchmark = True
 
@@ -103,54 +102,6 @@ TEMPLATE_ENVIRONMENT = jinja2.Environment(
     autoescape=False,
     loader=LOADER)
 TEMPLATE_NAME = 'report.jinja2'
-
-
-def get_dataloaders(dataset_name=DATASET_NAME,
-                    frac_val=FRAC_VAL, batch_size=BATCH_SIZE, kwargs=KWARGS):
-    logging.info('Loading data from dataset: %s' % dataset_name)
-    if dataset_name == 'mnist':
-        dataset = datasets.MNIST(
-            '../data', train=True, download=True,
-            transform=transforms.ToTensor())
-    elif dataset_name == 'omniglot':
-        dataset = datasets.Omniglot(
-            '../data', download=True,
-            transform=transforms.Compose(
-                [transforms.Resize((IM_H, IM_W)), transforms.ToTensor()]))
-    elif dataset_name == 'cryo':
-        paths = glob.glob('/cryo/job40_vs_job034/*.pkl')
-        all_datasets = []
-        for path in paths:
-            with open(path, 'rb') as pkl:
-                data = pickle.load(pkl)
-                dataset = data['ParticleStack']
-                dataset = skimage.transform.resize(
-                    dataset, (len(dataset), IM_H, IM_W))
-                all_datasets.append(dataset)
-        all_datasets = np.vstack([d for d in all_datasets])
-        dataset = torch.Tensor(all_datasets)
-    else:
-        raise ValueError('Unknown dataset name: %s' % dataset_name)
-    length = len(dataset)
-    train_length = int((1 - frac_val) * length)
-    val_length = int(length - train_length)
-    train_dataset, val_dataset = torch.utils.data.random_split(
-        dataset, [train_length, val_length])
-
-    if dataset_name == 'mnist' or dataset_name == 'cryo':
-        train_tensor = train_dataset.dataset.data[train_dataset.indices]
-        val_tensor = val_dataset.dataset.data[val_dataset.indices]
-        logging.info(
-            '-- Train tensor: (%d, %d, %d)' % train_tensor.shape)
-        logging.info(
-            '-- Valid tensor: (%d, %d, %d)' % val_tensor.shape)
-
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
-    val_loader = torch.utils.data.DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=True, **kwargs)
-
-    return train_loader, val_loader
 
 
 def save_checkpoint(epoch, modules, optimizers, dir_path,
@@ -221,7 +172,7 @@ class LoadData(luigi.Task):
         pass
 
     def run(self):
-        train_loader, val_loader = get_dataloaders()
+        train_loader, val_loader = datasets.get_loaders(DATASET_NAME, FRAC_VAL, BATCH_SIZE)
 
         with open(self.output()['train_loader'].path, 'wb') as pkl:
             pickle.dump(train_loader, pkl)
@@ -1522,7 +1473,7 @@ class TrainVEGAN(luigi.Task):
             os.mkdir(self.models_path)
             os.chmod(self.models_path, 0o777)
 
-        train_loader, val_loader = get_dataloaders()
+        train_loader, val_loader = datasets.get_loaders(DATASET_NAME, FRAC_VAL, BATCH_SIZE)
 
         vae = imnn.VAE(
             latent_dim=LATENT_DIM,

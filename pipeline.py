@@ -27,6 +27,7 @@ import torch.optim
 import torch.utils.data
 import visdom
 
+import datasets
 import losses
 import metrics
 import nn
@@ -51,13 +52,13 @@ KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
 # Decide on using segmentations, image intensities or fmri,
-DATA_TYPE = 'img'
+DATA_TYPE = 'fmri'
 
 
 ANTS_PROCESSING = False
 
-IMG_WIDTH = 64
-IMG_HEIGHT = 64
+IMG_WIDTH = 128
+IMG_HEIGHT = 128
 IMG_SHAPE = (IMG_WIDTH, IMG_HEIGHT)
 DEFAULT_FMRI_SHAPE = (128, 128, 52)
 IMG_DIM = len(IMG_SHAPE)
@@ -72,7 +73,7 @@ if DEBUG:
 PRINT_INTERVAL = 10
 torch.backends.cudnn.benchmark = True
 
-RECONSTRUCTIONS = ('bce_on_intensities', 'adversarial')
+RECONSTRUCTIONS = ('bce_on_intensities')  #, 'adversarial')
 REGULARIZATIONS = ('kullbackleibler',)
 WEIGHTS_INIT = 'custom'
 REGU_FACTOR = 0.003
@@ -343,11 +344,7 @@ class MakeDataSet(luigi.Task):
         Parallel(backend="threading", n_jobs=4)(
             delayed(extract_resize_3d)(f, output)
             for f in input_paths)
-        print(len(output))
-        print(output[0].shape)
         array = np.asarray(output)
-        # array = np.vstack([one_output for one_output in output])
-        print(array.shape)
         shape_with_channels = (array.shape[0],) + (1,) + array.shape[1:]
         array = array.reshape(shape_with_channels)
 
@@ -409,8 +406,25 @@ class Preprocess3DFmri(luigi.Task):
     def requires(self):
         pass
 
+    def process_fmri(self, nii_file_abspath, output):
+        if os.path.isdir(nii_file_abspath):
+            return
+        logging.info('Processing file %s' % nii_file_abspath)
+        nii = nibabel.load(nii_file_abspath)
+        array_4d = nii.get_fdata()
+        array_4d = np.nan_to_num(array_4d)
+        if array_4d.shape[:2] != IMG_SHAPE:
+            array_4d = skimage.transform.resize(
+                array_4d,
+                (IMG_SHAPE[0], IMG_SHAPE[1],
+                 self.depth, array_4d.shape[-1]))
+
+        for i_img_3d in range(array_4d.shape[-1]):
+            img_3d = array_4d[:, :, :, i_img_3d]
+            output.append(img_3d)
+
     def run(self):
-        n_ses = len(os.listdir(self.processed_dir))
+        n_ses = 18  #len(os.listdir(self.processed_dir))
         if DEBUG:
             n_ses = N_SES_DEBUG
         n_test_ses = int(FRAC_TEST * n_ses)
@@ -425,38 +439,31 @@ class Preprocess3DFmri(luigi.Task):
         val_3d = []
         i_ses = 0
         logging.info('Extracting 3D images from rfMRI time-series.')
+
         for ses_dir_relpath in os.listdir(self.processed_dir):
             if DEBUG and i_ses > N_SES_DEBUG-1:
                 break
             ses_dir_abspath = os.path.join(self.processed_dir, ses_dir_relpath)
-            for nii_file_relpath in os.listdir(ses_dir_abspath):
-                nii_file_abspath = os.path.join(
-                    ses_dir_abspath, nii_file_relpath)
-                if os.path.isdir(nii_file_abspath):
-                    continue
-                logging.info('Processing file %s' % nii_file_abspath)
-                nii = nibabel.load(nii_file_abspath)
-                array_4d = nii.get_fdata()
-                array_4d = np.nan_to_num(array_4d)
-                if array_4d.shape[:2] != IMG_SHAPE:
-                    array_4d = skimage.transform.resize(
-                        array_4d,
-                        (IMG_SHAPE[0], IMG_SHAPE[1],
-                         self.depth, array_4d.shape[-1]))
+            if i_ses < n_train_ses:
+                Parallel(backend="threading", n_jobs=4)(
+                    delayed(self.process_fmri)(
+                        os.path.join(ses_dir_abspath, nii_file_relpath),
+                        train_3d)
+                    for nii_file_relpath in os.listdir(ses_dir_abspath))
+            elif i_ses < n_train_ses + n_val_ses:
+                Parallel(backend="threading", n_jobs=4)(
+                    delayed(self.process_fmri)(
+                        os.path.join(ses_dir_abspath, nii_file_relpath),
+                        val_3d)
+                    for nii_file_relpath in os.listdir(ses_dir_abspath))
+            else:
+                # We do not touch the test dataset
+                logging.info(
+                    'Last session of the train-val dataset: %s' % (
+                        ses_dir_relpath))
+                break
 
-                for i_img_3d in range(array_4d.shape[-1]):
-                    img_3d = array_4d[:, :, :, i_img_3d]
-                    if i_ses < n_train_ses:
-                        train_3d.append(img_3d)
-                    elif i_ses < n_train_ses + n_val_ses:
-                        val_3d.append(img_3d)
-                    else:
-                        # We do not touch the test dataset
-                        logging.info(
-                            'Last session of the train-val dataset: %s' % (
-                                ses_dir_relpath))
-                        break
-                i_ses += 1
+            i_ses += 1
         train_3d = np.asarray(train_3d)
         val_3d = np.asarray(val_3d)
         print(train_3d.shape)
@@ -999,30 +1006,16 @@ class Train(luigi.Task):
             if not os.path.isdir(directory):
                 os.mkdir(directory)
                 os.chmod(directory, 0o777)
-
-        train_name = 'train_' + DATA_TYPE
-        val_name = 'val_' + DATA_TYPE
-        train_path = self.input()[train_name].path
-        val_path = self.input()[val_name].path
-
-        train = torch.Tensor(np.load(train_path))
-        val = torch.Tensor(np.load(val_path))
-        logging.info('-- Train tensor: (%d, %d, %d, %d)' % train.shape)
-        np.random.shuffle(train)
-        train_dataset = torch.utils.data.TensorDataset(train)
-        train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
-
-        logging.info('-- Val tensor: (%d, %d, %d, %d)' % val.shape)
-        val_dataset = torch.utils.data.TensorDataset(val)
-        val_loader = torch.utils.data.DataLoader(
-            val_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
-
+        train_loader, val_loader = datasets.get_loaders(
+                dataset_name=DATA_TYPE,
+                frac_val=FRAC_VAL,
+                batch_size=BATCH_SIZE,
+                img_shape=IMG_SHAPE)
         vae = nn.VAE(
             n_channels=1,
             latent_dim=LATENT_DIM,
-            in_w=train.shape[2],
-            in_h=train.shape[3]).to(DEVICE)
+            in_w=IMG_SHAPE[0],
+            in_h=IMG_SHAPE[1]).to(DEVICE)
 
         modules = {}
         modules['encoder'] = vae.encoder
@@ -1032,16 +1025,16 @@ class Train(luigi.Task):
             discriminator = nn.Discriminator(
                 latent_dim=LATENT_DIM,
                 in_channels=1,
-                in_w=train.shape[2],
-                in_h=train.shape[3]).to(DEVICE)
+                in_w=IMG_SHAPE[0],
+                in_h=IMG_SHAPE[1]).to(DEVICE)
             modules['discriminator_reconstruction'] = discriminator
 
         if 'adversarial' in REGULARIZATIONS:
             discriminator = nn.Discriminator(
                 latent_dim=LATENT_DIM,
                 in_channels=1,
-                in_w=train.shape[2],
-                in_h=train.shape[3]).to(DEVICE)
+                in_w=IMG_SHAPE[0],
+                in_h=IMG_SHAPE[1]).to(DEVICE)
             modules['discriminator_regularization'] = discriminator
 
         optimizers = {}
