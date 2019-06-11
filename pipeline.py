@@ -1,6 +1,5 @@
 """Data processing pipeline."""
 
-import glob
 import jinja2
 from joblib import Parallel, delayed
 import logging
@@ -14,10 +13,7 @@ import nibabel
 import numpy as np
 import os
 import pickle
-import random
 import skimage.transform
-import sklearn.model_selection
-import tempfile
 
 import torch
 import torch.autograd
@@ -40,8 +36,6 @@ OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
 TRAIN_DIR = os.path.join(OUTPUT_DIR, 'training')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
-# TODO(nina): Put this in Singularity receipe
-os.environ['ANTSPATH'] = '/usr/lib/ants/'
 
 DEBUG = False
 
@@ -52,10 +46,7 @@ KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
 # Decide on using segmentations, image intensities or fmri,
-DATA_TYPE = 'fmri'
-
-
-ANTS_PROCESSING = False
+DATA_TYPE = 'mri'
 
 IMG_WIDTH = 128
 IMG_HEIGHT = 128
@@ -73,7 +64,7 @@ if DEBUG:
 PRINT_INTERVAL = 10
 torch.backends.cudnn.benchmark = True
 
-RECONSTRUCTIONS = ('bce_on_intensities')  #, 'adversarial')
+RECONSTRUCTIONS = ('bce_on_intensities', 'adversarial')
 REGULARIZATIONS = ('kullbackleibler',)
 WEIGHTS_INIT = 'custom'
 REGU_FACTOR = 0.003
@@ -99,295 +90,6 @@ TEMPLATE_ENVIRONMENT = jinja2.Environment(
     autoescape=False,
     loader=LOADER)
 TEMPLATE_NAME = 'report.jinja2'
-
-
-class FetchOpenNeuroDataset(luigi.Task):
-    file_list_path = './datasets/openneuro_files.txt'
-    target_dir = os.path.join(NEURO_DIR, 't1scans')
-
-    def dl_file(self, path):
-        path = path.strip()
-        target_path = self.target_dir + os.path.dirname(path)
-        if not os.path.exists(target_path):
-            os.makedirs(target_path)
-        # TODO(nina): Replace with subprocess
-        os.system("aws --no-sign-request s3 cp  s3://openneuro.org/%s %s" %
-                  (path, target_path))
-
-    def requires(self):
-        pass
-
-    def run(self):
-        with open(self.file_list_path) as f:
-            all_files = f.readlines()
-
-        Parallel(n_jobs=10)(delayed(self.dl_file)(f) for f in all_files)
-
-    def output(self):
-        return luigi.LocalTarget(self.target_dir)
-
-
-def is_diag(M):
-    return np.all(M == np.diag(np.diagonal(M)))
-
-
-def get_tmpfile_prefix(some_id='gne007_'):
-    return os.path.join(
-        tempfile.gettempdir(),
-        next(tempfile._get_candidate_names()) + "_" + some_id)
-
-
-def affine_matrix_permutes_axes(affine_matrix):
-    mat = affine_matrix[:3, :3]
-    if not is_diag(mat):
-        logging.info('not diagonal, skipping')
-        return True
-    if np.any(mat < 0):
-        logging.info('negative values, skipping')
-        return True
-    return False
-
-
-def extract_resize_3d(path, output):
-    # TODO(nina): investigate distribution of sizes in datasets
-    # TODO(nina): add DatasetReport Task
-    img = nibabel.load(path)
-    array = img.get_fdata()
-    array = np.nan_to_num(array)
-    # TODO(nina): Need to normalize/resample intensity histograms?
-    # TODO(nina): IMG_SHAPE is 2D below: Fix
-    array = skimage.transform.resize(array, IMG_SHAPE)
-    output.append(array)
-
-
-def slice_to_2d(array, output, axis=3):
-    if len(array.shape) != 4:
-        # Adding channels
-        array = np.expand_dims(array, axis=0)
-    size = array.shape[axis]
-    start = int(0.45 * size)
-    end = int(0.55 * size)
-
-    for k in range(start, end):
-        img = array.take(indices=k, axis=axis)
-        output.append(img)
-
-
-class Preprocess3D(luigi.Task):
-    """
-    Deletes images if:
-    - bad affine orientation
-    - if the background is a white noise
-
-    if ANTS_PROCESSING:
-
-    Performs the following:
-    - N4BiasFieldCorrection
-    - Atropos for segmentation and brain extraction, which uses:
-    --- antsRegistration
-    --- antsApplyTransforms
-    # -k parameter to keep the temporary files, i.e. the segmentation
-    # -z parameter > 0 runs a debug version, 10min/nii instead of 20min/nii
-    From:
-    https://github.com/ANTsX/ANTs/blob/master/Scripts/antsBrainExtraction.sh
-
-    Labels in array after segmentation:
-    - Background=0., CSF=1., GM=2., WM=3.
-    """
-    # TODO(nina): Add skip if preprocess img already in folder.
-    target_dir = os.path.join(NEURO_DIR, 'preprocessed')
-    brain_template_with_skull = os.path.join(
-        NEURO_DIR, 'T_template0.nii.gz')
-    brain_prior = os.path.join(
-        NEURO_DIR, 'T_template0_BrainCerebellumProbabilityMask.nii.gz')
-    registration_mask = os.path.join(
-        NEURO_DIR, 'T_template0_BrainCerebellumRegistrationMask.nii.gz')
-
-    def requires(self):
-        return {'dataset': FetchOpenNeuroDataset()}
-
-    def process_file(self, path, i, output):
-        # TODO(nina): Replace os.system by subprocess and control ANTs verbose
-        # TODO(nina): Put a progress bar?
-        logging.info('Loading image %s...', path)
-        img = nibabel.load(path)
-
-        if affine_matrix_permutes_axes(img.affine):
-            print('Skip image %s - bad affine orientation' % path)
-            return
-
-        array = img.get_fdata()
-        array = np.nan_to_num(array)
-        std = np.std(array.reshape(-1))
-        array = array / std
-        mean = np.mean(array.reshape(-1))
-        # HACK Alert
-        # This is a way to check if the backgound is a white noise.
-        if mean > 1.0:
-            print('Skip image %s - mean too high: %s' % (path, mean))
-            return
-
-        tmp_prefix = get_tmpfile_prefix()
-
-        if ANTS_PROCESSING:
-            os.system(
-                '/usr/lib/ants/antsBrainExtraction.sh'
-                ' -d {} -a {} -e {} -m {} -f {} -o {} -k 1 -z {}'.format(
-                    3,
-                    path,
-                    self.brain_template_with_skull,
-                    self.brain_prior,
-                    self.registration_mask,
-                    tmp_prefix,
-                    0))  # int(DEBUG)))
-
-            img_tmp = tmp_prefix + 'BrainExtractionBrain.nii.gz'
-            img_out = os.path.join(
-                self.target_dir, 'img_%d.nii.gz' % i)
-            os.system('mv %s %s' % (img_tmp, img_out))
-
-            output.append(img_out)
-
-            segmentation_tmp = (
-                tmp_prefix + 'BrainExtractionSegmentation.nii.gz')
-            segmentation_out = os.path.join(
-                self.target_dir, 'segmentation_%d.nii.gz' % i)
-            os.system('mv %s %s' % (segmentation_tmp, segmentation_out))
-
-            tmp_paths = glob.glob(tmp_prefix + '*.nii.gz')
-            for path in tmp_paths:
-                print('Removing %s...' % path)
-                os.remove(path)
-        else:
-            img_out = os.path.join(
-                self.target_dir, 'img_%d.nii.gz' % i)
-            os.system('cp %s %s' % (path, img_out))
-
-    def run(self):
-        if not os.path.exists(self.target_dir):
-            os.makedirs(self.target_dir)
-
-        directory = self.input()['dataset'].path
-        filepaths = glob.glob(directory + '/**/*.nii.gz', recursive=True)
-
-        if not DEBUG:
-            random.shuffle(filepaths)
-
-        if DEBUG:
-            logging.info(
-                'DEBUG mode: Selecting only %d filepaths.' % N_FILEPATHS)
-            filepaths = filepaths[:N_FILEPATHS]
-
-        n_filepaths = len(filepaths)
-        first_filepath = filepaths[0]
-        logging.info(
-            '-- Found %d 3D raw nii filepaths, for example: %s' % (
-               n_filepaths, first_filepath))
-
-        processed_filepaths = []
-        Parallel(backend="threading", n_jobs=4)(delayed(self.process_file)(
-            f, i, processed_filepaths)
-            for i, f in enumerate(filepaths))
-
-        logging.info('-- Processing DONE: %d/%d nii processed.' % (
-            len(processed_filepaths), n_filepaths))
-
-    def output(self):
-        return luigi.LocalTarget(self.target_dir)
-
-
-class MakeDataSet(luigi.Task):
-    """
-    Resize images / segmentations.
-    Extract slices if IMG_DIM is set to 2D, taking care to separate patients.
-    """
-    shape_str = '%dx%dx%d' % IMG_SHAPE if IMG_DIM == 3 else '%dx%d' % IMG_SHAPE
-    target_dir = os.path.join(NEURO_DIR, 'train_val_datasets')
-
-    train_path = os.path.join(
-            target_dir, 'train_%s_%s.npy' % (DATA_TYPE, shape_str))
-    val_path = os.path.join(
-            target_dir, 'val_%s_%s.npy' % (DATA_TYPE, shape_str))
-
-    random_state = 13
-
-    def requires(self):
-        return {'dataset': Preprocess3D()}
-
-    def run(self):
-        if not os.path.isdir(self.target_dir):
-            os.mkdir(self.target_dir)
-            os.chmod(self.target_dir, 0o777)
-
-        directory = self.input()['dataset'].path
-        input_paths = glob.glob(
-                directory + '/%s_*.nii.gz' % DATA_TYPE)
-
-        if not DEBUG:
-            random.shuffle(input_paths)
-
-        if DEBUG:
-            logging.info(
-                'DEBUG mode: '
-                'Selecting only %d images / segmentations.' % (
-                    N_FILEPATHS))
-            input_paths = input_paths[:N_FILEPATHS]
-
-        n_paths = len(input_paths)
-        first_path = input_paths[0]
-        logging.info(
-            '-- START Extraction of array and resizing from '
-            '%d 3D nii path(s), for example: %s' % (
-               n_paths, first_path))
-
-        output = []
-        Parallel(backend="threading", n_jobs=4)(
-            delayed(extract_resize_3d)(f, output)
-            for f in input_paths)
-        array = np.asarray(output)
-        shape_with_channels = (array.shape[0],) + (1,) + array.shape[1:]
-        array = array.reshape(shape_with_channels)
-
-        logging.info(
-            '-- START Split into 3D train/val '
-            'from dataset of shape: (%d, %d, %d, %d)' % (
-                array.shape[0], array.shape[1],
-                array.shape[2], array.shape[3]))
-
-        # TODO(nina): Consider using "stratified" split for better splits
-        # https://stats.stackexchange.com/questions/250273/
-        # benefits-of-stratified-vs-random-samplingi
-        # -for-generating-training-data-in-classi
-        split = sklearn.model_selection.train_test_split(
-            array,
-            val_size=FRAC_VAL,
-            random_state=self.random_state)
-        train_3d, val_3d = split
-
-        if IMG_DIM == 2:
-            logging.info('Creating 2D dataset of MRIs.')
-
-            train_output = []
-            Parallel(backend="threading", n_jobs=4)(
-                delayed(slice_to_2d)(one_train, train_output)
-                for one_train in train_3d)
-
-            val_output = []
-            Parallel(backend="threading", n_jobs=4)(
-                delayed(slice_to_2d)(one_val, val_output)
-                for one_val in val_3d)
-
-            train_2d = np.asarray(train_output)
-            val_2d = np.asarray(val_output)
-
-        np.save(self.output()['train_' + DATA_TYPE].path, train_2d)
-        np.save(self.output()['val_' + DATA_TYPE].path, val_2d)
-
-    def output(self):
-        return {'train_' + DATA_TYPE:
-                luigi.LocalTarget(self.train_path),
-                'val_' + DATA_TYPE:
-                luigi.LocalTarget(self.val_path)}
 
 
 class Preprocess3DFmri(luigi.Task):
@@ -424,7 +126,8 @@ class Preprocess3DFmri(luigi.Task):
             output.append(img_3d)
 
     def run(self):
-        n_ses = 18  #len(os.listdir(self.processed_dir))
+        # TODO(nina): Solve MemoryBug here
+        n_ses = len(os.listdir(self.processed_dir))
         if DEBUG:
             n_ses = N_SES_DEBUG
         n_test_ses = int(FRAC_TEST * n_ses)
@@ -1011,6 +714,7 @@ class Train(luigi.Task):
                 frac_val=FRAC_VAL,
                 batch_size=BATCH_SIZE,
                 img_shape=IMG_SHAPE)
+        torch.cuda.empty_cache()
         vae = nn.VAE(
             n_channels=1,
             latent_dim=LATENT_DIM,
