@@ -24,6 +24,7 @@ import torch.utils.data
 import visdom
 
 import datasets
+import imtk
 import losses
 import metrics
 import nn
@@ -169,8 +170,6 @@ class Preprocess3DFmri(luigi.Task):
             i_ses += 1
         train_3d = np.asarray(train_3d)
         val_3d = np.asarray(val_3d)
-        print(train_3d.shape)
-        print(val_3d.shape)
         np.save(self.output()['train_fmri'].path, train_3d)
         np.save(self.output()['val_fmri'].path, val_3d)
 
@@ -208,20 +207,18 @@ class MakeDataSetFmri(luigi.Task):
 
             train_output = []
             Parallel(backend="threading", n_jobs=4)(
-                delayed(slice_to_2d)(one_train, train_output)
+                delayed(imtk.slice_to_2d)(one_train, train_output)
                 for one_train in train_3d)
 
             val_output = []
             Parallel(backend="threading", n_jobs=4)(
-                delayed(slice_to_2d)(one_val, val_output)
+                delayed(imtk.slice_to_2d)(one_val, val_output)
                 for one_val in val_3d)
 
             train_2d = np.asarray(train_output)
             val_2d = np.asarray(val_output)
             train = train_2d
             val = val_2d
-            print(train_2d.shape)
-            print(val_2d.shape)
             np.save(self.output()['train_fmri'].path, train)
             np.save(self.output()['val_fmri'].path, val)
 
@@ -247,7 +244,7 @@ class Train(luigi.Task):
             else:
                 return Preprocess3DFmri()
         else:
-            return MakeDataSet()
+            pass
 
     def print_train_logs(self,
                          epoch,
@@ -512,8 +509,8 @@ class Train(luigi.Task):
         return train_losses
 
     def val(self, epoch, val_loader, modules,
-             reconstructions=RECONSTRUCTIONS,
-             regularizations=REGULARIZATIONS):
+            reconstructions=RECONSTRUCTIONS,
+            regularizations=REGULARIZATIONS):
 
         vis = visdom.Visdom()
         vis.env = 'val_images'
@@ -709,6 +706,7 @@ class Train(luigi.Task):
             if not os.path.isdir(directory):
                 os.mkdir(directory)
                 os.chmod(directory, 0o777)
+
         train_loader, val_loader = datasets.get_loaders(
                 dataset_name=DATA_TYPE,
                 frac_val=FRAC_VAL,

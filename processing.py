@@ -26,6 +26,7 @@ os.environ['ANTSPATH'] = '/usr/lib/ants/'
 DATASET_NAME = 'all'
 
 IMG_SHAPE = (128, 128)
+IMG_3D_SHAPE = (64, 128, 128)
 IMG_DIM = len(IMG_SHAPE)
 IMG_VIEW = 'sagital'
 
@@ -262,7 +263,7 @@ class MakeDataSet(luigi.Task):
 
         output = []
         Parallel(backend="threading", n_jobs=4)(
-            delayed(imtk.extract_resize_3d)(f, output)
+            delayed(imtk.extract_resize_3d)(f, output, IMG_3D_SHAPE)
             for f in input_paths)
         array = np.asarray(output)
         shape_with_channels = (array.shape[0],) + (1,) + array.shape[1:]
@@ -280,7 +281,7 @@ class MakeDataSet(luigi.Task):
         # -for-generating-training-data-in-classi
         split = sklearn.model_selection.train_test_split(
             array,
-            val_size=FRAC_VAL,
+            test_size=FRAC_VAL,
             random_state=self.random_state)
         train_3d, val_3d = split
 
