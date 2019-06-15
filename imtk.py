@@ -68,7 +68,14 @@ def extract_resize_3d(path, output, img_3d_shape):
     output.append(array)
 
 
-def slice_to_2d(array, output, axis=1):
+def normalize_intensities(array, output):
+    min_array = np.min(array)
+    max_array = np.max(array)
+    array = (array - min_array) / (max_array - min_array)
+    output.append(array)
+
+
+def slice_to_2d(array, output, axis=3):
     if len(array.shape) != 4:
         # Adding channels
         array = np.expand_dims(array, axis=0)

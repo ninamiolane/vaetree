@@ -6,7 +6,6 @@ import logging
 import luigi
 import os
 
-import random
 import sklearn.model_selection
 
 import numpy as np
@@ -246,21 +245,12 @@ class MakeDataSet(luigi.Task):
             os.chmod(self.target_dir, 0o777)
 
         directory = self.input()['dataset'].path
-        input_paths = glob.glob(
-                directory + '/%s_*.nii.gz' % DATA_TYPE)
+        input_paths = glob.glob(directory + '/%s_*.nii.gz' % DATA_TYPE)
         if DEBUG:
             input_paths = input_paths[:min(len(input_paths), N_FILEPATHS)]
 
-        if not DEBUG:
-            random.shuffle(input_paths)
-
-        n_paths = len(input_paths)
-        first_path = input_paths[0]
         logging.info(
-            '-- START Extraction of array and resizing from '
-            '%d 3D nii path(s), for example: %s' % (
-               n_paths, first_path))
-
+            'Creating 3D dataset from %d nii paths.' % len(input_paths))
         output = []
         Parallel(backend="threading", n_jobs=4)(
             delayed(imtk.extract_resize_3d)(f, output, IMG_3D_SHAPE)
@@ -269,40 +259,32 @@ class MakeDataSet(luigi.Task):
         shape_with_channels = (array.shape[0],) + (1,) + array.shape[1:]
         array = array.reshape(shape_with_channels)
 
-        logging.info(
-            '-- START Split into 3D train/val '
-            'from dataset of shape: (%d, %d, %d, %d)' % (
-                array.shape[0], array.shape[1],
-                array.shape[2], array.shape[3]))
+        if IMG_DIM == 2:
+            logging.info('Slicing to 2D dataset.')
 
-        # TODO(nina): Consider using "stratified" split for better splits
-        # https://stats.stackexchange.com/questions/250273/
-        # benefits-of-stratified-vs-random-samplingi
-        # -for-generating-training-data-in-classi
+            output = []
+            Parallel(backend="threading", n_jobs=4)(
+                delayed(imtk.slice_to_2d)(one_array, output)
+                for one_array in array)
+            array = np.asarray(output)
+
+        logging.info('Normalizing intensities to [0, 1].')
+        output = []
+        Parallel(backend="threading", n_jobs=4)(
+            delayed(imtk.normalize_intensities)(one_array, output)
+            for one_array in array)
+        array = np.asarray(output)
+
+        logging.info('Splitting into train/val.')
+
         split = sklearn.model_selection.train_test_split(
             array,
             test_size=FRAC_VAL,
             random_state=self.random_state)
-        train_3d, val_3d = split
+        train, val = split
 
-        if IMG_DIM == 2:
-            logging.info('Creating 2D dataset of MRIs.')
-
-            train_output = []
-            Parallel(backend="threading", n_jobs=4)(
-                delayed(imtk.slice_to_2d)(one_train, train_output)
-                for one_train in train_3d)
-
-            val_output = []
-            Parallel(backend="threading", n_jobs=4)(
-                delayed(imtk.slice_to_2d)(one_val, val_output)
-                for one_val in val_3d)
-
-            train_2d = np.asarray(train_output)
-            val_2d = np.asarray(val_output)
-
-        np.save(self.output()['train_' + DATA_TYPE].path, train_2d)
-        np.save(self.output()['val_' + DATA_TYPE].path, val_2d)
+        np.save(self.output()['train_' + DATA_TYPE].path, train)
+        np.save(self.output()['val_' + DATA_TYPE].path, val)
 
     def output(self):
         return {'train_' + DATA_TYPE:
