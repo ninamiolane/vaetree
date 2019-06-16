@@ -17,7 +17,8 @@ From: ../../simgs/base.simg
     apt-get update
     apt-get -y install ants
     pip3 install --upgrade setuptools
-    pip3 install luigi \
+    pip3 install geomstats \
+                 luigi \
                  nibabel \
                  numpy==1.13.3\
                  scikit-learn \
@@ -33,4 +34,4 @@ From: ../../simgs/base.simg
 
 
 %runscript
-    exec /usr/bin/python3 -u pipeline.py
+    exec /usr/bin/python3 -u impipeline.py

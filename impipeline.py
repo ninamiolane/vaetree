@@ -10,7 +10,6 @@ import os
 import pickle
 import random
 import time
-import skimage.transform
 
 import torch
 import torch.autograd
@@ -18,7 +17,6 @@ from torch.nn import functional as F
 import torch.nn as tnn
 import torch.optim
 import torch.utils.data
-from torchvision import datasets, transforms
 
 import datasets
 import imnn
@@ -36,7 +34,7 @@ TRAIN_VEM_DIR = os.path.join(OUTPUT_DIR, 'train_vem')
 TRAIN_VEGAN_DIR = os.path.join(OUTPUT_DIR, 'train_vegan')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
-DEBUG = True
+DEBUG = False
 CATASTROPHE = False
 
 CUDA = torch.cuda.is_available()
@@ -53,10 +51,10 @@ torch.backends.cudnn.benchmark = False
 # NN architecture
 IM_H = 28
 IM_W = 28
-DATA_DIM = 28 * 28  # MNIST size
+DATA_DIM = 28 * 28  # MNIST, and connectomes size
 LATENT_DIM = 30
 CNN = False
-RECONSTRUCTION_TYPE = 'ssd'
+RECONSTRUCTION_TYPE = 'riem'
 
 # MC samples
 N_VEM_ELBO = 1
@@ -70,9 +68,9 @@ N_MC_NLL = 5000
 # Train
 
 FRAC_VAL = 0.2
-DATASET_NAME = 'mnist'
+DATASET_NAME = 'connectomes'
 
-BATCH_SIZE = 20
+BATCH_SIZE = {'mnist': 20, 'connectomes': 8}
 PRINT_INTERVAL = 64
 torch.backends.cudnn.benchmark = True
 
@@ -87,7 +85,7 @@ N_BATCH_PER_EPOCH = 1e10
 
 if DEBUG:
     N_EPOCHS = 2
-    BATCH_SIZE = 16
+    BATCH_SIZE = {'mnist': 8, 'connectomes': 2}
     N_VEM_ELBO = 1
     N_VEM_IWELBO = 399
     N_VAE = 1
@@ -172,7 +170,8 @@ class LoadData(luigi.Task):
         pass
 
     def run(self):
-        train_loader, val_loader = datasets.get_loaders(DATASET_NAME, FRAC_VAL, BATCH_SIZE)
+        train_loader, val_loader = datasets.get_loaders(
+            DATASET_NAME, FRAC_VAL, BATCH_SIZE[DATASET_NAME])
 
         with open(self.output()['train_loader'].path, 'wb') as pkl:
             pickle.dump(train_loader, pkl)
@@ -212,12 +211,15 @@ class TrainVAE(luigi.Task):
                 continue
             start = time.time()
 
+            # TODO(nina): Uniformize batch_data across datasets
             if DATASET_NAME == 'cryo':
                 batch_data = np.vstack(
                     [torch.unsqueeze(b, 0) for b in batch_data])
                 batch_data = torch.Tensor(batch_data).to(DEVICE)
-            else:
+            elif DATASET_NAME != 'connectomes':
                 batch_data = batch_data[0].to(DEVICE)
+            else:
+                batch_data = batch_data.to(DEVICE)
             n_batch_data = len(batch_data)
 
             for optimizer in optimizers.values():
@@ -1473,7 +1475,8 @@ class TrainVEGAN(luigi.Task):
             os.mkdir(self.models_path)
             os.chmod(self.models_path, 0o777)
 
-        train_loader, val_loader = datasets.get_loaders(DATASET_NAME, FRAC_VAL, BATCH_SIZE)
+        train_loader, val_loader = datasets.get_loaders(
+            DATASET_NAME, FRAC_VAL, BATCH_SIZE[DATASET_NAME])
 
         vae = imnn.VAE(
             latent_dim=LATENT_DIM,
@@ -1542,7 +1545,7 @@ class Report(luigi.Task):
     report_path = os.path.join(REPORT_DIR, 'report.html')
 
     def requires(self):
-        return TrainVAE(), TrainIWAE(), TrainVEM()
+        return TrainVAE()  #, TrainIWAE(), TrainVEM()
 
     def get_last_epoch(self):
         # Placeholder

@@ -58,10 +58,10 @@ def extract_resize_3d(path, output, img_3d_shape):
     # TODO(nina): investigate distribution of sizes in datasets
     # TODO(nina): add DatasetReport Task
     array = get_array_from_path(path)
-    # TODO(nina): Need to normalize/resample intensity histograms?
     if array.shape[1] != array.shape[2]:
         # This assumes that the shape is of the form (128, 256, 256)
         # square at the end
+        # TODO(nina): Add cropping to avoid rescaling the brains
         print('Skip: non square shape of dim 1 and 2.')
         return
     array = skimage.transform.resize(array, img_3d_shape)
@@ -75,7 +75,7 @@ def normalize_intensities(array, output):
     output.append(array)
 
 
-def slice_to_2d(array, output, axis=3):
+def slice_to_2d(array, output, axis=1):
     if len(array.shape) != 4:
         # Adding channels
         array = np.expand_dims(array, axis=0)

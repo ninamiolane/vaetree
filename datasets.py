@@ -3,13 +3,15 @@
 import glob
 import logging
 import os
+import pandas as pd
 import pickle
 
 import numpy as np
 import torch
 import torch.utils
-from torchvision import datasets, transforms
 import skimage
+
+from torchvision import datasets, transforms
 
 CUDA = torch.cuda.is_available()
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
@@ -19,7 +21,13 @@ IMG_SHAPE = (28, 28)
 TRAIN_VAL_DATASETS = '/neuro/train_val_datasets'
 
 
-def get_loaders(dataset_name, frac_val, batch_size,
+N_NODES = 28
+CORR_THRESH = 0.1
+GAMMA = 1.0
+N_GRAPHS = 86
+
+
+def get_loaders(dataset_name, frac_val=0.2, batch_size=8,
                 img_shape=IMG_SHAPE, kwargs=KWARGS):
     logging.info('Loading data from dataset: %s' % dataset_name)
     if dataset_name == 'mnist':
@@ -32,7 +40,9 @@ def get_loaders(dataset_name, frac_val, batch_size,
             transform=transforms.Compose(
                 [transforms.Resize(img_shape), transforms.ToTensor()]))
     elif dataset_name == 'cryo':
-        dataset = get_dataset_cryo(frac_val, batch_size, img_shape, kwargs)
+        dataset = get_dataset_cryo(img_shape, kwargs)
+    elif dataset_name == 'connectomes':
+        dataset, _ = get_dataset_connectomes()
     elif dataset_name in ['mri', 'segmentation', 'fmri']:
         train_loader, val_loader = get_loaders_brain(
             dataset_name, frac_val, batch_size, img_shape, kwargs)
@@ -45,7 +55,7 @@ def get_loaders(dataset_name, frac_val, batch_size,
     train_dataset, val_dataset = torch.utils.data.random_split(
         dataset, [train_length, val_length])
 
-    if dataset_name == 'mnist' or dataset_name == 'cryo':
+    if dataset_name in ['mnist', 'cryo']:
         train_tensor = train_dataset.dataset.data[train_dataset.indices]
         val_tensor = val_dataset.dataset.data[val_dataset.indices]
         logging.info(
@@ -61,7 +71,44 @@ def get_loaders(dataset_name, frac_val, batch_size,
     return train_loader, val_loader
 
 
-def get_dataset_cryo(frac_val, batch_size, img_shape=IMG_SHAPE, kwargs=KWARGS):
+def get_dataset_connectomes():
+    """
+    Connectomes are SPD matrices of size N_NODESxN_NODES.
+    """
+    graphs = pd.read_csv('/neuro/connectomes/train_fnc.csv')
+    map_functional = pd.read_csv(
+        '/neuro/connectomes/comp_ind_fmri.csv', index_col=None)
+    map_functional = map_functional['fMRI_comp_ind'].to_dict()
+    map_functional_r = {v: k for k, v
+                        in map_functional.items()}
+    mapping = pd.read_csv(
+        '/neuro/connectomes/rs_fmri_fnc_mapping.csv')
+    graph_labels = pd.read_csv('/neuro/connectomes/train_labels.csv')
+    all_graphs = [None] * N_GRAPHS
+    all_labels = np.zeros(N_GRAPHS)
+
+    def create_connectome(graph_id, mapping):
+        u = np.zeros((N_NODES, N_NODES))
+        nb_edges = mapping.shape[0]
+        for edge in range(nb_edges):
+            e0, e1 = (mapping.iloc[edge]['mapA'], mapping.iloc[edge]['mapB'])
+            region0, region1 = map_functional_r[e0], map_functional_r[e1]
+            corr = graphs.iloc[graph_id][edge+1]
+            u[region0, region1] = corr
+        u = np.multiply(u, (np.abs(u) > CORR_THRESH))
+        return np.abs(u + u.T)
+
+    for graph_id in range(N_GRAPHS):
+        all_graphs[graph_id] = create_connectome(graph_id, mapping)
+        all_labels[graph_id] = int(
+            graph_labels.loc[graphs.index[graph_id], 'Class'])
+
+    all_labels = np.array(all_labels)
+    all_graphs = np.array(all_graphs)
+    return all_graphs, all_labels
+
+
+def get_dataset_cryo(img_shape=IMG_SHAPE, kwargs=KWARGS):
     paths = glob.glob('/cryo/job40_vs_job034/*.pkl')
     all_datasets = []
     for path in paths:

@@ -47,7 +47,7 @@ KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
 # Decide on using segmentations, image intensities or fmri,
-DATA_TYPE = 'mri'
+DATA_TYPE = 'fmri'
 
 IMG_WIDTH = 128
 IMG_HEIGHT = 128
@@ -61,6 +61,8 @@ FRAC_VAL = 0.2
 N_SES_DEBUG = 3
 if DEBUG:
     FRAC_VAL = 0.5
+
+AXIS = {'fmri': 3, 'mri': 1, 'seg': 1}
 
 PRINT_INTERVAL = 10
 torch.backends.cudnn.benchmark = True
@@ -122,6 +124,11 @@ class Preprocess3DFmri(luigi.Task):
                 (IMG_SHAPE[0], IMG_SHAPE[1],
                  self.depth, array_4d.shape[-1]))
 
+        array_4d_min = np.min(array_4d)
+        array_4d_max = np.max(array_4d)
+        array_4d = (array_4d - array_4d_min) / (
+            array_4d_max - array_4d_min)
+
         for i_img_3d in range(array_4d.shape[-1]):
             img_3d = array_4d[:, :, :, i_img_3d]
             output.append(img_3d)
@@ -129,6 +136,7 @@ class Preprocess3DFmri(luigi.Task):
     def run(self):
         # TODO(nina): Solve MemoryBug here
         n_ses = len(os.listdir(self.processed_dir))
+        n_ses = 15
         if DEBUG:
             n_ses = N_SES_DEBUG
         n_test_ses = int(FRAC_TEST * n_ses)
@@ -203,16 +211,18 @@ class MakeDataSetFmri(luigi.Task):
             val_3d_path = self.input()['val_%s' % DATA_TYPE].path
             train_3d = np.load(train_3d_path)
             val_3d = np.load(val_3d_path)
+
             logging.info('Creating 2D dataset of rfMRIs.')
 
             train_output = []
             Parallel(backend="threading", n_jobs=4)(
-                delayed(imtk.slice_to_2d)(one_train, train_output)
+                delayed(imtk.slice_to_2d)(
+                    one_train, train_output, AXIS[DATA_TYPE])
                 for one_train in train_3d)
-
             val_output = []
             Parallel(backend="threading", n_jobs=4)(
-                delayed(imtk.slice_to_2d)(one_val, val_output)
+                delayed(imtk.slice_to_2d)(
+                    one_val, val_output, AXIS[DATA_TYPE])
                 for one_val in val_3d)
 
             train_2d = np.asarray(train_output)
