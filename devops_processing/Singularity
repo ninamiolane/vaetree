@@ -28,4 +28,4 @@ From: ../../simgs/base.simg
 
 
 %runscript
-    exec /usr/bin/python3 -u processing_mri.py
+    exec /usr/bin/python3 -u processing_fmri.py

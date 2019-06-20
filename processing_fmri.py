@@ -1,5 +1,6 @@
 """Data processing pipeline."""
 
+import csv
 import jinja2
 from joblib import Parallel, delayed
 import logging
@@ -42,6 +43,7 @@ class Process4Dto3D(luigi.Task):
     input_dir = '/neuro/boldscans/processed_4d/'
     target_dir = '/neuro/boldscans/processed_3d/'
     csv_path = os.path.join(target_dir, 'metadata.csv')
+    labels = ['path', 'time id']
 
     def requires(self):
         pass
@@ -90,12 +92,14 @@ class Process4Dto3D(luigi.Task):
             delayed(self.process_file)(
                 os.path.join(self.input_dir, relpath),
                 output)
-            for relpath in os.listdir(self.input_dir))
+            for i_relpath, relpath in enumerate(os.listdir(self.input_dir))
+            if i_relpath < 5)
 
-        with open(self.csv_path, 'w') as csv:
-            csv.write(self.labels)
+        with open(self.csv_path, 'w') as csv_file:
+            writer = csv.writer(csv_file)
+            writer.writerow(self.labels)
             for row in output:
-                csv.write(row)
+                writer.writerow(row)
 
     def output(self):
         return {'metadata':
