@@ -75,14 +75,15 @@ def normalize_intensities(array, output):
     output.append(array)
 
 
-def slice_to_2d(array, output, axis=1):
+def slice_to_2d(array, output, axis=1, frac_from=0.45, frac_to=0.55):
     if len(array.shape) != 4:
         # Adding channels
         array = np.expand_dims(array, axis=0)
     size = array.shape[axis]
-    start = int(0.45 * size)
-    end = int(0.55 * size)
+    start = int(frac_from * size)
+    end = int(frac_to * size) + 1
 
     for k in range(start, end):
         img = array.take(indices=k, axis=axis)
         output.append(img)
+

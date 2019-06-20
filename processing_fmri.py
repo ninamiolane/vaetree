@@ -1,11 +1,11 @@
 """Data processing pipeline."""
 
 import csv
-import jinja2
 from joblib import Parallel, delayed
 import logging
 import luigi
 import numpy as np
+import operator
 import os
 import skimage.transform
 
@@ -17,22 +17,44 @@ warnings.filterwarnings("ignore")
 
 DEBUG = False
 
+MY_CONNECTOME_ADDRESS = (
+    's3://openneuro/ds000031/'
+    'ds000031_R1.0.4/compressed/'
+    'ds000031_R1.0.4_fmriprep_ses001-022.zip')
+
 IMG_WIDTH = 128
 IMG_HEIGHT = 128
 IMG_SHAPE = (IMG_WIDTH, IMG_HEIGHT)
 DEFAULT_FMRI_SHAPE = (128, 128, 52)
 IMG_DIM = len(IMG_SHAPE)
-N_SES_DEBUG = 3
+N_4D_NII_MAX = 12  # Memory error otherwise
 
 FRAC_TEST = 0.1
 FRAC_VAL = 0.2
 NEURO_DIR = '/neuro'
 
-LOADER = jinja2.FileSystemLoader('./templates/')
-TEMPLATE_ENVIRONMENT = jinja2.Environment(
-    autoescape=False,
-    loader=LOADER)
-TEMPLATE_NAME = 'report.jinja2'
+CSV_COLS = ['path', 'ses', 'task', 'run', 'time']
+
+
+class FetchMyConnectomeDataset(luigi.Task):
+    """
+    Download data from the My Connectome project.
+    """
+    target_path = os.path.join(NEURO_DIR, 'fmri.zip')
+
+    def requires(self):
+        pass
+
+    def run(self):
+        logging.info(
+            'Downloading first 22 sessions of My Connectome...')
+        os.system(
+            "aws --no-sign-request s3 cp %s /neuro/fmri/" %
+            MY_CONNECTOME_ADDRESS)
+        #os.system("gunzip %s" % self.target_path)
+
+    def output(self):
+        return luigi.LocalTarget(self.target_path)
 
 
 class Process4Dto3D(luigi.Task):
@@ -41,9 +63,8 @@ class Process4Dto3D(luigi.Task):
     # Only rfMRI here, other nii have been removed:
     # (Get them back from open neuro)
     input_dir = '/neuro/boldscans/processed_4d/'
-    target_dir = '/neuro/boldscans/processed_3d/'
+    target_dir = '/neuro/boldscans/processed_%dd/' % IMG_DIM
     csv_path = os.path.join(target_dir, 'metadata.csv')
-    labels = ['path', 'time id']
 
     def requires(self):
         pass
@@ -67,16 +88,24 @@ class Process4Dto3D(luigi.Task):
             array_4d_max - array_4d_min)
 
         basename = os.path.basename(path)
+        _, ses, task, run, _ = basename.split('_')
+        ses = int(ses.split('-')[1])
+        task = task.split('-')[1]
+        run = int(run.split('-')[1])
+
         prefix = basename.split('.')[0]
 
-        for i_img_3d in range(array_4d.shape[-1]):
-            img_3d = array_4d[:, :, :, i_img_3d]
+        for i_img in range(array_4d.shape[-1]):
+            img = array_4d[:, :, :, i_img]
 
-            img_3d_basename = prefix + '_%d' % i_img_3d + '.npy'
-            img_3d_path = os.path.join(self.target_dir, img_3d_basename)
-            np.save(img_3d_path, img_3d)
+            if IMG_DIM == 2:
+                img = img[:, :, int(img.shape[2] / 2)]
 
-            row = [img_3d_path, i_img_3d]
+            img_basename = prefix + '_%d' % i_img + '.npy'
+            img_path = os.path.join(self.target_dir, img_basename)
+            np.save(img_path, img)
+
+            row = [img_path, ses, task, run, i_img]
             output.append(row)
 
     def run(self):
@@ -93,17 +122,16 @@ class Process4Dto3D(luigi.Task):
                 os.path.join(self.input_dir, relpath),
                 output)
             for i_relpath, relpath in enumerate(os.listdir(self.input_dir))
-            if i_relpath < 5)
+            if i_relpath < N_4D_NII_MAX)
 
         with open(self.csv_path, 'w') as csv_file:
             writer = csv.writer(csv_file)
-            writer.writerow(self.labels)
+            writer.writerow(CSV_COLS)
             for row in output:
                 writer.writerow(row)
 
     def output(self):
-        return {'metadata':
-                luigi.LocalTarget(self.csv_path)}
+        return luigi.LocalTarget(self.csv_path)
 
 
 class MakeDataset(luigi.Task):
@@ -114,47 +142,97 @@ class MakeDataset(luigi.Task):
         shape_str = '%dx%d' % IMG_SHAPE
     target_dir = os.path.join(NEURO_DIR, 'train_val_datasets')
 
+    train_csv_path = os.path.join(
+        target_dir, 'train_%s_%s_labels.csv' % ('fmri', shape_str))
+    val_csv_path = os.path.join(
+        target_dir, 'val_%s_%s_labels.csv' % ('fmri', shape_str))
+    test_csv_path = os.path.join(
+        target_dir, 'test_%s_%s_labels.csv' % ('fmri', shape_str))
+
     train_path = os.path.join(
             target_dir, 'train_%s_%s.npy' % ('fmri', shape_str))
     val_path = os.path.join(
             target_dir, 'val_%s_%s.npy' % ('fmri', shape_str))
+    test_path = os.path.join(
+            target_dir, 'test_%s_%s.npy' % ('fmri', shape_str))
 
     def requires(self):
         return Process4Dto3D()
 
+    def write_first_row(self, csv_path):
+        with open(csv_path, 'w') as csv_file:
+            writer = csv.writer(csv_file)
+            writer.writerow(CSV_COLS)
+
     def run(self):
-        # If IMG_DIM == 3, then Process4Dto3D is enough
-        if IMG_DIM == 2:
-            train_3d_path = self.input()['train_%s' % DATA_TYPE].path
-            val_3d_path = self.input()['val_%s' % DATA_TYPE].path
-            train_3d = np.load(train_3d_path)
-            val_3d = np.load(val_3d_path)
+        csv_path = self.input().path
 
-            logging.info('Creating 2D dataset of rfMRIs.')
+        with open(csv_path, 'r') as csv_file:
+            reader = csv.reader(csv_file)
+            sorted_rows = sorted(reader, key=operator.itemgetter(1))
+            sess = []
+            for row in sorted_rows:
+                sess.append(row[1])
+            n_ses = len(set(sess))
 
-            train_output = []
-            Parallel(backend="threading", n_jobs=4)(
-                delayed(imtk.slice_to_2d)(
-                    one_train, train_output, AXIS[DATA_TYPE])
-                for one_train in train_3d)
-            val_output = []
-            Parallel(backend="threading", n_jobs=4)(
-                delayed(imtk.slice_to_2d)(
-                    one_val, val_output, AXIS[DATA_TYPE])
-                for one_val in val_3d)
+        logging.info('Creating train/val/test dataset of rfMRIs.')
 
-            train_2d = np.asarray(train_output)
-            val_2d = np.asarray(val_output)
-            train = train_2d
-            val = val_2d
-            np.save(self.output()['train_fmri'].path, train)
-            np.save(self.output()['val_fmri'].path, val)
+        self.write_first_row(self.train_csv_path)
+        self.write_first_row(self.val_csv_path)
+        self.write_first_row(self.test_csv_path)
+
+        i_ses = 0
+        ses_previous = 'none'
+
+        train_paths, val_paths, test_paths = [], [], []
+        print(n_ses)
+        for row in sorted_rows:
+            path, ses, _, _, _ = row
+            if path == 'path':
+                continue
+
+            if ses != ses_previous:
+                i_ses += 1
+                ses_previous = ses
+
+            if i_ses < int((1 - FRAC_VAL - FRAC_TEST) * n_ses):
+                with open(self.train_csv_path, 'a') as csv_file:
+                    writer = csv.writer(csv_file)
+                    writer.writerow(row)
+                train_paths.append(path)
+            elif i_ses < int((1 - FRAC_TEST) * n_ses):
+                with open(self.val_csv_path, 'a') as csv_file:
+                    writer = csv.writer(csv_file)
+                    writer.writerow(row)
+                val_paths.append(path)
+            elif i_ses < n_ses:
+                with open(self.test_csv_path, 'a') as csv_file:
+                    writer = csv.writer(csv_file)
+                    writer.writerow(row)
+                test_paths.append(path)
+            else:
+                break
+
+        train_output = [np.load(one_path) for one_path in train_paths]
+        val_output = [np.load(one_path) for one_path in val_paths]
+        test_output = [np.load(one_path) for one_path in test_paths]
+
+        train = np.asarray(train_output)
+        val = np.asarray(val_output)
+        test = np.asarray(test_output)
+
+        np.save(self.output()['train_fmri'].path, train)
+        np.save(self.output()['val_fmri'].path, val)
+        np.save(self.output()['test_fmri'].path, test)
 
     def output(self):
         return {'train_fmri':
                 luigi.LocalTarget(self.train_path),
                 'val_fmri':
-                luigi.LocalTarget(self.val_path)}
+                luigi.LocalTarget(self.val_path),
+                'test_fmri':
+                luigi.LocalTarget(self.test_path)
+                }
 
 
 class RunAll(luigi.Task):
