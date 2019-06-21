@@ -335,15 +335,15 @@ class Discriminator(nn.Module):
         # Distribution of features
         self.fc1 = nn.Linear(
             in_features=self.fcs_infeatures,
-            out_features=self.fcs_infeatures)
-
-        self.fc2 = nn.Linear(
-            in_features=self.fcs_infeatures,
-            out_features=self.fcs_infeatures)
-
-        self.fc3 = nn.Linear(
-            in_features=self.fcs_infeatures,
             out_features=1)
+
+        #self.fc2 = nn.Linear(
+        #    in_features=self.fcs_infeatures,
+        #    out_features=self.fcs_infeatures)
+
+        #self.fc3 = nn.Linear(
+        #    in_features=self.fcs_infeatures,
+        #    out_features=1)
 
     def forward(self, x):
         """
@@ -355,11 +355,11 @@ class Discriminator(nn.Module):
         h2 = self.leakyrelu(self.bn2(self.dis2(h1)))
         h3 = self.leakyrelu(self.bn3(self.dis3(h2)))
         h4 = self.leakyrelu(self.bn4(self.dis4(h3)))
-        h4 = h4.view(-1, self.fcs_infeatures)
-        h5_feature = self.fc1(h4)
-        h5_logvar = self.fc2(h4)
-        h6 = self.fc3(h5_feature)
-        prob = self.sigmoid(h6)
+        h5 = h4.view(-1, self.fcs_infeatures)
+        h5_feature = self.fc1(h5)
+        # h5_logvar = self.fc2(h5)
+        # h6 = self.fc3(h5_feature)
+        prob = self.sigmoid(h5_feature)
         prob = prob.view(-1, 1)
 
-        return prob, h5_feature, h5_logvar
+        return prob, 0, 0  # h5_feature,  h5_logvar

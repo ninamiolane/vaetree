@@ -8,7 +8,6 @@ from torch.nn import functional as F
 # TODO(nina): Average on intensities, instead of sum.
 
 
-
 def bce_on_intensities(x, recon_x, scale_b):
     """
     BCE summed over the voxels intensities.

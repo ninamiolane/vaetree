@@ -8,10 +8,21 @@ from torch.nn import functional as F
 
 import toynn
 
-import losses
+from geomstats.spd_matrices_space import SPDMatricesSpace
+
 
 CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if CUDA else "cpu")
+
+
+def riem_square_distance(batch_data, batch_recon):
+    _, dim = batch_data.shape
+    n = int(np.sqrt(dim))
+    spd_space = SPDMatricesSpace(n=n)
+    batch_data = batch_data.view(-1, n, n)
+    batch_recon = batch_recon.view(-1, n, n)
+    sq_dist = spd_space.metric.squared_dist(batch_data, batch_recon)
+    return sq_dist
 
 
 def log_mean_exp(x, dim):
@@ -56,7 +67,8 @@ def fa_neg_loglikelihood(weight, data):
     return neg_loglikelihood
 
 
-def reconstruction_loss(batch_data, batch_recon, batch_logvarx, bce=False):
+def reconstruction_loss(batch_data, batch_recon, batch_logvarx,
+                        reconstruction_type='ssd'):
     """
     First compute the expected l_uvae data per data (line by line).
     Then take the average.
@@ -65,20 +77,30 @@ def reconstruction_loss(batch_data, batch_recon, batch_logvarx, bce=False):
     n_batch_data, data_dim = batch_data.shape
     assert batch_data.shape == batch_recon.shape, batch_recon.shape
 
-    if bce:
-        return losses.bce_on_intensities(
-            batch_data, batch_recon, batch_logvarx) / n_batch_data
+    if reconstruction_type == 'bce':
+        bce_image = F.binary_cross_entropy(batch_data, batch_recon)
+        bce_total = torch.sum(
+             bce_image / batch_logvarx.exp() + 2 * batch_logvarx)
+        bce_average = bce_total / n_batch_data
+        return bce_average
 
     batch_logvarx = batch_logvarx.squeeze()
+    print('batchlog')
+    print(batch_logvarx.shape)
     if batch_logvarx.shape == (n_batch_data,):
+        # Isotropic Gaussian
         scale_term = - data_dim / 2. * batch_logvarx
-        ssd = torch.sum((batch_data - batch_recon) ** 2, dim=1)
-        ssd_term = - 1. / (2. * batch_logvarx.exp()) * ssd
+        if reconstruction_type == 'ssd':
+            sq_dist = torch.sum((batch_data - batch_recon) ** 2, dim=1)
+        elif reconstruction_type == 'riem':
+            sq_dist = riem_square_distance(batch_data, batch_recon)
+        sq_dist_term = - sq_dist / (2. * batch_logvarx.exp())
 
     else:
+        assert reconstruction_type == 'ssd', reconstruction_type
+        # Diagonal Gaussian
         assert batch_logvarx.shape == (
             n_batch_data, data_dim), batch_logvarx.shape
-
         scale_term = - 1. / 2. * torch.sum(batch_logvarx, dim=1)
 
         batch_varx = batch_logvarx.exp()
@@ -87,25 +109,19 @@ def reconstruction_loss(batch_data, batch_recon, batch_logvarx, bce=False):
             print('Warning: norms close to 0.')
         aux = (batch_data - batch_recon) ** 2 / batch_varx
 
-        if np.isinf(batch_data.cpu().detach().numpy()).any():
-            raise ValueError('batch_data has a inf')
-        if np.isinf(batch_recon.cpu().detach().numpy()).any():
-            raise ValueError('batch_recon has a inf')
-        if np.isinf(aux.cpu().detach().numpy()).any():
-            raise ValueError('aux has a inf')
         assert aux.shape == (n_batch_data, data_dim), aux.shape
-        ssd_term = - 1. / 2. * torch.sum(aux, dim=1)
+        sq_dist_term = - 1. / 2. * torch.sum(aux, dim=1)
 
-        for i in range(len(ssd_term)):
-            if math.isinf(ssd_term[i]):
+        for i in range(len(sq_dist_term)):
+            if math.isinf(sq_dist_term[i]):
                 raise ValueError()
 
     # We keep the constant term to have an interpretation to the loss
     cst_term = - data_dim / 2. * torch.log(torch.Tensor([2 * np.pi]))
     cst_term = cst_term.to(DEVICE)
     assert scale_term.shape == (n_batch_data,)
-    assert ssd_term.shape == (n_batch_data,), ssd_term
-    l_uvae = cst_term + scale_term + ssd_term
+    assert sq_dist_term.shape == (n_batch_data,), sq_dist_term
+    l_uvae = cst_term + scale_term + sq_dist_term
     expected_l_uvae = torch.mean(l_uvae)
 
     # Make it a loss: -
@@ -122,8 +138,9 @@ def regularization_loss(mu, logvar):
     return loss_regularization
 
 
-def neg_elbo(x, recon_x, logvarx, mu, logvar, bce=False):
-    recon_loss = reconstruction_loss(x, recon_x, logvarx, bce)
+def neg_elbo(x, recon_x, logvarx, mu, logvar, reconstruction_type='ssd'):
+    recon_loss = reconstruction_loss(
+        x, recon_x, logvarx, reconstruction_type)
     regu_loss = regularization_loss(mu, logvar)
     neg_elbo = recon_loss + regu_loss
     return neg_elbo
@@ -131,7 +148,8 @@ def neg_elbo(x, recon_x, logvarx, mu, logvar, bce=False):
 
 def neg_iwelbo_loss_base(
         x_expanded, recon_x_expanded,
-        logvarx_expanded, mu_expanded, logvar_expanded, z_expanded, bce=False):
+        logvarx_expanded, mu_expanded, logvar_expanded, z_expanded,
+        reconstruction_type='ssd'):
     """
     The _expanded means that the tensor is of shape:
     n_is_samples x n_batch_data x tensor_dim.
@@ -148,44 +166,44 @@ def neg_iwelbo_loss_base(
     varx_expanded = torch.exp(logvarx_expanded)
 
     assert not torch.isnan(var_expanded).any()
-    #print('var_expanded = ', var_expanded)
     assert not torch.isnan(varx_expanded).any()
     log_QzGx = torch.sum(
         - 0.5 * (z_expanded - mu_expanded) ** 2 / var_expanded, dim=-1)
     assert not torch.isnan(log_QzGx).any()
     log_QzGx += torch.sum(- 0.5 * logvar_expanded, dim=-1)
     assert not torch.isnan(log_QzGx).any()
-    log_QzGx += - 0.5 * latent_dim * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)
+    log_QzGx += - 0.5 * latent_dim * torch.log(
+        torch.Tensor([2 * np.pi])).to(DEVICE)
     assert not torch.isnan(log_QzGx).any()
 
     log_Pz = torch.sum(-0.5 * z_expanded ** 2, dim=-1)
-    log_Pz += - 0.5 * latent_dim * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)[0]
+    log_Pz += - 0.5 * latent_dim * torch.log(
+        torch.Tensor([2 * np.pi])).to(DEVICE)[0]
     assert not torch.isnan(log_Pz).any()
 
     # These 4 lines are the reconstruction term: change here.
-    if bce:
+    if reconstruction_type == 'bce':
         #log_PxGz = torch.sum(
         #    x_expanded * torch.log(recon_x_expanded)
         #    + (1 - x_expanded) * torch.log(1 - recon_x_expanded),
         #    dim=-1)
-        log_PxGz = -F.binary_cross_entropy(recon_x_expanded, x_expanded, reduction='none')
+        log_PxGz = -F.binary_cross_entropy(
+            recon_x_expanded, x_expanded, reduction='none')
         log_PxGz = torch.sum(log_PxGz, dim=-1)
         assert log_PxGz.shape == (n_is_samples, n_batch_data), log_PxGz.shape
     else:
         log_PxGz = torch.sum(
             - 0.5 * (x_expanded - recon_x_expanded) ** 2 / varx_expanded
             - 0.5 * logvarx_expanded, dim=-1)
-        log_PxGz += - 0.5 * data_dim * torch.log(torch.Tensor([2 * np.pi])).to(DEVICE)
+        log_PxGz += - 0.5 * data_dim * torch.log(
+            torch.Tensor([2 * np.pi])).to(DEVICE)
 
-    #print(log_PxGz)
     assert not torch.isnan(log_PxGz).any()
     log_weight = log_Pz + log_PxGz - log_QzGx
-    #print('log_weight = ', log_weight)
     assert log_weight.shape == (n_is_samples, n_batch_data)
     assert not torch.isnan(log_weight).any()
 
     iwelbo = log_mean_exp(log_weight, dim=0)
-    #print('iwelbo = ', iwelbo)
     assert not torch.isnan(iwelbo).any()
     assert iwelbo.shape == (n_batch_data,)
 
@@ -195,7 +213,8 @@ def neg_iwelbo_loss_base(
     return neg_iwelbo
 
 
-def neg_iwelbo(decoder, x, mu, logvar, n_is_samples, bce=False):
+def neg_iwelbo(decoder, x, mu, logvar, n_is_samples,
+               reconstruction_type='ssd'):
     n_batch_data, latent_dim = mu.shape
     _, data_dim = x.shape
 
@@ -226,5 +245,5 @@ def neg_iwelbo(decoder, x, mu, logvar, n_is_samples, bce=False):
         x_expanded,
         batch_recon_expanded, batch_logvarx_expanded,
         mu_expanded, logvar_expanded,
-        z_expanded)
+        z_expanded, reconstruction_type)
     return iwae

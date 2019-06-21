@@ -66,6 +66,7 @@ class Encoder(nn.Module):
 
     def forward(self, x):
         x = x.view(-1, self.data_dim)
+        x = x.float()
         h1 = F.relu(self.fc1(x))
         return self.fc21(h1), self.fc22(h1)
         ##print('x = ', x)
@@ -111,7 +112,8 @@ class Decoder(nn.Module):
         recon_x =  torch.sigmoid(self.fc4(h3))
         #h3 = self.leakyrelu(self.fc3(z))
         #recon_x = torch.sigmoid(self.fc4(h3))
-        return recon_x, torch.zeros_like(recon_x)  # HACK
+        n_batch_data = recon_x.shape[0]
+        return recon_x, torch.zeros(n_batch_data)  # HACK
 
 
 class VAE(nn.Module):

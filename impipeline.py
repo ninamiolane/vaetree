@@ -10,7 +10,6 @@ import os
 import pickle
 import random
 import time
-import skimage.transform
 
 import torch
 import torch.autograd
@@ -18,8 +17,8 @@ from torch.nn import functional as F
 import torch.nn as tnn
 import torch.optim
 import torch.utils.data
-from torchvision import datasets, transforms
 
+import datasets
 import imnn
 import toylosses
 import toynn
@@ -52,10 +51,10 @@ torch.backends.cudnn.benchmark = False
 # NN architecture
 IM_H = 28
 IM_W = 28
-DATA_DIM = 28 * 28  # MNIST size
+DATA_DIM = 28 * 28  # MNIST, and connectomes size
 LATENT_DIM = 30
 CNN = False
-BCE = False
+RECONSTRUCTION_TYPE = 'riem'
 
 # MC samples
 N_VEM_ELBO = 1
@@ -69,11 +68,9 @@ N_MC_NLL = 5000
 # Train
 
 FRAC_VAL = 0.2
-DATASET_NAME = 'cryo'
+DATASET_NAME = 'connectomes'
 
-BATCH_SIZE = 20
-KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
-
+BATCH_SIZE = {'mnist': 20, 'connectomes': 8}
 PRINT_INTERVAL = 64
 torch.backends.cudnn.benchmark = True
 
@@ -87,15 +84,15 @@ BETA2 = 0.999
 N_BATCH_PER_EPOCH = 1e10
 
 if DEBUG:
-    N_EPOCHS = 10
-    BATCH_SIZE = 16
+    N_EPOCHS = 2
+    BATCH_SIZE = {'mnist': 8, 'connectomes': 2}
     N_VEM_ELBO = 1
     N_VEM_IWELBO = 399
     N_VAE = 1
     N_IWAE = 400
     N_MC_NLL = 50
     CKPT_PERIOD = 1
-    N_BATCH_PER_EPOCH = 1e10
+    N_BATCH_PER_EPOCH = 3 # 1e10
 
 # Report
 LOADER = jinja2.FileSystemLoader('./templates/')
@@ -103,54 +100,6 @@ TEMPLATE_ENVIRONMENT = jinja2.Environment(
     autoescape=False,
     loader=LOADER)
 TEMPLATE_NAME = 'report.jinja2'
-
-
-def get_dataloaders(dataset_name=DATASET_NAME,
-                    frac_val=FRAC_VAL, batch_size=BATCH_SIZE, kwargs=KWARGS):
-    logging.info('Loading data from dataset: %s' % dataset_name)
-    if dataset_name == 'mnist':
-        dataset = datasets.MNIST(
-            '../data', train=True, download=True,
-            transform=transforms.ToTensor())
-    elif dataset_name == 'omniglot':
-        dataset = datasets.Omniglot(
-            '../data', download=True,
-            transform=transforms.Compose(
-                [transforms.Resize((IM_H, IM_W)), transforms.ToTensor()]))
-    elif dataset_name == 'cryo':
-        paths = glob.glob('/cryo/job40_vs_job034/*.pkl')
-        all_datasets = []
-        for path in paths:
-            with open(path, 'rb') as pkl:
-                data = pickle.load(pkl)
-                dataset = data['ParticleStack']
-                dataset = skimage.transform.resize(
-                    dataset, (len(dataset), IM_H, IM_W))
-                all_datasets.append(dataset)
-        all_datasets = np.vstack([d for d in all_datasets])
-        dataset = torch.Tensor(all_datasets)
-    else:
-        raise ValueError('Unknown dataset name: %s' % dataset_name)
-    length = len(dataset)
-    train_length = int((1 - frac_val) * length)
-    val_length = int(length - train_length)
-    train_dataset, val_dataset = torch.utils.data.random_split(
-        dataset, [train_length, val_length])
-
-    if dataset_name == 'mnist' or dataset_name == 'cryo':
-        train_tensor = train_dataset.dataset.data[train_dataset.indices]
-        val_tensor = val_dataset.dataset.data[val_dataset.indices]
-        logging.info(
-            '-- Train tensor: (%d, %d, %d)' % train_tensor.shape)
-        logging.info(
-            '-- Valid tensor: (%d, %d, %d)' % val_tensor.shape)
-
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
-    val_loader = torch.utils.data.DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=True, **kwargs)
-
-    return train_loader, val_loader
 
 
 def save_checkpoint(epoch, modules, optimizers, dir_path,
@@ -213,6 +162,28 @@ def init_training(models_path, modules, optimizers):
             train_losses_all_epochs, val_losses_all_epochs)
 
 
+class LoadData(luigi.Task):
+    train_loader_path = os.path.join(OUTPUT_DIR, 'train_loader.pkl')
+    val_loader_path = os.path.join(OUTPUT_DIR, 'val_loader.pkl')
+
+    def requires(self):
+        pass
+
+    def run(self):
+        train_loader, val_loader = datasets.get_loaders(
+            DATASET_NAME, FRAC_VAL, BATCH_SIZE[DATASET_NAME])
+
+        with open(self.output()['train_loader'].path, 'wb') as pkl:
+            pickle.dump(train_loader, pkl)
+        with open(self.output()['val_loader'].path, 'wb') as pkl:
+            pickle.dump(val_loader, pkl)
+
+    def output(self):
+        return {
+            'train_loader': luigi.LocalTarget(self.train_loader_path),
+            'val_loader': luigi.LocalTarget(self.val_loader_path)}
+
+
 class TrainVAE(luigi.Task):
     models_path = os.path.join(TRAIN_VAE_DIR, 'models')
     train_losses_path = os.path.join(
@@ -221,7 +192,7 @@ class TrainVAE(luigi.Task):
         TRAIN_VAE_DIR, 'val_losses.pkl')
 
     def requires(self):
-        pass
+        return LoadData()
 
     def train_vae(self, epoch, train_loader, modules, optimizers):
         for module in modules.values():
@@ -240,11 +211,15 @@ class TrainVAE(luigi.Task):
                 continue
             start = time.time()
 
+            # TODO(nina): Uniformize batch_data across datasets
             if DATASET_NAME == 'cryo':
-                batch_data = np.vstack([torch.unsqueeze(b, 0) for b in batch_data])
+                batch_data = np.vstack(
+                    [torch.unsqueeze(b, 0) for b in batch_data])
                 batch_data = torch.Tensor(batch_data).to(DEVICE)
-            else:
+            elif DATASET_NAME != 'connectomes':
                 batch_data = batch_data[0].to(DEVICE)
+            else:
+                batch_data = batch_data.to(DEVICE)
             n_batch_data = len(batch_data)
 
             for optimizer in optimizers.values():
@@ -254,10 +229,6 @@ class TrainVAE(luigi.Task):
             decoder = modules['decoder']
 
             mu, logvar = encoder(batch_data)
-            #logging.info('Values of true \'encoder\' parameters:')
-            #for name, param in encoder.named_parameters():
-            #    logging.info(name)
-            #    logging.info(param.data)
 
             z = imnn.sample_from_q(
                 mu, logvar, n_samples=N_VAE).to(DEVICE)
@@ -283,7 +254,8 @@ class TrainVAE(luigi.Task):
                 N_VAE*n_batch_data, DATA_DIM)
 
             loss_reconstruction = toylosses.reconstruction_loss(
-                batch_data_flat, batch_recon, batch_logvarx, bce=BCE)
+                batch_data_flat, batch_recon, batch_logvarx,
+                reconstruction_type=RECONSTRUCTION_TYPE)
             loss_reconstruction.backward(retain_graph=True)
 
             loss_regularization = toylosses.regularization_loss(
@@ -306,20 +278,20 @@ class TrainVAE(luigi.Task):
             total_time += end - start
 
             # neg_iwelbo1 = toylosses.neg_iwelbo(
-            #     decoder, batch_data, mu, logvar, n_is_samples=1, bce=BCE)
+            #     decoder, batch_data, mu, logvar, n_is_samples=1, reconstruction_type=RECONSTRUCTION_TYPE)
             # neg_iwelbo100 = toylosses.neg_iwelbo(
-            #     decoder, batch_data, mu, logvar, n_is_samples=100, bce=BCE)
+            #     decoder, batch_data, mu, logvar, n_is_samples=100, reconstruction_type=RECONSTRUCTION_TYPE)
             # neg_iwelbo5000 = toylosses.neg_iwelbo(
-            #     decoder, batch_data, mu, logvar, n_is_samples=5000, bce=BCE)
+            #     decoder, batch_data, mu, logvar, n_is_samples=5000, reconstruction_type=RECONSTRUCTION_TYPE)
             # print('Neg ELBO: {:.4f}\t Neg IWELBO1: {:.4f};   Neg IWELBO100: {:.4f};   Neg IWELBO5000: {:.4f}'.format(
             #     neg_elbo, neg_iwelbo1, neg_iwelbo100, neg_iwelbo5000))
 
             # neg_iwelbo = toylosses.neg_iwelbo(
-            #     decoder, batch_data, mu, logvar, n_is_samples=N_IWAE, bce=BCE)
+            #     decoder, batch_data, mu, logvar, n_is_samples=N_IWAE, reconstruction_type=RECONSTRUCTION_TYPE)
 
             # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
             # neg_loglikelihood = toylosses.neg_iwelbo(
-            #     decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, bce=BCE)
+            #     decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, reconstruction_type=RECONSTRUCTION_TYPE)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -382,7 +354,8 @@ class TrainVAE(luigi.Task):
 
             start = time.time()
             if DATASET_NAME == 'cryo':
-                batch_data = np.vstack([torch.unsqueeze(b, 0) for b in batch_data])
+                batch_data = np.vstack(
+                    [torch.unsqueeze(b, 0) for b in batch_data])
                 batch_data = torch.Tensor(batch_data).to(DEVICE)
             else:
                 batch_data = batch_data[0].to(DEVICE)
@@ -404,7 +377,7 @@ class TrainVAE(luigi.Task):
                 N_VAE*n_batch_data, DATA_DIM)
 
             loss_reconstruction = toylosses.reconstruction_loss(
-                batch_data_flat, batch_recon, batch_logvarx, bce=BCE)
+                batch_data_flat, batch_recon, batch_logvarx, reconstruction_type=RECONSTRUCTION_TYPE)
 
             loss_regularization = toylosses.regularization_loss(
                 mu, logvar)  # kld
@@ -414,11 +387,11 @@ class TrainVAE(luigi.Task):
             total_time += end - start
 
             # neg_iwelbo = toylosses.neg_iwelbo(
-            #     decoder, batch_data, mu, logvar, n_is_samples=N_MC_TOT, bce=BCE)
+            #     decoder, batch_data, mu, logvar, n_is_samples=N_MC_TOT, reconstruction_type=RECONSTRUCTION_TYPE)
 
             # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
             neg_loglikelihood = toylosses.neg_iwelbo(
-                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, bce=BCE)
+                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, reconstruction_type=RECONSTRUCTION_TYPE)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -468,7 +441,12 @@ class TrainVAE(luigi.Task):
             os.mkdir(self.models_path)
             os.chmod(self.models_path, 0o777)
 
-        train_loader, val_loader = get_dataloaders()
+        train_loader_pkl = self.input()['train_loader'].path
+        val_loader_pkl = self.input()['val_loader'].path
+        with open(train_loader_pkl, 'rb') as pkl:
+            train_loader = pickle.load(pkl)
+        with open(val_loader_pkl, 'rb') as pkl:
+            val_loader = pickle.load(pkl)
 
         if CNN:
             vae = imnn.VAECNN(
@@ -533,7 +511,7 @@ class TrainIWAE(luigi.Task):
         TRAIN_IWAE_DIR, 'val_losses.pkl')
 
     def requires(self):
-        pass
+        return LoadData()
 
     def train_iwae(self, epoch, train_loader, modules, optimizers):
         for module in modules.values():
@@ -553,7 +531,12 @@ class TrainIWAE(luigi.Task):
 
             start = time.time()
 
-            batch_data = batch_data[0].to(DEVICE)
+            if DATASET_NAME == 'cryo':
+                batch_data = np.vstack(
+                    [torch.unsqueeze(b, 0) for b in batch_data])
+                batch_data = torch.Tensor(batch_data).to(DEVICE)
+            else:
+                batch_data = batch_data[0].to(DEVICE)
             n_batch_data = len(batch_data)
 
             for optimizer in optimizers.values():
@@ -571,7 +554,7 @@ class TrainIWAE(luigi.Task):
 
             # batch_data = batch_data.view(-1, DATA_DIM)
             # loss_reconstruction = toylosses.reconstruction_loss(
-            #     batch_data, batch_recon, batch_logvarx, bce=BCE)
+            #     batch_data, batch_recon, batch_logvarx, reconstruction_type=RECONSTRUCTION_TYPE)
             # loss_regularization = toylosses.regularization_loss(
             #     mu, logvar)  # kld
 
@@ -584,7 +567,7 @@ class TrainIWAE(luigi.Task):
                 decoder,
                 batch_data,
                 mu, logvar,
-                n_is_samples=N_IWAE, bce=BCE)
+                n_is_samples=N_IWAE, reconstruction_type=RECONSTRUCTION_TYPE)
 
             # print('Anyway: neg_iwelbo pipeline = ', neg_iwelbo)
             if neg_iwelbo != neg_iwelbo or neg_iwelbo > 1e6:
@@ -600,13 +583,13 @@ class TrainIWAE(luigi.Task):
                     decoder,
                     batch_data,
                     mu, logvar,
-                    n_is_samples=N_IWAE, bce=BCE)
+                    n_is_samples=N_IWAE, reconstruction_type=RECONSTRUCTION_TYPE)
                 print('neg_iwelbo bis = ', neg_iwelbo_bis)
                 neg_iwelbo_ter = toylosses.neg_iwelbo(
                     decoder,
                     batch_data,
                     mu, torch.zeros_like(mu),
-                    n_is_samples=N_IWAE, bce=BCE)
+                    n_is_samples=N_IWAE, reconstruction_type=RECONSTRUCTION_TYPE)
 
                 print('neg_iwelbo_ter = ', neg_iwelbo_ter)
                 # neg_iwelbo = neg_iwelbo_ter  # HACK
@@ -621,7 +604,7 @@ class TrainIWAE(luigi.Task):
 
             # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
             # neg_loglikelihood = toylosses.neg_iwelbo(
-            #     decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, bce=BCE)
+            #     decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, reconstruction_type=RECONSTRUCTION_TYPE)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -682,7 +665,12 @@ class TrainIWAE(luigi.Task):
                 continue
 
             start = time.time()
-            batch_data = batch_data[0].to(DEVICE)
+            if DATASET_NAME == 'cryo':
+                batch_data = np.vstack(
+                    [torch.unsqueeze(b, 0) for b in batch_data])
+                batch_data = torch.Tensor(batch_data).to(DEVICE)
+            else:
+                batch_data = batch_data[0].to(DEVICE)
             n_batch_data = len(batch_data)
 
             encoder = modules['encoder']
@@ -697,7 +685,7 @@ class TrainIWAE(luigi.Task):
 
             batch_data = batch_data.view(-1, DATA_DIM)
             loss_reconstruction = toylosses.reconstruction_loss(
-                batch_data, batch_recon, batch_logvarx, bce=BCE)
+                batch_data, batch_recon, batch_logvarx, reconstruction_type=RECONSTRUCTION_TYPE)
             loss_regularization = toylosses.regularization_loss(
                 mu, logvar)  # kld
 
@@ -707,14 +695,14 @@ class TrainIWAE(luigi.Task):
             start = time.time()
             batch_data = batch_data.view(-1, DATA_DIM)
             neg_iwelbo = toylosses.neg_iwelbo(
-                decoder, batch_data, mu, logvar, n_is_samples=N_VEM_IWELBO, bce=BCE)
+                decoder, batch_data, mu, logvar, n_is_samples=N_VEM_IWELBO, reconstruction_type=RECONSTRUCTION_TYPE)
             end = time.time()
             total_time += end - start
             # ------------ #
 
             # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
             neg_loglikelihood = toylosses.neg_iwelbo(
-                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, bce=BCE)
+                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, reconstruction_type=RECONSTRUCTION_TYPE)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -763,7 +751,12 @@ class TrainIWAE(luigi.Task):
             os.mkdir(self.models_path)
             os.chmod(self.models_path, 0o777)
 
-        train_loader, val_loader = get_dataloaders()
+        train_loader_pkl = self.input()['train_loader'].path
+        val_loader_pkl = self.input()['val_loader'].path
+        with open(train_loader_pkl, 'rb') as pkl:
+            train_loader = pickle.load(pkl)
+        with open(val_loader_pkl, 'rb') as pkl:
+            val_loader = pickle.load(pkl)
 
         vae = imnn.VAE(
             latent_dim=LATENT_DIM,
@@ -820,7 +813,7 @@ class TrainVEM(luigi.Task):
     val_losses_path = os.path.join(TRAIN_VEM_DIR, 'val_losses.pkl')
 
     def requires(self):
-        pass
+        return LoadData()
 
     def train_vem(self, epoch, train_loader, modules, optimizers):
         for module in modules.values():
@@ -839,7 +832,12 @@ class TrainVEM(luigi.Task):
                 continue
 
             start = time.time()
-            batch_data = batch_data[0].to(DEVICE)
+            if DATASET_NAME == 'cryo':
+                batch_data = np.vstack(
+                    [torch.unsqueeze(b, 0) for b in batch_data])
+                batch_data = torch.Tensor(batch_data).to(DEVICE)
+            else:
+                batch_data = batch_data[0].to(DEVICE)
             n_batch_data = len(batch_data)
             batch_data = batch_data.view(n_batch_data, DATA_DIM)
 
@@ -876,7 +874,7 @@ class TrainVEM(luigi.Task):
                 N_VEM_ELBO*half, DATA_DIM)
 
             loss_reconstruction = toylosses.reconstruction_loss(
-                batch_data_flat, batch_recon_flat, batch_logvarx_flat, bce=BCE)
+                batch_data_flat, batch_recon_flat, batch_logvarx_flat, reconstruction_type=RECONSTRUCTION_TYPE)
             if loss_reconstruction != loss_reconstruction or loss_reconstruction > 5e4:
                 print('Error in loss recon', loss_reconstruction)
                 batch_recon, batch_logvarx = decoder(mu)
@@ -900,7 +898,7 @@ class TrainVEM(luigi.Task):
                     N_VEM_ELBO*half, DATA_DIM)
 
                 loss_reconstruction = toylosses.reconstruction_loss(
-                    batch_data_flat, batch_recon_flat, batch_logvarx_flat, bce=BCE)
+                    batch_data_flat, batch_recon_flat, batch_logvarx_flat, reconstruction_type=RECONSTRUCTION_TYPE)
             loss_reconstruction.backward(retain_graph=True)
 
             loss_regularization = toylosses.regularization_loss(
@@ -924,7 +922,7 @@ class TrainVEM(luigi.Task):
                 batch_data_second_half,
                 mu[half:, ], logvar[half:, ],
                 n_is_samples=N_VEM_IWELBO,
-                bce=BCE)
+                reconstruction_type=RECONSTRUCTION_TYPE)
             # This also fills the encoder, but we do not step
             neg_iwelbo.backward()
             if neg_iwelbo != neg_iwelbo or neg_iwelbo > 5e4:
@@ -940,13 +938,13 @@ class TrainVEM(luigi.Task):
                     decoder,
                     batch_data,
                     mu, logvar,
-                    n_is_samples=N_IWAE, bce=BCE)
+                    n_is_samples=N_IWAE, reconstruction_type=RECONSTRUCTION_TYPE)
                 print('neg_iwelbo bis = ', neg_iwelbo_bis)
                 neg_iwelbo_ter = toylosses.neg_iwelbo(
                     decoder,
                     batch_data,
                     mu, torch.zeros_like(mu),
-                    n_is_samples=N_IWAE, bce=BCE)
+                    n_is_samples=N_IWAE, reconstruction_type=RECONSTRUCTION_TYPE)
 
                 neg_iwelbo = neg_iwelbo_ter  # HACK
             optimizers['decoder'].step()
@@ -956,7 +954,7 @@ class TrainVEM(luigi.Task):
 
             # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
             # neg_loglikelihood = toylosses.neg_iwelbo(
-            #     decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, bce=BCE)
+            #     decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, reconstruction_type=RECONSTRUCTION_TYPE)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -1023,9 +1021,14 @@ class TrainVEM(luigi.Task):
                 continue
 
             start = time.time()
-            batch_data = batch_data[0].to(DEVICE)
-            batch_data = batch_data.view(-1, DATA_DIM)
+            if DATASET_NAME == 'cryo':
+                batch_data = np.vstack(
+                    [torch.unsqueeze(b, 0) for b in batch_data])
+                batch_data = torch.Tensor(batch_data).to(DEVICE)
+            else:
+                batch_data = batch_data[0].to(DEVICE)
             n_batch_data = len(batch_data)
+            batch_data = batch_data.view(n_batch_data, DATA_DIM)
 
             encoder = modules['encoder']
             decoder = modules['decoder']
@@ -1057,7 +1060,7 @@ class TrainVEM(luigi.Task):
                 N_VEM_ELBO*half, DATA_DIM)
 
             loss_reconstruction = toylosses.reconstruction_loss(
-                batch_data_flat, batch_recon_flat, batch_logvarx_flat, bce=BCE)
+                batch_data_flat, batch_recon_flat, batch_logvarx_flat, reconstruction_type=RECONSTRUCTION_TYPE)
 
             loss_reconstruction.backward(retain_graph=True)
             loss_regularization = toylosses.regularization_loss(
@@ -1071,13 +1074,13 @@ class TrainVEM(luigi.Task):
                 batch_data_second_half,
                 mu[half:, ], logvar[half:, ],
                 n_is_samples=N_VEM_IWELBO,
-                bce=BCE)
+                reconstruction_type=RECONSTRUCTION_TYPE)
             end = time.time()
             total_time += end - start
 
             # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
             neg_loglikelihood = toylosses.neg_iwelbo(
-                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, bce=BCE)
+                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, reconstruction_type=RECONSTRUCTION_TYPE)
 
             if batch_idx % PRINT_INTERVAL == 0:
                 string_base = (
@@ -1131,7 +1134,12 @@ class TrainVEM(luigi.Task):
             os.mkdir(self.models_path)
             os.chmod(self.models_path, 0o777)
 
-        train_loader, val_loader = get_dataloaders()
+        train_loader_pkl = self.input()['train_loader'].path
+        val_loader_pkl = self.input()['val_loader'].path
+        with open(train_loader_pkl, 'rb') as pkl:
+            train_loader = pickle.load(pkl)
+        with open(val_loader_pkl, 'rb') as pkl:
+            val_loader = pickle.load(pkl)
 
         vae = imnn.VAE(
             latent_dim=LATENT_DIM,
@@ -1227,7 +1235,7 @@ class TrainVEGAN(luigi.Task):
                     z_from_prior)
 
             loss_reconstruction = toylosses.reconstruction_loss(
-                batch_data, batch_recon, batch_logvarx, bce=BCE)
+                batch_data, batch_recon, batch_logvarx, reconstruction_type=RECONSTRUCTION_TYPE)
             loss_reconstruction.backward(retain_graph=True)
             loss_regularization = toylosses.regularization_loss(
                 mu, logvar)  # kld
@@ -1327,7 +1335,7 @@ class TrainVEGAN(luigi.Task):
 
         # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
         neg_loglikelihood = toylosses.neg_iwelbo(
-                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, bce=BCE)
+                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, reconstruction_type=RECONSTRUCTION_TYPE)
 
         logging.info('====> Epoch: {} Average loss: {:.4f}'.format(
                 epoch, average_loss))
@@ -1373,7 +1381,7 @@ class TrainVEGAN(luigi.Task):
                     z_from_prior)
 
             loss_reconstruction = toylosses.reconstruction_loss(
-                batch_data, batch_recon, batch_logvarx, bce=BCE)
+                batch_data, batch_recon, batch_logvarx, reconstruction_type=RECONSTRUCTION_TYPE)
             loss_reconstruction.backward(retain_graph=True)
             loss_regularization = toylosses.regularization_loss(
                 mu, logvar)  # kld
@@ -1450,7 +1458,8 @@ class TrainVEGAN(luigi.Task):
 
         # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
         neg_loglikelihood = toylosses.neg_iwelbo(
-                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, bce=BCE)
+                decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL,
+                reconstruction_type=RECONSTRUCTION_TYPE)
 
         logging.info('====> Val Epoch: {} Average loss: {:.4f}'.format(
                 epoch, average_loss))
@@ -1466,7 +1475,8 @@ class TrainVEGAN(luigi.Task):
             os.mkdir(self.models_path)
             os.chmod(self.models_path, 0o777)
 
-        train_loader, val_loader = get_dataloaders()
+        train_loader, val_loader = datasets.get_loaders(
+            DATASET_NAME, FRAC_VAL, BATCH_SIZE[DATASET_NAME])
 
         vae = imnn.VAE(
             latent_dim=LATENT_DIM,
@@ -1535,7 +1545,7 @@ class Report(luigi.Task):
     report_path = os.path.join(REPORT_DIR, 'report.html')
 
     def requires(self):
-        return TrainVAE(), TrainIWAE(), TrainVEM()
+        return TrainVAE()  #, TrainIWAE(), TrainVEM()
 
     def get_last_epoch(self):
         # Placeholder
