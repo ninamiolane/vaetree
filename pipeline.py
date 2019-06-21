@@ -32,8 +32,11 @@ import nn
 import warnings
 warnings.filterwarnings("ignore")
 
+# Decide on using segmentations, image intensities or fmri,
+DATA_TYPE = 'cryo_sim'
+
 HOME_DIR = '/scratch/users/nmiolane'
-OUTPUT_DIR = os.path.join(HOME_DIR, 'output')
+OUTPUT_DIR = os.path.join(HOME_DIR, 'output_%s' % DATA_TYPE)
 TRAIN_DIR = os.path.join(OUTPUT_DIR, 'training')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
@@ -45,9 +48,6 @@ SEED = 12345
 DEVICE = torch.device("cuda" if CUDA else "cpu")
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
-
-# Decide on using segmentations, image intensities or fmri,
-DATA_TYPE = 'cryo_sim'
 
 IMG_WIDTH = 128
 IMG_HEIGHT = 128

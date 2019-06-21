@@ -34,6 +34,7 @@ N_GRAPHS = 86
 
 def get_loaders(dataset_name, frac_val=0.2, batch_size=8,
                 img_shape=IMG_SHAPE, kwargs=KWARGS):
+    # TODO(nina): Consistency in datasets: add channels for all
     logging.info('Loading data from dataset: %s' % dataset_name)
     if dataset_name == 'mnist':
         dataset = datasets.MNIST(
@@ -197,20 +198,17 @@ def get_dataset_cryo_sim(img_shape=IMG_SHAPE, kwargs=KWARGS):
         all_datasets = []
         all_focuses = []
         for path in paths:
+            logging.info('Loading file %s...' % path)
             data_dict = load_dict_from_hdf5(path)
             dataset = data_dict['data']
-
-            print('one')
             n_data = len(dataset)
-            print(dataset.shape)
+
             focus = data_dict['optics']['defocus_nominal']
             focus = np.repeat(focus, n_data)
-            print(focus.shape)
 
             img_h, img_w = img_shape
             dataset = skimage.transform.resize(
                 dataset, (n_data, img_h, img_w))
-
             dataset = normalization_linear(dataset)
 
             all_datasets.append(dataset)
@@ -219,16 +217,13 @@ def get_dataset_cryo_sim(img_shape=IMG_SHAPE, kwargs=KWARGS):
         all_datasets = np.vstack([d for d in all_datasets])
         all_datasets = np.expand_dims(all_datasets, axis=1)
 
-        print('all')
-        print(all_datasets.shape)
+        all_focuses = np.concatenate(all_focuses, axis=0)
+        all_focuses = np.expand_dims(all_focuses, axis=1)
         np.save(cryo_img_path, all_datasets)
-
-    all_focuses = np.vstack([f for f in all_focuses])
-    print(all_focuses.shape)
-    with open(cryo_labels_path, 'w') as csv_file:
-        writer = csv.writer(csv_file)
-        for focus in all_focuses:
-            writer.writerow(focus)
+        with open(cryo_labels_path, 'w') as csv_file:
+            writer = csv.writer(csv_file)
+            for focus in all_focuses:
+                writer.writerow(focus)
     dataset = torch.Tensor(all_datasets)
     return dataset
 

@@ -34,25 +34,20 @@ def load_module(output_dir, module_name, epoch_id):
     return model
 
 
-def show_train_val(train_or_val='train', sqrt_n_samples=5,
-                   data_type='img', img_size=64, cmap='gray'):
-    directory = '/neuro/train_val_datasets'
-    filename = os.path.join(
-        directory, '%s_%s_%dx%d.npy' % (
-            train_or_val, data_type, img_size, img_size))
+def show_data(filename, nrows=4, ncols=18, figsize=(18, 4), cmap='gray'):
     print('Loading %s' % filename)
     dataset = np.load(filename)
     print('Dataset shape:', dataset.shape)
 
     fig, axes = plt.subplots(
-        nrows=sqrt_n_samples, ncols=sqrt_n_samples, figsize=(12, 12))
-    n_samples = sqrt_n_samples ** 2
+        nrows=nrows, ncols=ncols, figsize=figsize)
+    n_samples = nrows * ncols
 
     for i_img, one_img in enumerate(dataset):
         if i_img > n_samples - 1:
             break
         one_img = one_img[0]  # channels
-        ax = axes[i_img % sqrt_n_samples, int(i_img // sqrt_n_samples)]
+        ax = axes[int(i_img // ncols), int(i_img % ncols)]
         ax.imshow(one_img, cmap=cmap)
         ax.get_yaxis().set_visible(False)
         ax.get_xaxis().set_visible(False)
@@ -179,3 +174,4 @@ def plot_img_and_recon(output_dir, epoch_id, cmap='gray'):
         ax.imshow(one_recon[0], cmap=cmap)
         ax.get_yaxis().set_visible(False)
         ax.get_xaxis().set_visible(False)
+        i += 1
