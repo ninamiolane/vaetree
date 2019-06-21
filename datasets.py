@@ -1,6 +1,8 @@
 """Utils for getting datasets."""
 
+import csv
 import glob
+import h5py
 import logging
 import os
 import pandas as pd
@@ -16,7 +18,7 @@ from torchvision import datasets, transforms
 CUDA = torch.cuda.is_available()
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 
-IMG_SHAPE = (28, 28)
+IMG_SHAPE = (128, 128)
 
 TRAIN_VAL_DATASETS = '/neuro/train_val_datasets'
 
@@ -41,6 +43,8 @@ def get_loaders(dataset_name, frac_val=0.2, batch_size=8,
                 [transforms.Resize(img_shape), transforms.ToTensor()]))
     elif dataset_name == 'cryo':
         dataset = get_dataset_cryo(img_shape, kwargs)
+    elif dataset_name == 'cryo_sim':
+        dataset = get_dataset_cryo_sim(img_shape, kwargs)
     elif dataset_name == 'connectomes':
         dataset, _ = get_dataset_connectomes()
     elif dataset_name in ['mri', 'segmentation', 'fmri']:
@@ -55,7 +59,7 @@ def get_loaders(dataset_name, frac_val=0.2, batch_size=8,
     train_dataset, val_dataset = torch.utils.data.random_split(
         dataset, [train_length, val_length])
 
-    if dataset_name in ['mnist', 'cryo']:
+    if dataset_name in ['mnist']:
         train_tensor = train_dataset.dataset.data[train_dataset.indices]
         val_tensor = val_dataset.dataset.data[val_dataset.indices]
         logging.info(
@@ -109,17 +113,92 @@ def get_dataset_connectomes():
 
 
 def get_dataset_cryo(img_shape=IMG_SHAPE, kwargs=KWARGS):
-    paths = glob.glob('/cryo/job40_vs_job034/*.pkl')
+    #paths = glob.glob('/cryo/job40_vs_job034/*.pkl')
+    #all_datasets = []
+    #for path in paths:
+    #    with open(path, 'rb') as pkl:
+    #        logging.info('Loading file %s...' % path)
+    #        data = pickle.load(pkl)
+    #        dataset = data['ParticleStack']
+    #        print(dataset.shape)
+    #        img_h, img_w = img_shape
+    #        dataset = skimage.transform.resize(
+    #            dataset, (len(dataset), img_h, img_w))
+    #        all_datasets.append(dataset)
+    #all_datasets = np.vstack([d for d in all_datasets])
+    #all_datasets = np.expand_dims(all_datasets, axis=1)
+    #np.save('/neuro/train_val_datasets/cryo.npy', all_datasets)
+    all_datasets = np.load('/neuro/train_val_datasets/cryo.npy')
+    print(all_datasets.shape)
+    for i in range(len(all_datasets)):
+        data = all_datasets[i]
+        min_data = np.min(data)
+        max_data = np.max(data)
+        all_datasets[i] = (data - min_data) / (max_data - min_data)
+    dataset = torch.Tensor(all_datasets)
+    return dataset
+
+
+def load_dict_from_hdf5(filename):
+    """
+    ....
+    """
+    with h5py.File(filename, 'r') as h5file:
+        return recursively_load_dict_contents_from_group(h5file, '/')
+
+
+def recursively_load_dict_contents_from_group(h5file, path):
+    """
+    ....
+    """
+    ans = {}
+    for key, item in h5file[path].items():
+        if isinstance(item, h5py._hl.dataset.Dataset):
+            ans[key] = item[()] #item.value
+        elif isinstance(item, h5py._hl.group.Group):
+            ans[key] = recursively_load_dict_contents_from_group(h5file, path + key + '/')
+    return ans
+
+
+def get_dataset_cryo_sim(img_shape=IMG_SHAPE, kwargs=KWARGS):
+    paths = glob.glob('/cryo/randomrot1D_nodisorder/final/*.h5')
     all_datasets = []
+    all_focuses = []
     for path in paths:
-        with open(path, 'rb') as pkl:
-            data = pickle.load(pkl)
-            dataset = data['ParticleStack']
-            img_h, img_w = IMG_SHAPE
-            dataset = skimage.transform.resize(
-                dataset, (len(dataset), img_h, img_w))
-            all_datasets.append(dataset)
+        data_dict = load_dict_from_hdf5(path)
+        dataset = data_dict['data']
+
+        print('one')
+        n_data = len(dataset)
+        print(dataset.shape)
+        focus = data_dict['optics']['defocus_nominal']
+        focus = np.repeat(focus, n_data)
+        print(focus.shape)
+
+        img_h, img_w = img_shape
+        dataset = skimage.transform.resize(
+            dataset, (len(dataset), img_h, img_w))
+        all_datasets.append(dataset)
+        all_focuses.append(focus)
+
     all_datasets = np.vstack([d for d in all_datasets])
+    all_datasets = np.expand_dims(all_datasets, axis=1)
+
+    print('all')
+    print(all_datasets.shape)
+    for i in range(len(all_datasets)):
+        data = all_datasets[i]
+        min_data = np.min(data)
+        max_data = np.max(data)
+        all_datasets[i] = (data - min_data) / (max_data - min_data)
+    np.save('/neuro/train_val_datasets/cryo_sim.npy', all_datasets)
+
+    all_focuses = np.vstack([f for f in all_focuses])
+    print(all_focuses.shape)
+    with open('/neuro/train_val_datasets/cryo_sim_labels.csv', 'w') as csv_file:
+        writer = csv.writer(csv_file)
+        for focus in all_focuses:
+            writer.writerow(focus)
     dataset = torch.Tensor(all_datasets)
     return dataset
 

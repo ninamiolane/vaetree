@@ -47,7 +47,7 @@ KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
 # Decide on using segmentations, image intensities or fmri,
-DATA_TYPE = 'fmri'
+DATA_TYPE = 'cryo_sim'
 
 IMG_WIDTH = 128
 IMG_HEIGHT = 128
@@ -325,7 +325,10 @@ class Train(luigi.Task):
             if DEBUG:
                 if batch_idx < n_batches - 3:
                     continue
-            batch_data = batch_data[0].to(DEVICE)
+            if DATA_TYPE not in ['cryo', 'cryo_sim']:
+                batch_data = batch_data[0].to(DEVICE)
+            else:
+                batch_data = batch_data.to(DEVICE)
             n_batch_data = len(batch_data)
 
             for optimizer in optimizers.values():
@@ -545,7 +548,10 @@ class Train(luigi.Task):
                 if DEBUG:
                     if batch_idx < n_batches - 3:
                         continue
-                batch_data = batch_data[0].to(DEVICE)
+                if DATA_TYPE not in ['cryo', 'cryo_sim']:
+                    batch_data = batch_data[0].to(DEVICE)
+                else:
+                    batch_data = batch_data.to(DEVICE)
                 n_batch_data = batch_data.shape[0]
 
                 encoder = modules['encoder']
