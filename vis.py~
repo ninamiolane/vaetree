@@ -2,7 +2,6 @@
 
 import glob
 import matplotlib.pyplot as plt
-from matplotlib import animation
 import numpy as np
 import os
 import pickle
@@ -33,31 +32,6 @@ def load_module(output_dir, module_name, epoch_id):
     print('Loading: %s' % model)
     model = torch.load(model, map_location=DEVICE)
     return model
-
-
-def play_fmri(array_4d):
-    mat = array_4d
-    slice_2d = 26
-
-    def quick_play(dT=50):
-        fig, ax = plt.subplots()
-        im = ax.imshow(mat[:, :, slice_2d, 0], cmap='viridis')
-
-        def init():
-            im.set_data(mat[:, :, slice_2d, 0])
-            return im,
-
-        def animate(i):
-            im.set_data(mat[:, :, slice_2d, i])
-            return im,
-
-        anima = animation.FuncAnimation(
-            fig, animate, frames=array_4d.shape[3]-1,
-            init_func=init, interval=dT, blit=True)
-        return anima
-
-    anima = quick_play()
-    # HTML(anima.to_html5_video())
 
 
 def show_data(filename, nrows=4, ncols=18, figsize=(18, 4), cmap='gray'):
