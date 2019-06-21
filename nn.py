@@ -1,12 +1,10 @@
 """NN fabric."""
 
-import math
 import torch
 import torch.autograd
 import torch.nn as nn
 import torch.optim
 import torch.utils.data
-from torch.autograd import Variable
 
 
 CUDA = torch.cuda.is_available()
@@ -28,6 +26,9 @@ DIS_DILATION = 1
 DIS_C = 64
 
 # TODO(nina): Add Sequential for sequential layers
+# TODO(nina): Use for loops to create layers in modules
+# for a more compact code, use log2(image_size) for #layers.
+# TODO(nina): Use nn.parallel to speed up?
 
 
 def cnn_output_size(in_w, in_h, kernel_size=ENC_KS,
@@ -327,25 +328,22 @@ class Discriminator(nn.Module):
         self.w_dis4, self.h_dis4 = cnn_output_size(
             in_w=self.w_dis3, in_h=self.h_dis3)
 
-        self.dis5 = nn.Conv2d(
-            in_channels=self.dis4.out_channels,
-            out_channels=1,
-            kernel_size=DIS_KS,
-            stride=DIS_STR * 2,
-            padding=DIS_PAD)
-        self.bn5 = nn.BatchNorm2d(self.dis5.out_channels)
-        self.w_dis5, self.h_dis5 = cnn_output_size(
-            in_w=self.w_dis4, in_h=self.h_dis4)
+        self.fcs_infeatures = (
+            self.dis4.out_channels * self.h_dis4 * self.w_dis4)
 
-        self.dis6 = nn.Conv2d(
-            in_channels=self.dis5.out_channels,
-            out_channels=1,
-            kernel_size=DIS_KS,
-            stride=DIS_STR,
-            padding=DIS_PAD)
-        self.bn6 = nn.BatchNorm2d(self.dis6.out_channels)
-        self.w_dis6, self.h_dis6 = cnn_output_size(
-            in_w=self.w_dis5, in_h=self.h_dis5)
+        # Two layers to generate mu and log sigma2 of Gaussian
+        # Distribution of features
+        self.fc1 = nn.Linear(
+            in_features=self.fcs_infeatures,
+            out_features=1)
+
+        #self.fc2 = nn.Linear(
+        #    in_features=self.fcs_infeatures,
+        #    out_features=self.fcs_infeatures)
+
+        #self.fc3 = nn.Linear(
+        #    in_features=self.fcs_infeatures,
+        #    out_features=1)
 
     def forward(self, x):
         """
@@ -357,155 +355,11 @@ class Discriminator(nn.Module):
         h2 = self.leakyrelu(self.bn2(self.dis2(h1)))
         h3 = self.leakyrelu(self.bn3(self.dis3(h2)))
         h4 = self.leakyrelu(self.bn4(self.dis4(h3)))
-        h5 = self.leakyrelu(self.bn5(self.dis5(h4)))
-        h6 = self.leakyrelu(self.bn6(self.dis6(h5)))
-        prob = self.sigmoid(h6)
+        h5 = h4.view(-1, self.fcs_infeatures)
+        h5_feature = self.fc1(h5)
+        # h5_logvar = self.fc2(h5)
+        # h6 = self.fc3(h5_feature)
+        prob = self.sigmoid(h5_feature)
         prob = prob.view(-1, 1)
 
-        return prob
-
-
-# Modules from VAEGAN
-# Paper: Autoencoding beyond pixels using a learned similarity metric
-
-ngpu = 1
-nz = 100  # Dim of latent space int(opt.nz)
-ngf = 64
-ndf = 64
-nc = 1
-batchSize = 128
-imageSize = 64  #128
-lr = 0.0002
-beta1 = 0.5
-niter = 25
-workers = 2
-outf = '.'
-
-
-class _Sampler(nn.Module):
-    def __init__(self):
-        super(_Sampler, self).__init__()
-
-    def forward(self, input):
-        mu = input[0]
-        logvar = input[1]
-
-        std = logvar.mul(0.5).exp_()
-        if CUDA:
-            eps = torch.cuda.FloatTensor(std.size()).normal_()
-        else:
-            eps = torch.FloatTensor(std.size()).normal_()
-        eps = Variable(eps)
-        return eps.mul(std).add_(mu)
-
-
-class _Encoder(nn.Module):
-    def __init__(self, imageSize):
-        super(_Encoder, self).__init__()
-
-        n = math.log2(imageSize)
-
-        assert n==round(n),'imageSize must be a power of 2'
-        assert n>=3,'imageSize must be at least 8'
-        n=int(n)
-
-
-        self.conv1 = nn.Conv2d(ngf * 2**(n-3), nz, 4)
-        self.conv2 = nn.Conv2d(ngf * 2**(n-3), nz, 4)
-
-        self.encoder = nn.Sequential()
-        # input is (nc) x 64 x 64
-        self.encoder.add_module('input-conv',nn.Conv2d(nc, ngf, 4, 2, 1, bias=False))
-        self.encoder.add_module('input-relu',nn.LeakyReLU(0.2, inplace=True))
-        for i in range(n-3):
-            # state size. (ngf) x 32 x 32
-            self.encoder.add_module('pyramid_{0}-{1}_conv'.format(ngf*2**i, ngf * 2**(i+1)), nn.Conv2d(ngf*2**(i), ngf * 2**(i+1), 4, 2, 1, bias=False))
-            self.encoder.add_module('pyramid_{0}_batchnorm'.format(ngf * 2**(i+1)), nn.BatchNorm2d(ngf * 2**(i+1)))
-            self.encoder.add_module('pyramid_{0}_relu'.format(ngf * 2**(i+1)), nn.LeakyReLU(0.2, inplace=True))
-
-        # state size. (ngf*8) x 4 x 4
-
-    def forward(self,input):
-        output = self.encoder(input)
-        return [self.conv1(output),self.conv2(output)]
-
-
-class _netG(nn.Module):
-    def __init__(self, imageSize, ngpu):
-        super(_netG, self).__init__()
-        self.ngpu = ngpu
-        self.encoder = _Encoder(imageSize)
-        self.sampler = _Sampler()
-
-        n = math.log2(imageSize)
-
-        assert n==round(n),'imageSize must be a power of 2'
-        assert n>=3,'imageSize must be at least 8'
-        n=int(n)
-
-        self.decoder = nn.Sequential()
-        # input is Z, going into a convolution
-        self.decoder.add_module('input-conv', nn.ConvTranspose2d(nz, ngf * 2**(n-3), 4, 1, 0, bias=False))
-        self.decoder.add_module('input-batchnorm', nn.BatchNorm2d(ngf * 2**(n-3)))
-        self.decoder.add_module('input-relu', nn.LeakyReLU(0.2, inplace=True))
-
-        # state size. (ngf * 2**(n-3)) x 4 x 4
-
-        for i in range(n-3, 0, -1):
-            self.decoder.add_module('pyramid_{0}-{1}_conv'.format(ngf*2**i, ngf * 2**(i-1)),nn.ConvTranspose2d(ngf * 2**i, ngf * 2**(i-1), 4, 2, 1, bias=False))
-            self.decoder.add_module('pyramid_{0}_batchnorm'.format(ngf * 2**(i-1)), nn.BatchNorm2d(ngf * 2**(i-1)))
-            self.decoder.add_module('pyramid_{0}_relu'.format(ngf * 2**(i-1)), nn.LeakyReLU(0.2, inplace=True))
-
-        self.decoder.add_module('ouput-conv', nn.ConvTranspose2d(    ngf,      nc, 4, 2, 1, bias=False))
-        self.decoder.add_module('output-tanh', nn.Tanh())
-
-
-    def forward(self, input):
-        if isinstance(input.data, torch.cuda.FloatTensor) and self.ngpu > 1:
-            output = nn.parallel.data_parallel(self.encoder, input, range(self.ngpu))
-            output = nn.parallel.data_parallel(self.sampler, output, range(self.ngpu))
-            output = nn.parallel.data_parallel(self.decoder, output, range(self.ngpu))
-        else:
-            output = self.encoder(input)
-            output = self.sampler(output)
-            output = self.decoder(output)
-        return output
-
-    def make_cuda(self):
-        self.encoder.cuda()
-        self.sampler.cuda()
-        self.decoder.cuda()
-
-
-class _netD(nn.Module):
-    def __init__(self, imageSize, ngpu):
-        super(_netD, self).__init__()
-        self.ngpu = ngpu
-        n = math.log2(imageSize)
-
-        assert n==round(n),'imageSize must be a power of 2'
-        assert n>=3,'imageSize must be at least 8'
-        n=int(n)
-        self.main = nn.Sequential()
-
-        # input is (nc) x 64 x 64
-        self.main.add_module('input-conv', nn.Conv2d(nc, ndf, 4, 2, 1, bias=False))
-        self.main.add_module('relu', nn.LeakyReLU(0.2, inplace=True))
-
-        # state size. (ndf) x 32 x 32
-        for i in range(n-3):
-            self.main.add_module('pyramid_{0}-{1}_conv'.format(ngf*2**(i), ngf * 2**(i+1)), nn.Conv2d(ndf * 2 ** (i), ndf * 2 ** (i+1), 4, 2, 1, bias=False))
-            self.main.add_module('pyramid_{0}_batchnorm'.format(ngf * 2**(i+1)), nn.BatchNorm2d(ndf * 2 ** (i+1)))
-            self.main.add_module('pyramid_{0}_relu'.format(ngf * 2**(i+1)), nn.LeakyReLU(0.2, inplace=True))
-
-        self.main.add_module('output-conv', nn.Conv2d(ndf * 2**(n-3), 1, 4, 1, 0, bias=False))
-        self.main.add_module('output-sigmoid', nn.Sigmoid())
-
-
-    def forward(self, input):
-        if isinstance(input.data, torch.cuda.FloatTensor) and self.ngpu > 1:
-            output = nn.parallel.data_parallel(self.main, input, range(self.ngpu))
-        else:
-            output = self.main(input)
-
-        return output.view(-1, 1)
+        return prob, 0, 0  # h5_feature,  h5_logvar
