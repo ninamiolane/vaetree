@@ -17,10 +17,14 @@ warnings.filterwarnings("ignore")
 
 DEBUG = False
 
+SESSIONS = [
+    'ses001-022', 'ses023-045', 'ses046-068', 'ses069-091', 'ses092-107']
+SELECTED_SESSIONS = 'ses069-091'
+
 MY_CONNECTOME_ADDRESS = (
     's3://openneuro/ds000031/'
     'ds000031_R1.0.4/compressed/'
-    'ds000031_R1.0.4_fmriprep_ses001-022.zip')
+    'ds000031_R1.0.4_fmriprep_%s.zip' % SELECTED_SESSIONS)
 
 IMG_WIDTH = 128
 IMG_HEIGHT = 128
@@ -31,7 +35,9 @@ N_4D_NII_MAX = 12  # Memory error otherwise
 
 FRAC_TEST = 0.1
 FRAC_VAL = 0.2
+
 NEURO_DIR = '/neuro'
+BOLD_DIR = os.path.join(NEURO_DIR, 'boldscans2')
 
 CSV_COLS = ['path', 'ses', 'task', 'run', 'time']
 
@@ -39,19 +45,32 @@ CSV_COLS = ['path', 'ses', 'task', 'run', 'time']
 class FetchMyConnectomeDataset(luigi.Task):
     """
     Download data from the My Connectome project.
+    Data processed by fmriprep:
+    https://legacy.openfmri.org/dataset/ds000031/
     """
-    target_path = os.path.join(NEURO_DIR, 'fmri.zip')
+    target_path = os.path.join(
+        BOLD_DIR, 'ds000031_R1.0.4_fmriprep_%s' % SELECTED_SESSIONS)
 
     def requires(self):
         pass
 
     def run(self):
         logging.info(
-            'Downloading first 22 sessions of My Connectome...')
+            'Downloading %s sessions of My Connectome,'
+            ' processed by fmriprep...' % SELECTED_SESSIONS)
         os.system(
-            "aws --no-sign-request s3 cp %s /neuro/fmri/" %
-            MY_CONNECTOME_ADDRESS)
-        #os.system("gunzip %s" % self.target_path)
+            "aws --no-sign-request s3 cp %s %s" %
+            (MY_CONNECTOME_ADDRESS, BOLD_DIR))
+
+        zip_path = os.path.join(
+            BOLD_DIR, 'ds000031_R1.0.4_fmriprep_%s.zip' % SELECTED_SESSIONS)
+
+        os.system("unzip %s -d tmp/" % zip_path)
+        os.system(
+            "mv tmp/ds000031_R1.0.4/derivatives/"
+            "fmriprep_1.0.0/fmriprep/sub-01/* .")
+        os.system("rm -r tmp/*")
+        # TODO(nina): Put data in processed_4d format
 
     def output(self):
         return luigi.LocalTarget(self.target_path)
@@ -62,12 +81,12 @@ class Process4Dto3D(luigi.Task):
     shape_str = '%dx%dx%d' % (IMG_SHAPE + (depth,))
     # Only rfMRI here, other nii have been removed:
     # (Get them back from open neuro)
-    input_dir = '/neuro/boldscans/processed_4d/'
-    target_dir = '/neuro/boldscans/processed_%dd/' % IMG_DIM
+    input_dir = os.path.join(BOLD_DIR, 'processed_4d')
+    target_dir = os.path.join(BOLD_DIR, 'processed_%dd' % IMG_DIM)
     csv_path = os.path.join(target_dir, 'metadata.csv')
 
     def requires(self):
-        pass
+        return FetchMyConnectomeDataset()
 
     def process_file(self, path, output):
         if os.path.isdir(path):
