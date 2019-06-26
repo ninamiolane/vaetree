@@ -197,6 +197,7 @@ def get_dataset_cryo_sim(img_shape=IMG_SHAPE, kwargs=KWARGS):
         paths = glob.glob('/cryo/randomrot1D_nodisorder/final/*.h5')
         all_datasets = []
         all_focuses = []
+        all_thetas = []
         for path in paths:
             logging.info('Loading file %s...' % path)
             data_dict = load_dict_from_hdf5(path)
@@ -206,6 +207,10 @@ def get_dataset_cryo_sim(img_shape=IMG_SHAPE, kwargs=KWARGS):
             focus = data_dict['optics']['defocus_nominal']
             focus = np.repeat(focus, n_data)
 
+            iframe = 0
+            theta = data_dict['coordinates'][iframe, ...][3]
+            theta = np.repeat(theta, n_data)
+
             img_h, img_w = img_shape
             dataset = skimage.transform.resize(
                 dataset, (n_data, img_h, img_w))
@@ -213,17 +218,20 @@ def get_dataset_cryo_sim(img_shape=IMG_SHAPE, kwargs=KWARGS):
 
             all_datasets.append(dataset)
             all_focuses.append(focus)
+            all_thetas.append(theta)
 
         all_datasets = np.vstack([d for d in all_datasets])
         all_datasets = np.expand_dims(all_datasets, axis=1)
 
         all_focuses = np.concatenate(all_focuses, axis=0)
         all_focuses = np.expand_dims(all_focuses, axis=1)
+        all_thetas = np.concatenate(all_thetas, axis=0)
+        all_thetas = np.expand_dims(all_thetas, axis=1)
         np.save(cryo_img_path, all_datasets)
         with open(cryo_labels_path, 'w') as csv_file:
             writer = csv.writer(csv_file)
-            for focus in all_focuses:
-                writer.writerow(focus)
+            for focus, theta in zip(all_focuses, all_thetas):
+                writer.writerow([focus, theta])
     dataset = torch.Tensor(all_datasets)
     return dataset
 

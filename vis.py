@@ -18,7 +18,7 @@ def load_last_module(output_dir, module_name):
     models = glob.glob(
         '%s/training/models/*_%s_*.pth' % (output_dir, module_name))
 
-    model_ids = [(int(f.split('_')[1]), f) for f in models]
+    model_ids = [(int(f.split('_')[-8]), f) for f in models]
 
     start_epoch, last_cp = max(model_ids, key=lambda item: item[0])
     print('Last checkpoint: ', last_cp)
@@ -72,7 +72,8 @@ def show_data(filename, nrows=4, ncols=18, figsize=(18, 4), cmap='gray'):
     for i_img, one_img in enumerate(dataset):
         if i_img > n_samples - 1:
             break
-        one_img = one_img[0]  # channels
+        if len(one_img.shape) == 3:
+            one_img = one_img[0]  # channels
         ax = axes[int(i_img // ncols), int(i_img % ncols)]
         ax.imshow(one_img, cmap=cmap)
         ax.get_yaxis().set_visible(False)
@@ -188,16 +189,24 @@ def plot_img_and_recon(output_dir, epoch_id, cmap='gray'):
     img = np.load(img_path)
     recon_path = os.path.join(imgs_dir, 'epoch_%d_recon.npy' % epoch_id)
     recon = np.load(recon_path)
+    print('Shape of img data:')
+    print(img.shape)
+    print('Shape of recon:')
+    print(recon.shape)
 
-    fig, axes = plt.subplots(nrows=2, ncols=5, figsize=(18, 4))
+    fig, axes = plt.subplots(nrows=2, ncols=min(5, len(img)), figsize=(18, 4))
     i = 0
     for one_img, one_recon in zip(img, recon):
+        if len(one_img.shape) == 3:
+            one_img = one_img[0]  # channels
+        if len(one_recon.shape) == 3:
+            one_recon = one_recon[0]  # channels
         ax = axes[0, i]
-        ax.imshow(one_img[0], cmap=cmap)
+        ax.imshow(one_img, cmap=cmap)
         ax.get_yaxis().set_visible(False)
         ax.get_xaxis().set_visible(False)
         ax = axes[1, i]
-        ax.imshow(one_recon[0], cmap=cmap)
+        ax.imshow(one_recon, cmap=cmap)
         ax.get_yaxis().set_visible(False)
         ax.get_xaxis().set_visible(False)
         i += 1

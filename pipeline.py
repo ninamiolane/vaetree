@@ -1,7 +1,6 @@
 """Data processing pipeline."""
 
 import jinja2
-from joblib import Parallel, delayed
 import logging
 import luigi
 import math
@@ -9,11 +8,9 @@ import matplotlib
 matplotlib.use('Agg')  # NOQA
 import matplotlib.pyplot as plt
 import matplotlib.pylab as pylab
-import nibabel
 import numpy as np
 import os
 import pickle
-import skimage.transform
 
 import torch
 import torch.autograd
@@ -24,7 +21,6 @@ import torch.utils.data
 import visdom
 
 import datasets
-import imtk
 import losses
 import metrics
 import nn
@@ -95,150 +91,6 @@ TEMPLATE_ENVIRONMENT = jinja2.Environment(
 TEMPLATE_NAME = 'report.jinja2'
 
 
-class Preprocess3DFmri(luigi.Task):
-    depth = int(DEFAULT_FMRI_SHAPE[2] * IMG_SHAPE[0] / 128)
-    shape_str = '%dx%dx%d' % (IMG_SHAPE + (depth,))
-    # Only rfMRI here, other nii have been removed:
-    # (Get them back from open neuro)
-    processed_dir = '/neuro/boldscans/processed/'
-    target_dir = os.path.join(NEURO_DIR, 'train_val_datasets')
-
-    train_path = os.path.join(
-            target_dir, 'train_%s_%s.npy' % ('fmri', shape_str))
-    val_path = os.path.join(
-            target_dir, 'val_%s_%s.npy' % ('fmri', shape_str))
-
-    def requires(self):
-        pass
-
-    def process_fmri(self, nii_file_abspath, output):
-        if os.path.isdir(nii_file_abspath):
-            return
-        logging.info('Processing file %s' % nii_file_abspath)
-        nii = nibabel.load(nii_file_abspath)
-        array_4d = nii.get_fdata()
-        array_4d = np.nan_to_num(array_4d)
-        if array_4d.shape[:2] != IMG_SHAPE:
-            array_4d = skimage.transform.resize(
-                array_4d,
-                (IMG_SHAPE[0], IMG_SHAPE[1],
-                 self.depth, array_4d.shape[-1]))
-
-        array_4d_min = np.min(array_4d)
-        array_4d_max = np.max(array_4d)
-        array_4d = (array_4d - array_4d_min) / (
-            array_4d_max - array_4d_min)
-
-        for i_img_3d in range(array_4d.shape[-1]):
-            img_3d = array_4d[:, :, :, i_img_3d]
-            output.append(img_3d)
-
-    def run(self):
-        # TODO(nina): Solve MemoryBug here
-        n_ses = len(os.listdir(self.processed_dir))
-        n_ses = 15
-        if DEBUG:
-            n_ses = N_SES_DEBUG
-        n_test_ses = int(FRAC_TEST * n_ses)
-        n_val_ses = int(FRAC_VAL * n_ses)
-        n_train_ses = n_ses - n_test_ses - n_val_ses
-        logging.info(
-            'Found %d sessions of rfMRIs:'
-            ' Divide in %d train, %d val and %d test sessions.'
-            % (n_ses, n_train_ses, n_val_ses, n_test_ses))
-
-        train_3d = []
-        val_3d = []
-        i_ses = 0
-        logging.info('Extracting 3D images from rfMRI time-series.')
-
-        for ses_dir_relpath in os.listdir(self.processed_dir):
-            if DEBUG and i_ses > N_SES_DEBUG-1:
-                break
-            ses_dir_abspath = os.path.join(self.processed_dir, ses_dir_relpath)
-            if i_ses < n_train_ses:
-                Parallel(backend="threading", n_jobs=4)(
-                    delayed(self.process_fmri)(
-                        os.path.join(ses_dir_abspath, nii_file_relpath),
-                        train_3d)
-                    for nii_file_relpath in os.listdir(ses_dir_abspath))
-            elif i_ses < n_train_ses + n_val_ses:
-                Parallel(backend="threading", n_jobs=4)(
-                    delayed(self.process_fmri)(
-                        os.path.join(ses_dir_abspath, nii_file_relpath),
-                        val_3d)
-                    for nii_file_relpath in os.listdir(ses_dir_abspath))
-            else:
-                # We do not touch the test dataset
-                logging.info(
-                    'Last session of the train-val dataset: %s' % (
-                        ses_dir_relpath))
-                break
-
-            i_ses += 1
-        train_3d = np.asarray(train_3d)
-        val_3d = np.asarray(val_3d)
-        np.save(self.output()['train_fmri'].path, train_3d)
-        np.save(self.output()['val_fmri'].path, val_3d)
-
-    def output(self):
-        return {'train_fmri':
-                luigi.LocalTarget(self.train_path),
-                'val_fmri':
-                luigi.LocalTarget(self.val_path)}
-
-
-class MakeDataSetFmri(luigi.Task):
-    if IMG_DIM == 3:
-        depth = int(DEFAULT_FMRI_SHAPE[2] * IMG_SHAPE[0] / 128)
-        shape_str = '%dx%dx%d' % (IMG_SHAPE + (depth,))
-    else:
-        shape_str = '%dx%d' % IMG_SHAPE
-    target_dir = os.path.join(NEURO_DIR, 'train_val_datasets')
-
-    train_path = os.path.join(
-            target_dir, 'train_%s_%s.npy' % ('fmri', shape_str))
-    val_path = os.path.join(
-            target_dir, 'val_%s_%s.npy' % ('fmri', shape_str))
-
-    def requires(self):
-        return Preprocess3DFmri()
-
-    def run(self):
-        # If IMG_DIM == 3, then Preprocess3DFmri is enough
-        if IMG_DIM == 2:
-            train_3d_path = self.input()['train_%s' % DATA_TYPE].path
-            val_3d_path = self.input()['val_%s' % DATA_TYPE].path
-            train_3d = np.load(train_3d_path)
-            val_3d = np.load(val_3d_path)
-
-            logging.info('Creating 2D dataset of rfMRIs.')
-
-            train_output = []
-            Parallel(backend="threading", n_jobs=4)(
-                delayed(imtk.slice_to_2d)(
-                    one_train, train_output, AXIS[DATA_TYPE])
-                for one_train in train_3d)
-            val_output = []
-            Parallel(backend="threading", n_jobs=4)(
-                delayed(imtk.slice_to_2d)(
-                    one_val, val_output, AXIS[DATA_TYPE])
-                for one_val in val_3d)
-
-            train_2d = np.asarray(train_output)
-            val_2d = np.asarray(val_output)
-            train = train_2d
-            val = val_2d
-            np.save(self.output()['train_fmri'].path, train)
-            np.save(self.output()['val_fmri'].path, val)
-
-    def output(self):
-        return {'train_fmri':
-                luigi.LocalTarget(self.train_path),
-                'val_fmri':
-                luigi.LocalTarget(self.val_path)}
-
-
 class Train(luigi.Task):
     path = TRAIN_DIR
     imgs_path = os.path.join(TRAIN_DIR, 'imgs')
@@ -248,13 +100,7 @@ class Train(luigi.Task):
     val_losses_path = os.path.join(path, 'val_losses.pkl')
 
     def requires(self):
-        if DATA_TYPE == 'fmri':
-            if IMG_DIM == 2:
-                return MakeDataSetFmri()
-            else:
-                return Preprocess3DFmri()
-        else:
-            pass
+        pass
 
     def print_train_logs(self,
                          epoch,

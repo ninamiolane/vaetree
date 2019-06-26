@@ -58,9 +58,9 @@ class FetchMyConnectomeDataset(luigi.Task):
         logging.info(
             'Downloading %s sessions of My Connectome,'
             ' processed by fmriprep...' % SELECTED_SESSIONS)
-        os.system(
-            "aws --no-sign-request s3 cp %s %s" %
-            (MY_CONNECTOME_ADDRESS, BOLD_DIR))
+        #os.system(
+        #    "aws --no-sign-request s3 cp %s %s" %
+        #    (MY_CONNECTOME_ADDRESS, BOLD_DIR))
 
         zip_path = os.path.join(
             BOLD_DIR, 'ds000031_R1.0.4_fmriprep_%s.zip' % SELECTED_SESSIONS)

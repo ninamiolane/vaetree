@@ -34,7 +34,7 @@ def pca_projection(mus, n_pca_components=N_PCA_COMPONENTS):
     pca = PCA(n_components=n_pca_components)
     pca.fit(mus)
     projected_mus = pca.transform(mus)
-    return projected_mus
+    return pca, projected_mus
 
 
 def plot_kde(ax, projected_mus):
