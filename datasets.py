@@ -49,6 +49,8 @@ def get_loaders(dataset_name, frac_val=0.2, batch_size=8,
         dataset = get_dataset_cryo(img_shape, kwargs)
     elif dataset_name == 'cryo_sim':
         dataset = get_dataset_cryo_sim(img_shape, kwargs)
+    elif dataset_name == 'cryo_exp':
+        dataset = get_dataset_cryo_exp(img_shape, kwargs)
     elif dataset_name == 'connectomes':
         dataset, _ = get_dataset_connectomes()
     elif dataset_name in ['mri', 'segmentation', 'fmri']:
@@ -168,21 +170,23 @@ def get_dataset_cryo(img_shape=IMG_SHAPE, kwargs=KWARGS):
     return dataset
 
 
+def load_dict_from_hdf5(filename):
+    with h5py.File(filename, 'r') as h5file:
+        return recursively_load_dict_contents_from_group(h5file, '/')
+
+
+def recursively_load_dict_contents_from_group(h5file, path):
+    ans = {}
+    for key, item in h5file[path].items():
+        if isinstance(item, h5py._hl.dataset.Dataset):
+            ans[key] = item[()]  # item.value
+        elif isinstance(item, h5py._hl.group.Group):
+            ans[key] = recursively_load_dict_contents_from_group(
+                h5file, path + key + '/')
+    return ans
+
+
 def get_dataset_cryo_sim(img_shape=IMG_SHAPE, kwargs=KWARGS):
-    def load_dict_from_hdf5(filename):
-        with h5py.File(filename, 'r') as h5file:
-            return recursively_load_dict_contents_from_group(h5file, '/')
-
-    def recursively_load_dict_contents_from_group(h5file, path):
-        ans = {}
-        for key, item in h5file[path].items():
-            if isinstance(item, h5py._hl.dataset.Dataset):
-                ans[key] = item[()]  # item.value
-            elif isinstance(item, h5py._hl.group.Group):
-                ans[key] = recursively_load_dict_contents_from_group(
-                    h5file, path + key + '/')
-        return ans
-
     train_val_dir = os.path.join(CRYO_DIR, 'train_val_datasets')
     shape_str = get_shape_string(img_shape)
     cryo_img_path = os.path.join(
@@ -206,10 +210,10 @@ def get_dataset_cryo_sim(img_shape=IMG_SHAPE, kwargs=KWARGS):
 
             focus = data_dict['optics']['defocus_nominal']
             focus = np.repeat(focus, n_data)
-
-            iframe = 0
-            theta = data_dict['coordinates'][iframe, ...][3]
-            theta = np.repeat(theta, n_data)
+            #print('n_data = %d' % n_data)
+            theta = data_dict['coordinates'][:, 3]
+            #print('theta.shape')
+            #print(theta.shape)
 
             img_h, img_w = img_shape
             dataset = skimage.transform.resize(
@@ -227,12 +231,44 @@ def get_dataset_cryo_sim(img_shape=IMG_SHAPE, kwargs=KWARGS):
         all_focuses = np.expand_dims(all_focuses, axis=1)
         all_thetas = np.concatenate(all_thetas, axis=0)
         all_thetas = np.expand_dims(all_thetas, axis=1)
+
+        assert len(all_datasets) == len(all_focuses)
+        assert len(all_datasets) == len(all_thetas)
+
         np.save(cryo_img_path, all_datasets)
         with open(cryo_labels_path, 'w') as csv_file:
             writer = csv.writer(csv_file)
+            writer.writerow(['focus', 'theta'])
             for focus, theta in zip(all_focuses, all_thetas):
-                writer.writerow([focus, theta])
+                writer.writerow([focus[0], theta[0]])
     dataset = torch.Tensor(all_datasets)
+    return dataset
+
+
+def get_dataset_cryo_exp(img_shape=IMG_SHAPE, kwargs=KWARGS):
+    train_val_dir = os.path.join(CRYO_DIR, 'train_val_datasets')
+    shape_str = get_shape_string(img_shape)
+    cryo_img_path = os.path.join(
+        train_val_dir, 'cryo_exp_%s.npy' % shape_str)
+    if os.path.isfile(cryo_img_path):
+        dataset = np.load(cryo_img_path)
+
+    else:
+        path = os.path.join(CRYO_DIR, 'particles.h5')
+
+        logging.info('Loading file %s...' % path)
+        data_dict = load_dict_from_hdf5(path)
+        dataset = data_dict['particles']
+        n_data = len(dataset)
+
+        img_h, img_w = img_shape
+        dataset = skimage.transform.resize(
+            dataset, (n_data, img_h, img_w))
+        dataset = normalization_linear(dataset)
+
+        np.save(cryo_img_path, dataset)
+
+    dataset = torch.Tensor(dataset)
     return dataset
 
 

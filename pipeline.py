@@ -73,7 +73,7 @@ if DEBUG:
     N_EPOCHS = 2
     N_FILEPATHS = 10
 
-LATENT_DIM = 50
+LATENT_DIM = 3
 
 LR = 15e-6
 if 'adversarial' in RECONSTRUCTIONS:
