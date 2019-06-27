@@ -13,8 +13,12 @@ DEVICE = 'cuda'
 N_PCA_COMPONENTS = 5
 
 
-def latent_projection(output_dir, dataset):
-    encoder = vis.load_last_module(output_dir, 'encoder')
+def latent_projection(output_dir, dataset, epoch_id=None):
+    if epoch_id is None:
+        encoder = vis.load_last_module(output_dir, 'encoder')
+    else:
+        encoder = vis.load_module(
+            output_dir, 'encoder', epoch_id=epoch_id)
     dataset = torch.Tensor(dataset)
     dataset = torch.utils.data.TensorDataset(dataset)
     loader = torch.utils.data.DataLoader(

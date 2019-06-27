@@ -194,9 +194,12 @@ def plot_img_and_recon(output_dir, epoch_id, cmap='gray'):
     print('Shape of recon:')
     print(recon.shape)
 
-    fig, axes = plt.subplots(nrows=2, ncols=min(5, len(img)), figsize=(18, 4))
+    ncols = min(5, len(img))
+    fig, axes = plt.subplots(nrows=2, ncols=ncols, figsize=(18, 8))
     i = 0
     for one_img, one_recon in zip(img, recon):
+        if i > ncols - 1:
+            break
         if len(one_img.shape) == 3:
             one_img = one_img[0]  # channels
         if len(one_recon.shape) == 3:

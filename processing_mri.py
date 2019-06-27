@@ -51,7 +51,6 @@ class FetchOpenNeuroDataset(luigi.Task):
         target_path = self.target_dir + os.path.dirname(path)
         if not os.path.exists(target_path):
             os.makedirs(target_path)
-        # TODO(nina): Replace with subprocess
         os.system("aws --no-sign-request s3 cp  s3://openneuro.org/%s %s" %
                   (path, target_path))
 

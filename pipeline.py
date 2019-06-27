@@ -29,7 +29,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # Decide on using segmentations, image intensities or fmri,
-DATA_TYPE = 'cryo_sim'
+DATA_TYPE = 'fmri'
 
 HOME_DIR = '/scratch/users/nmiolane'
 OUTPUT_DIR = os.path.join(HOME_DIR, 'output_%s' % DATA_TYPE)
@@ -45,12 +45,11 @@ DEVICE = torch.device("cuda" if CUDA else "cpu")
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
-IMG_WIDTH = 128
-IMG_HEIGHT = 128
+IMG_WIDTH = 96
+IMG_HEIGHT = 96
 IMG_SHAPE = (IMG_WIDTH, IMG_HEIGHT)
-DEFAULT_FMRI_SHAPE = (128, 128, 52)
-IMG_DIM = len(IMG_SHAPE)
-BATCH_SIZES = {64: 32, 128: 8}
+
+BATCH_SIZES = {64: 32, 96: 32, 128: 8}
 BATCH_SIZE = BATCH_SIZES[IMG_WIDTH]
 FRAC_TEST = 0.1
 FRAC_VAL = 0.2
@@ -68,12 +67,12 @@ REGULARIZATIONS = ('kullbackleibler',)
 WEIGHTS_INIT = 'custom'
 REGU_FACTOR = 0.003
 
-N_EPOCHS = 200
+N_EPOCHS = 100
 if DEBUG:
     N_EPOCHS = 2
     N_FILEPATHS = 10
 
-LATENT_DIM = 3
+LATENT_DIM = 20
 
 LR = 15e-6
 if 'adversarial' in RECONSTRUCTIONS:
