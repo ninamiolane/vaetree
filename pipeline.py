@@ -29,7 +29,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # Decide on using segmentations, image intensities or fmri,
-DATA_TYPE = 'fmri'
+DATA_TYPE = 'cryo_exp'
 
 HOME_DIR = '/scratch/users/nmiolane'
 OUTPUT_DIR = os.path.join(HOME_DIR, 'output_%s' % DATA_TYPE)
@@ -45,8 +45,8 @@ DEVICE = torch.device("cuda" if CUDA else "cpu")
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
-IMG_WIDTH = 96
-IMG_HEIGHT = 96
+IMG_WIDTH = 128
+IMG_HEIGHT = 128
 IMG_SHAPE = (IMG_WIDTH, IMG_HEIGHT)
 
 BATCH_SIZES = {64: 32, 96: 32, 128: 8}
@@ -72,7 +72,7 @@ if DEBUG:
     N_EPOCHS = 2
     N_FILEPATHS = 10
 
-LATENT_DIM = 20
+LATENT_DIM = 3
 
 LR = 15e-6
 if 'adversarial' in RECONSTRUCTIONS:
@@ -170,7 +170,7 @@ class Train(luigi.Task):
             if DEBUG:
                 if batch_idx < n_batches - 3:
                     continue
-            if DATA_TYPE not in ['cryo', 'cryo_sim']:
+            if DATA_TYPE not in ['cryo', 'cryo_sim', 'cryo_exp']:
                 batch_data = batch_data[0].to(DEVICE)
             else:
                 batch_data = batch_data.to(DEVICE)
@@ -393,7 +393,7 @@ class Train(luigi.Task):
                 if DEBUG:
                     if batch_idx < n_batches - 3:
                         continue
-                if DATA_TYPE not in ['cryo', 'cryo_sim']:
+                if DATA_TYPE not in ['cryo', 'cryo_sim', 'cryo_exp']:
                     batch_data = batch_data[0].to(DEVICE)
                 else:
                     batch_data = batch_data.to(DEVICE)

@@ -25,7 +25,6 @@ NEURO_DIR = '/neuro'
 
 train_val_dir = '/neuro/train_val_datasets'
 
-
 N_NODES = 28
 CORR_THRESH = 0.1
 GAMMA = 1.0
@@ -265,6 +264,7 @@ def get_dataset_cryo_exp(img_shape=IMG_SHAPE, kwargs=KWARGS):
         dataset = skimage.transform.resize(
             dataset, (n_data, img_h, img_w))
         dataset = normalization_linear(dataset)
+        dataset = np.expand_dims(dataset, axis=1)
 
         np.save(cryo_img_path, dataset)
 
