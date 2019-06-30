@@ -37,7 +37,7 @@ TRAIN_DIR = os.path.join(OUTPUT_DIR, 'training')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
 
-DEBUG = False
+DEBUG = True
 
 CUDA = torch.cuda.is_available()
 SEED = 12345
@@ -364,6 +364,7 @@ class Train(luigi.Task):
             train_losses['discriminator'] = average_loss_discriminator
             train_losses['generator'] = average_loss_generator
         train_losses['total'] = average_loss
+        print(average_loss)
         return train_losses
 
     def val(self, epoch, val_loader, modules,

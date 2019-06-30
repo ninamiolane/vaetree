@@ -1,6 +1,7 @@
 """Visualization for experiments."""
 
 import glob
+import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 from matplotlib import animation
 import numpy as np
@@ -8,10 +9,40 @@ import os
 import pickle
 import torch
 
+import analyze
 import nn
 
 CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if CUDA else "cpu")
+
+
+TIME_MAX = 600
+
+TASK_TO_MARKER = {
+    'rest': 'o',
+    'breathhold': 'x',
+    'dotstop': 'v',
+    'eyesopen': '*',
+    'languagewm': '^',
+    'nback': '<',
+    'objects': 'p',
+    'retinotopy': 'P',
+    'spatialwm': 'D'
+}
+
+SES_TO_MARKER = {
+    2: 'o',
+    3: 'x',
+    4: 'v',
+    5: 'D',
+    10: 'P',
+    11: 'p',
+    12: 's',
+    13: '*'
+}
+
+colormap = cm.get_cmap('viridis')
+COLORS = colormap(np.linspace(start=0., stop=1., num=TIME_MAX))
 
 
 def load_last_module(output_dir, module_name):
@@ -114,7 +145,7 @@ def plot_losses(output_dir, epoch_id):
 
     for i in range(epoch_id+1):
         losses_filename = os.path.join(
-            output_dir, 'training/losses/epoch_%d.pkl' % epoch_id)
+            output_dir, 'training/losses/epoch_%d.pkl' % i)
         train_val = pickle.load(open(losses_filename, 'rb'))
         train = train_val['train']
         val = train_val['val']
@@ -130,12 +161,13 @@ def plot_losses(output_dir, epoch_id):
 
     # Total
     ax = axes[0, 0]
-
-    ax.plot(train_losses['total'])
+    total_losses = train_losses['total']
+    ax.plot(total_losses)
     ax.set_title('Train Loss')
 
     ax = axes[1, 0]
     ax.plot(val_losses['total'])
+    total_losses = val_losses['total']
     ax.set_title('Val Loss')
 
     # Decomposed in sublosses
@@ -213,3 +245,51 @@ def plot_img_and_recon(output_dir, epoch_id, cmap='gray'):
         ax.get_yaxis().set_visible(False)
         ax.get_xaxis().set_visible(False)
         i += 1
+
+
+def plot_variance_explained(output_dir, train_img_path, epoch_id=None):
+    dataset = np.load(train_img_path)
+    mus = analyze.latent_projection(output_dir, dataset, epoch_id=epoch_id)
+    n_pca_components = mus.shape[-1]
+
+    pca, projected_mus = analyze.pca_projection(mus, n_pca_components)
+
+    fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(18, 6))
+
+    ax = axes[0]
+    ax.plot(
+        np.arange(1, n_pca_components+1), pca.explained_variance_ratio_)
+    ax.set_xlabel('PCA components')
+    ax.set_ylabel('Percentage of variance explained')
+    ax.set_xticks(np.arange(1, n_pca_components+1, step=1))
+
+    ax = axes[1]
+    ax.plot(
+        np.arange(1, n_pca_components+1),
+        np.cumsum(pca.explained_variance_ratio_))
+    ax.set_xlabel('PCA components')
+    ax.set_ylabel('Cumulative sum of variance explained')
+    ax.set_xticks(np.arange(1, n_pca_components+1, step=1))
+    return ax
+
+
+def plot_fmri(ax, projected_mus, labels,
+              marker_label='task', title='Trajectories', ses_ids=None):
+    # ax.plot(projected_mus[:, 0], projected_mus[:, 1], label=title)
+
+    for mu, time, ses, task in zip(
+            projected_mus, labels['time'],
+            labels['ses'], labels['task']):
+        if (ses_ids is not None) and (ses not in ses_ids):
+            continue
+        colors = np.array([COLORS[time-1]])[0]
+        if marker_label == 'task':
+            markers = TASK_TO_MARKER[task]
+        else:
+            markers = SES_TO_MARKER[ses]
+        im = ax.plot(mu[0], mu[1], marker=markers, c=colors)
+    ax.get_xaxis().set_visible(False)
+    ax.get_yaxis().set_visible(False)
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(handles, labels)
+    return im, ax
