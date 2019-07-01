@@ -44,10 +44,13 @@ def get_loaders(dataset_name, frac_val=0.2, batch_size=8,
             '../data', download=True,
             transform=transforms.Compose(
                 [transforms.Resize(img_shape), transforms.ToTensor()]))
-    elif dataset_name == 'cryo':
-        dataset = get_dataset_cryo(img_shape, kwargs)
-    elif dataset_name == 'cryo_sim':
-        dataset = get_dataset_cryo_sim(img_shape, kwargs)
+    elif dataset_name in [
+            'randomrot1D_nodisorder',
+            'randomrot1D_multiPDB',
+            'randomrot_nodisorder']:
+        dataset = get_dataset_cryo(dataset_name, img_shape, kwargs)
+    elif dataset_name == 'cryo_sphere':
+        dataset = get_dataset_cryo_sphere(img_shape, kwargs)
     elif dataset_name == 'cryo_exp':
         dataset = get_dataset_cryo_exp(img_shape, kwargs)
     elif dataset_name == 'connectomes':
@@ -136,7 +139,7 @@ def get_dataset_connectomes():
     return all_graphs, all_labels
 
 
-def get_dataset_cryo(img_shape=IMG_SHAPE, kwargs=KWARGS):
+def get_dataset_cryo_sphere(img_shape=IMG_SHAPE, kwargs=KWARGS):
     train_val_dir = os.path.join(CRYO_DIR, 'train_val_datasets')
     shape_str = get_shape_string(img_shape)
     cryo_path = os.path.join(
@@ -185,19 +188,23 @@ def recursively_load_dict_contents_from_group(h5file, path):
     return ans
 
 
-def get_dataset_cryo_sim(img_shape=IMG_SHAPE, kwargs=KWARGS):
+def get_dataset_cryo(
+        dataset_name, img_shape=IMG_SHAPE, kwargs=KWARGS):
     train_val_dir = os.path.join(CRYO_DIR, 'train_val_datasets')
     shape_str = get_shape_string(img_shape)
     cryo_img_path = os.path.join(
-        train_val_dir, 'cryo_sim_%s.npy' % shape_str)
+        train_val_dir, 'cryo_%s_%s.npy' % (dataset_name, shape_str))
     cryo_labels_path = os.path.join(
-        train_val_dir, 'cryo_sim_labels_%s.csv' % shape_str)
+        train_val_dir, 'cryo_labels_%s_%s.csv' % (dataset_name, shape_str))
 
     if os.path.isfile(cryo_img_path) and os.path.isfile(cryo_labels_path):
         all_datasets = np.load(cryo_img_path)
 
     else:
-        paths = glob.glob('/cryo/randomrot1D_nodisorder/final/*.h5')
+        if not os.path.isdir('/cryo/%s/' % dataset_name):
+            os.system("cd /cryo/")
+            os.system("source osf_dl_folder %s" % dataset_name)
+        paths = glob.glob('/cryo/%s/final/*.h5' % dataset_name)
         all_datasets = []
         all_focuses = []
         all_thetas = []
@@ -209,10 +216,7 @@ def get_dataset_cryo_sim(img_shape=IMG_SHAPE, kwargs=KWARGS):
 
             focus = data_dict['optics']['defocus_nominal']
             focus = np.repeat(focus, n_data)
-            #print('n_data = %d' % n_data)
             theta = data_dict['coordinates'][:, 3]
-            #print('theta.shape')
-            #print(theta.shape)
 
             img_h, img_w = img_shape
             dataset = skimage.transform.resize(
