@@ -23,15 +23,22 @@ IMG_SHAPE = (128, 128)
 CRYO_DIR = '/cryo'
 NEURO_DIR = '/neuro'
 
-train_val_dir = '/neuro/train_val_datasets'
+NEURO_TRAIN_VAL_DIR = '/neuro/train_val_datasets'
+CRYO_TRAIN_VAL_DIR = '/cryo/train_val_datasets'
 
 N_NODES = 28
 CORR_THRESH = 0.1
 GAMMA = 1.0
 N_GRAPHS = 86
 
+FRAC_VAL = 0.2
 
-def get_loaders(dataset_name, frac_val=0.2, batch_size=8,
+# TODO(nina): Reorganize:
+# get_datasets provide train/val in np.array,
+# get_loaders shuflles and transforms in tensors/loaders
+
+
+def get_loaders(dataset_name, frac_val=FRAC_VAL, batch_size=8,
                 img_shape=IMG_SHAPE, kwargs=KWARGS):
     # TODO(nina): Consistency in datasets: add channels for all
     logging.info('Loading data from dataset: %s' % dataset_name)
@@ -49,24 +56,26 @@ def get_loaders(dataset_name, frac_val=0.2, batch_size=8,
             'randomrot1D_multiPDB',
             'randomrot_nodisorder']:
         dataset = get_dataset_cryo(dataset_name, img_shape, kwargs)
+        train_dataset, val_dataset = split_dataset(dataset)
     elif dataset_name == 'cryo_sphere':
         dataset = get_dataset_cryo_sphere(img_shape, kwargs)
+        train_dataset, val_dataset = split_dataset(dataset)
     elif dataset_name == 'cryo_exp':
         dataset = get_dataset_cryo_exp(img_shape, kwargs)
+        train_dataset, val_dataset = split_dataset(dataset)
     elif dataset_name == 'connectomes':
-        dataset, _ = get_dataset_connectomes()
+        train_dataset, val_dataset = get_dataset_connectomes()
+    elif dataset_name == 'connectomes_schizophrenia':
+        dataset, _ = get_dataset_connectomes_schizophrenia()
     elif dataset_name in ['mri', 'segmentation', 'fmri']:
         train_loader, val_loader = get_loaders_brain(
             dataset_name, frac_val, batch_size, img_shape, kwargs)
         return train_loader, val_loader
     else:
         raise ValueError('Unknown dataset name: %s' % dataset_name)
-    length = len(dataset)
-    train_length = int((1 - frac_val) * length)
-    val_length = int(length - train_length)
-    train_dataset, val_dataset = torch.utils.data.random_split(
-        dataset, [train_length, val_length])
 
+    train_dataset = torch.Tensor(train_dataset)
+    val_dataset = torch.Tensor(val_dataset)
     if dataset_name in ['mnist']:
         train_tensor = train_dataset.dataset.data[train_dataset.indices]
         val_tensor = val_dataset.dataset.data[val_dataset.indices]
@@ -81,6 +90,14 @@ def get_loaders(dataset_name, frac_val=0.2, batch_size=8,
         val_dataset, batch_size=batch_size, shuffle=True, **kwargs)
 
     return train_loader, val_loader
+
+
+def split_dataset(dataset, frac_val=FRAC_VAL):
+    length = len(dataset)
+    train_length = int((1 - frac_val) * length)
+    train_dataset = dataset[:train_length]
+    val_dataset = dataset[train_length:]
+    return train_dataset, val_dataset
 
 
 def get_shape_string(img_shape=IMG_SHAPE):
@@ -102,7 +119,55 @@ def normalization_linear(dataset):
     return dataset
 
 
-def get_dataset_connectomes():
+def get_dataset_connectomes(img_shape=(100, 100), partial_corr=True):
+    """
+    Connectomes from HCP 1200:
+    https://www.humanconnectome.org/storage/app/media/
+    documentation/s1200/HCP_S1200_Release_Reference_Manual.pdf
+    """
+    netmat_type = int(partial_corr) + 1
+
+    shape_str = get_shape_string(img_shape)
+    train_path = os.path.join(
+        NEURO_TRAIN_VAL_DIR, 'train_conn_%s.npy' % shape_str)
+    val_path = os.path.join(
+        NEURO_TRAIN_VAL_DIR, 'val_conn_%s.npy' % shape_str)
+
+    train_exists = os.path.isfile(train_path)
+    val_exists = os.path.isfile(val_path)
+    if train_exists and val_exists:
+        print('Loading %s...' % train_path)
+        print('Loading %s...' % val_path)
+        train_dataset = np.load(train_path)
+        val_dataset = np.load(val_path)
+
+    else:
+        n_nodes = img_shape[0]
+        hcp_dir = os.path.join(
+            NEURO_DIR, 'HCP_PTN1200_recon2')
+        netmats_path = os.path.join(
+            hcp_dir, 'netmats/3T_HCP1200_MSMAll_d%d_ts2/netmats%d.txt' % (
+                n_nodes, netmat_type))
+        print('Loading %s...' % netmats_path)
+        netmats = np.loadtxt(netmats_path)
+        netmats = netmats.reshape(-1, n_nodes, n_nodes)
+
+        netmats = np.expand_dims(netmats, axis=1)
+        netmats = normalization_linear(netmats)
+        dataset = netmats
+
+        assert len(dataset.shape) == 4
+
+        train_dataset, val_dataset = split_dataset(dataset)
+        print('Saving %s...' % train_path)
+        print('Saving %s...' % val_path)
+        np.save(train_path, train_dataset)
+        np.save(val_path, val_dataset)
+
+    return train_dataset, val_dataset
+
+
+def get_dataset_connectomes_schizophrenia():
     """
     Connectomes are SPD matrices of size N_NODESxN_NODES.
     """
@@ -140,10 +205,9 @@ def get_dataset_connectomes():
 
 
 def get_dataset_cryo_sphere(img_shape=IMG_SHAPE, kwargs=KWARGS):
-    train_val_dir = os.path.join(CRYO_DIR, 'train_val_datasets')
     shape_str = get_shape_string(img_shape)
     cryo_path = os.path.join(
-        train_val_dir, 'cryo_%s.npy' % shape_str)
+        CRYO_TRAIN_VAL_DIR, 'cryo_%s.npy' % shape_str)
 
     if os.path.isfile(cryo_path):
         all_datasets = np.load(cryo_path)
@@ -190,12 +254,13 @@ def recursively_load_dict_contents_from_group(h5file, path):
 
 def get_dataset_cryo(
         dataset_name, img_shape=IMG_SHAPE, kwargs=KWARGS):
-    train_val_dir = os.path.join(CRYO_DIR, 'train_val_datasets')
     shape_str = get_shape_string(img_shape)
     cryo_img_path = os.path.join(
-        train_val_dir, 'cryo_%s_%s.npy' % (dataset_name, shape_str))
+        CRYO_TRAIN_VAL_DIR,
+        'cryo_%s_%s.npy' % (dataset_name, shape_str))
     cryo_labels_path = os.path.join(
-        train_val_dir, 'cryo_labels_%s_%s.csv' % (dataset_name, shape_str))
+        CRYO_TRAIN_VAL_DIR,
+        'cryo_labels_%s_%s.csv' % (dataset_name, shape_str))
 
     if os.path.isfile(cryo_img_path) and os.path.isfile(cryo_labels_path):
         all_datasets = np.load(cryo_img_path)
@@ -249,10 +314,10 @@ def get_dataset_cryo(
 
 
 def get_dataset_cryo_exp(img_shape=IMG_SHAPE, kwargs=KWARGS):
-    train_val_dir = os.path.join(CRYO_DIR, 'train_val_datasets')
+    NEURO_TRAIN_VAL_DIR = os.path.join(CRYO_DIR, 'train_val_datasets')
     shape_str = get_shape_string(img_shape)
     cryo_img_path = os.path.join(
-        train_val_dir, 'cryo_exp_%s.npy' % shape_str)
+        NEURO_TRAIN_VAL_DIR, 'cryo_exp_%s.npy' % shape_str)
     if os.path.isfile(cryo_img_path):
         dataset = np.load(cryo_img_path)
 
@@ -280,16 +345,16 @@ def get_loaders_brain(dataset_name, frac_val, batch_size,
                       img_shape=IMG_SHAPE, kwargs=KWARGS):
 
     shape_str = get_shape_string(img_shape)
-    train_val_dir = os.path.join(NEURO_DIR, 'train_val_datasets')
+    NEURO_TRAIN_VAL_DIR = os.path.join(NEURO_DIR, 'train_val_datasets')
     train_path = os.path.join(
-        train_val_dir, 'train_%s_%s.npy' % (dataset_name, shape_str))
+        NEURO_TRAIN_VAL_DIR, 'train_%s_%s.npy' % (dataset_name, shape_str))
     val_path = os.path.join(
-        train_val_dir, 'val_%s_%s.npy' % (dataset_name, shape_str))
+        NEURO_TRAIN_VAL_DIR, 'val_%s_%s.npy' % (dataset_name, shape_str))
 
     train = torch.Tensor(np.load(train_path))
     val = torch.Tensor(np.load(val_path))
+
     logging.info('-- Train tensor: (%d, %d, %d, %d)' % train.shape)
-    np.random.shuffle(train)
     train_dataset = torch.utils.data.TensorDataset(train)
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
