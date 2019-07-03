@@ -29,7 +29,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # Decide on using segmentations, image intensities or fmri,
-DATA_TYPE = 'cryo_exp'
+DATA_TYPE = 'connectomes'
 
 HOME_DIR = '/scratch/users/nmiolane'
 OUTPUT_DIR = os.path.join(HOME_DIR, 'output_%s' % DATA_TYPE)
@@ -45,11 +45,11 @@ DEVICE = torch.device("cuda" if CUDA else "cpu")
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
-IMG_WIDTH = 128
-IMG_HEIGHT = 128
+IMG_WIDTH = 100
+IMG_HEIGHT = 100
 IMG_SHAPE = (IMG_WIDTH, IMG_HEIGHT)
 
-BATCH_SIZES = {64: 32, 96: 32, 128: 8}
+BATCH_SIZES = {15: 128, 25: 64, 64: 32, 96: 32, 100: 8, 128: 8}
 BATCH_SIZE = BATCH_SIZES[IMG_WIDTH]
 FRAC_TEST = 0.1
 FRAC_VAL = 0.2
@@ -67,7 +67,7 @@ REGULARIZATIONS = ('kullbackleibler',)
 WEIGHTS_INIT = 'custom'
 REGU_FACTOR = 0.003
 
-N_EPOCHS = 100
+N_EPOCHS = 60
 if DEBUG:
     N_EPOCHS = 2
     N_FILEPATHS = 10
@@ -170,7 +170,8 @@ class Train(luigi.Task):
             if DEBUG:
                 if batch_idx < n_batches - 3:
                     continue
-            if DATA_TYPE not in ['cryo', 'cryo_sim', 'cryo_exp']:
+            if DATA_TYPE not in ['cryo', 'cryo_sim',
+                                 'cryo_exp', 'connectomes']:
                 batch_data = batch_data[0].to(DEVICE)
             else:
                 batch_data = batch_data.to(DEVICE)
@@ -364,7 +365,6 @@ class Train(luigi.Task):
             train_losses['discriminator'] = average_loss_discriminator
             train_losses['generator'] = average_loss_generator
         train_losses['total'] = average_loss
-        print(average_loss)
         return train_losses
 
     def val(self, epoch, val_loader, modules,
@@ -394,7 +394,8 @@ class Train(luigi.Task):
                 if DEBUG:
                     if batch_idx < n_batches - 3:
                         continue
-                if DATA_TYPE not in ['cryo', 'cryo_sim', 'cryo_exp']:
+                if DATA_TYPE not in ['cryo', 'cryo_sim',
+                                     'cryo_exp', 'connectomes']:
                     batch_data = batch_data[0].to(DEVICE)
                 else:
                     batch_data = batch_data.to(DEVICE)

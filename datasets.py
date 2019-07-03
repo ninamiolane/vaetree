@@ -64,7 +64,8 @@ def get_loaders(dataset_name, frac_val=FRAC_VAL, batch_size=8,
         dataset = get_dataset_cryo_exp(img_shape, kwargs)
         train_dataset, val_dataset = split_dataset(dataset)
     elif dataset_name == 'connectomes':
-        train_dataset, val_dataset = get_dataset_connectomes()
+        train_dataset, val_dataset = get_dataset_connectomes(
+            img_shape=img_shape)
     elif dataset_name == 'connectomes_schizophrenia':
         dataset, _ = get_dataset_connectomes_schizophrenia()
     elif dataset_name in ['mri', 'segmentation', 'fmri']:
