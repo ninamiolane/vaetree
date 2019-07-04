@@ -21,7 +21,8 @@ def riem_square_distance(batch_data, batch_recon):
     spd_space = SPDMatricesSpace(n=n)
     batch_data = batch_data.view(-1, n, n)
     batch_recon = batch_recon.view(-1, n, n)
-    sq_dist = spd_space.metric.squared_dist(batch_data, batch_recon)
+    sq_dist = spd_space.metric.squared_dist(batch_data.cpu(), batch_recon.cpu())
+    sq_dist = torch.Tensor(sq_dist).to(DEVICE)
     return sq_dist
 
 
@@ -85,8 +86,6 @@ def reconstruction_loss(batch_data, batch_recon, batch_logvarx,
         return bce_average
 
     batch_logvarx = batch_logvarx.squeeze()
-    print('batchlog')
-    print(batch_logvarx.shape)
     if batch_logvarx.shape == (n_batch_data,):
         # Isotropic Gaussian
         scale_term = - data_dim / 2. * batch_logvarx

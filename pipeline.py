@@ -29,10 +29,10 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # Decide on using segmentations, image intensities or fmri,
-DATA_TYPE = 'connectomes'
+DATASET_NAME = 'connectomes'
 
 HOME_DIR = '/scratch/users/nmiolane'
-OUTPUT_DIR = os.path.join(HOME_DIR, 'output_%s' % DATA_TYPE)
+OUTPUT_DIR = os.path.join(HOME_DIR, 'output_%s' % DATASET_NAME)
 TRAIN_DIR = os.path.join(OUTPUT_DIR, 'training')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
@@ -170,7 +170,7 @@ class Train(luigi.Task):
             if DEBUG:
                 if batch_idx < n_batches - 3:
                     continue
-            if DATA_TYPE not in ['cryo', 'cryo_sim',
+            if DATASET_NAME not in ['cryo', 'cryo_sim',
                                  'cryo_exp', 'connectomes']:
                 batch_data = batch_data[0].to(DEVICE)
             else:
@@ -394,7 +394,7 @@ class Train(luigi.Task):
                 if DEBUG:
                     if batch_idx < n_batches - 3:
                         continue
-                if DATA_TYPE not in ['cryo', 'cryo_sim',
+                if DATASET_NAME not in ['cryo', 'cryo_sim',
                                      'cryo_exp', 'connectomes']:
                     batch_data = batch_data[0].to(DEVICE)
                 else:
@@ -571,7 +571,7 @@ class Train(luigi.Task):
                 os.chmod(directory, 0o777)
 
         train_loader, val_loader = datasets.get_loaders(
-                dataset_name=DATA_TYPE,
+                dataset_name=DATASET_NAME,
                 frac_val=FRAC_VAL,
                 batch_size=BATCH_SIZE,
                 img_shape=IMG_SHAPE)

@@ -26,8 +26,10 @@ import toynn
 import warnings
 warnings.filterwarnings("ignore")
 
+DATASET_NAME = 'connectomes'
+
 HOME_DIR = '/scratch/users/nmiolane'
-OUTPUT_DIR = os.path.join(HOME_DIR, 'imoutput')
+OUTPUT_DIR = os.path.join(HOME_DIR, 'imoutput_%s' % DATASET_NAME)
 TRAIN_VAE_DIR = os.path.join(OUTPUT_DIR, 'train_vae')
 TRAIN_IWAE_DIR = os.path.join(OUTPUT_DIR, 'train_iwae')
 TRAIN_VEM_DIR = os.path.join(OUTPUT_DIR, 'train_vem')
@@ -49,9 +51,10 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # NN architecture
-IM_H = 28
-IM_W = 28
-DATA_DIM = 28 * 28  # MNIST, and connectomes size
+IM_H = 25
+IM_W = 25
+IMG_SHAPE = (IM_H, IM_W)
+DATA_DIM = IM_H * IM_W  # MNIST, and connectomes size
 LATENT_DIM = 30
 CNN = False
 RECONSTRUCTION_TYPE = 'riem'
@@ -68,7 +71,6 @@ N_MC_NLL = 5000
 # Train
 
 FRAC_VAL = 0.2
-DATASET_NAME = 'connectomes'
 
 BATCH_SIZE = {'mnist': 20, 'connectomes': 8}
 PRINT_INTERVAL = 64
@@ -171,7 +173,10 @@ class LoadData(luigi.Task):
 
     def run(self):
         train_loader, val_loader = datasets.get_loaders(
-            DATASET_NAME, FRAC_VAL, BATCH_SIZE[DATASET_NAME])
+            dataset_name=DATASET_NAME,
+            frac_val=FRAC_VAL,
+            batch_size=BATCH_SIZE[DATASET_NAME],
+            img_shape=IMG_SHAPE)
 
         with open(self.output()['train_loader'].path, 'wb') as pkl:
             pickle.dump(train_loader, pkl)
