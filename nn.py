@@ -154,7 +154,9 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, latent_dim, in_channels, in_h, in_w, out_channels):
+    def __init__(self, latent_dim,
+                 in_channels, in_h, in_w,
+                 out_channels, out_h, out_w):
         super(Decoder, self).__init__()
 
         self.latent_dim = latent_dim
@@ -162,6 +164,8 @@ class Decoder(nn.Module):
         self.in_h = in_h
         self.in_w = in_w
         self.out_channels = out_channels
+        self.out_h = out_h
+        self.out_w = out_w
 
         self.fcs_infeatures = self.in_channels * self.in_h * self.in_w
 
@@ -175,52 +179,80 @@ class Decoder(nn.Module):
             in_features=latent_dim, out_features=self.fcs_infeatures)
 
         # TODO(johmathe): Get rid of warning.
-        self.up1 = nn.UpsamplingNearest2d(scale_factor=2)
-        self.pd1 = nn.ReplicationPad2d(1)
+        scale_factor = 2
+        pad = 1
+        self.up1 = nn.UpsamplingNearest2d(scale_factor=scale_factor)
+        self.pd1 = nn.ReplicationPad2d(pad)
         self.d2 = nn.Conv2d(
             in_channels=self.in_channels,
             out_channels=DEC_C * 16,
             kernel_size=DEC_KS,
             stride=DEC_STR)
         self.bnd1 = nn.BatchNorm2d(self.d2.out_channels, 1.e-3)
+        self.w_dec1, self.h_dec1 = cnn_output_size(
+            in_w=scale_factor*self.in_w + 2*pad,
+            in_h=scale_factor*self.in_h + 2*pad)
 
-        self.up2 = nn.UpsamplingNearest2d(scale_factor=2)
-        self.pd2 = nn.ReplicationPad2d(1)
+        scale_factor = 2
+        pad = 1
+        self.up2 = nn.UpsamplingNearest2d(scale_factor=scale_factor)
+        self.pd2 = nn.ReplicationPad2d(pad)
         self.d3 = nn.Conv2d(
             in_channels=self.d2.out_channels,
             out_channels=DEC_C * 8,
             kernel_size=DEC_KS,
             stride=DEC_STR)
         self.bnd2 = nn.BatchNorm2d(self.d3.out_channels, 1.e-3)
+        self.w_dec2, self.h_dec2 = cnn_output_size(
+            in_w=scale_factor*self.w_dec1 + 2*pad,
+            in_h=scale_factor*self.h_dec1 + 2*pad)
 
-        self.up3 = nn.UpsamplingNearest2d(scale_factor=2)
-        self.pd3 = nn.ReplicationPad2d(1)
+        scale_factor = 2
+        pad = 1
+        self.up3 = nn.UpsamplingNearest2d(scale_factor=scale_factor)
+        self.pd3 = nn.ReplicationPad2d(pad)
         self.d4 = nn.Conv2d(
             in_channels=self.d3.out_channels,
             out_channels=DEC_C * 4,
             kernel_size=DEC_KS,
             stride=DEC_STR)
         self.bnd3 = nn.BatchNorm2d(self.d4.out_channels, 1.e-3)
+        self.w_dec3, self.h_dec3 = cnn_output_size(
+            in_w=scale_factor*self.w_dec2 + 2*pad,
+            in_h=scale_factor*self.h_dec2 + 2*pad)
 
-        self.up4 = nn.UpsamplingNearest2d(scale_factor=2)
-        self.pd4 = nn.ReplicationPad2d(1)
+        scale_factor = 2
+        pad = 1
+        self.up4 = nn.UpsamplingNearest2d(scale_factor=scale_factor)
+        self.pd4 = nn.ReplicationPad2d(pad)
         self.d5 = nn.Conv2d(
             in_channels=self.d4.out_channels,
             out_channels=DEC_C * 2,
             kernel_size=DEC_KS,
             stride=DEC_STR)
         self.bnd4 = nn.BatchNorm2d(self.d5.out_channels, 1.e-3)
+        self.w_dec4, self.h_dec4 = cnn_output_size(
+            in_w=scale_factor*self.w_dec3 + 2*pad,
+            in_h=scale_factor*self.h_dec3 + 2*pad)
 
         # Generates recon
-        self.up5 = nn.UpsamplingNearest2d(scale_factor=2)
-        self.pd5 = nn.ReplicationPad2d(1)
+        scale_factor = 2
+        pad = 1
+        self.up5 = nn.UpsamplingNearest2d(scale_factor=scale_factor)
+        self.pd5 = nn.ReplicationPad2d(pad)
         self.d6 = nn.Conv2d(
             in_channels=self.d5.out_channels,
             out_channels=self.out_channels,
             kernel_size=DEC_KS,
             stride=DEC_STR)
+        # TODO(nina): put the last resampling at another
+        # position?
+        self.uprecon = nn.UpsamplingNearest2d(
+            size=(self.out_h, self.out_w))
 
         # Generates scale_b
+        scale_factor = 2
+        pad = 1
         self.up6 = nn.UpsamplingNearest2d(scale_factor=2)
         self.pd6 = nn.ReplicationPad2d(1)
         self.d7 = nn.Conv2d(
@@ -228,6 +260,8 @@ class Decoder(nn.Module):
             out_channels=self.out_channels,
             kernel_size=DEC_KS,
             stride=DEC_STR)
+        self.upscale = nn.UpsamplingNearest2d(
+            size=(self.out_h, self.out_w))
 
     def forward(self, z):
         """Forward pass of the decoder is to decode."""
@@ -239,8 +273,8 @@ class Decoder(nn.Module):
         h5 = self.leakyrelu(self.bnd4(self.d5(self.pd4(self.up4(h4)))))
         h6 = self.d6(self.pd5(self.up5(h5)))
         h7 = self.d7(self.pd6(self.up6(h5)))
-        recon = self.sigmoid(h6)
-        scale_b = self.sigmoid(h7)
+        recon = self.sigmoid(self.uprecon(h6))
+        scale_b = self.sigmoid(self.upscale(h7))
         return recon, scale_b
 
 
@@ -266,7 +300,9 @@ class VAE(nn.Module):
             in_channels=dec_in_channels,
             in_h=dec_in_h,
             in_w=dec_in_w,
-            out_channels=self.n_channels)
+            out_channels=self.n_channels,
+            out_h=in_h,
+            out_w=in_w)
 
     def forward(self, x):
         mu, logvar = self.encoder(x)

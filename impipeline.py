@@ -23,22 +23,25 @@ import imnn
 import toylosses
 import toynn
 
+from geomstats.spd_matrices_space import SPDMatricesSpace
 import warnings
 warnings.filterwarnings("ignore")
 
+DATASET_NAME = 'mnist'
+
 HOME_DIR = '/scratch/users/nmiolane'
-OUTPUT_DIR = os.path.join(HOME_DIR, 'imoutput')
+OUTPUT_DIR = os.path.join(HOME_DIR, 'imoutput_%s' % DATASET_NAME)
 TRAIN_VAE_DIR = os.path.join(OUTPUT_DIR, 'train_vae')
 TRAIN_IWAE_DIR = os.path.join(OUTPUT_DIR, 'train_iwae')
 TRAIN_VEM_DIR = os.path.join(OUTPUT_DIR, 'train_vem')
 TRAIN_VEGAN_DIR = os.path.join(OUTPUT_DIR, 'train_vegan')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
-DEBUG = False
+DEBUG = True
 CATASTROPHE = False
 
 CUDA = torch.cuda.is_available()
-DEVICE = torch.device("cuda" if CUDA else "cpu")
+DEVICE = torch.device('cuda' if CUDA else 'cpu')
 
 # Seed
 SEED = 12345
@@ -49,12 +52,15 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # NN architecture
-IM_H = 28
-IM_W = 28
-DATA_DIM = 28 * 28  # MNIST, and connectomes size
+IM_H = 15
+IM_W = 15
+IMG_SHAPE = (IM_H, IM_W)
+DATA_DIM = IM_H * IM_W  # MNIST, and connectomes size
+if DATASET_NAME == 'connectomes':
+    DATA_DIM = int(IM_H * (IM_H + 1) / 2)
 LATENT_DIM = 30
-CNN = False
-RECONSTRUCTION_TYPE = 'riem'
+CNN = True
+RECONSTRUCTION_TYPE = 'bce'
 
 # MC samples
 N_VEM_ELBO = 1
@@ -68,9 +74,11 @@ N_MC_NLL = 5000
 # Train
 
 FRAC_VAL = 0.2
-DATASET_NAME = 'connectomes'
 
-BATCH_SIZE = {'mnist': 20, 'connectomes': 8}
+BATCH_SIZE = {
+    'mnist': 20,
+    'connectomes': 8,
+    'connectomes_schizophrenia': 16}
 PRINT_INTERVAL = 64
 torch.backends.cudnn.benchmark = True
 
@@ -85,7 +93,10 @@ N_BATCH_PER_EPOCH = 1e10
 
 if DEBUG:
     N_EPOCHS = 2
-    BATCH_SIZE = {'mnist': 8, 'connectomes': 2}
+    BATCH_SIZE = {
+        'mnist': 8,
+        'connectomes': 2,
+        'connectomes_schizophrenia': 2}
     N_VEM_ELBO = 1
     N_VEM_IWELBO = 399
     N_VAE = 1
@@ -171,7 +182,10 @@ class LoadData(luigi.Task):
 
     def run(self):
         train_loader, val_loader = datasets.get_loaders(
-            DATASET_NAME, FRAC_VAL, BATCH_SIZE[DATASET_NAME])
+            dataset_name=DATASET_NAME,
+            frac_val=FRAC_VAL,
+            batch_size=BATCH_SIZE[DATASET_NAME],
+            img_shape=IMG_SHAPE)
 
         with open(self.output()['train_loader'].path, 'wb') as pkl:
             pickle.dump(train_loader, pkl)
@@ -212,14 +226,27 @@ class TrainVAE(luigi.Task):
             start = time.time()
 
             # TODO(nina): Uniformize batch_data across datasets
-            if DATASET_NAME == 'cryo':
-                batch_data = np.vstack(
-                    [torch.unsqueeze(b, 0) for b in batch_data])
-                batch_data = torch.Tensor(batch_data).to(DEVICE)
-            elif DATASET_NAME != 'connectomes':
-                batch_data = batch_data[0].to(DEVICE)
-            else:
+            if DATASET_NAME == 'connectomes':
+                _, _, dim, _ = batch_data.shape
+                spd_space = SPDMatricesSpace(n=dim)
+                batch_data = batch_data[:, 0, :, :]
+                toylosses.is_spd(batch_data)
+                print('0 is spd')
+                print('batch_data')
+                print(batch_data)
+                batch_data_vec = spd_space.vector_from_symmetric_matrix(batch_data)
+                batch_data_test = spd_space.symmetric_matrix_from_vector(batch_data_vec)
+                print('batch_data_test')
+                print(batch_data_test)
                 batch_data = batch_data.to(DEVICE)
+                # assert batch_data == batch_data_test
+                toylosses.is_spd(batch_data_test)
+                print('1 is spd')
+
+                batch_data = batch_data_vec.unsqueeze(1)
+                batch_data = batch_data.to(DEVICE)
+            else:
+                batch_data = batch_data[0].to(DEVICE)
             n_batch_data = len(batch_data)
 
             for optimizer in optimizers.values():
@@ -353,10 +380,13 @@ class TrainVAE(luigi.Task):
                 continue
 
             start = time.time()
-            if DATASET_NAME == 'cryo':
-                batch_data = np.vstack(
-                    [torch.unsqueeze(b, 0) for b in batch_data])
-                batch_data = torch.Tensor(batch_data).to(DEVICE)
+            if DATASET_NAME == 'connectomes':
+                _, _, dim, _ = batch_data.shape
+                spd_space = SPDMatricesSpace(n=dim)
+                batch_data = batch_data[:, 0, :, :]
+                batch_data = spd_space.vector_from_symmetric_matrix(batch_data)
+                batch_data = batch_data.unsqueeze(1)
+                batch_data = batch_data.to(DEVICE)
             else:
                 batch_data = batch_data[0].to(DEVICE)
             n_batch_data = len(batch_data)

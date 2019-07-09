@@ -9,19 +9,39 @@ from torch.nn import functional as F
 import toynn
 
 from geomstats.spd_matrices_space import SPDMatricesSpace
+from geomstats.general_linear_group import GeneralLinearGroup
 
 
 CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if CUDA else "cpu")
 
 
+def is_pos_def(x):
+    eig, _ = torch.symeig(x, eigenvectors=True)
+    return (eig > 0).all()
+
+
+def is_spd(x):
+    if x.dim() == 2:
+        x = x.unsqueeze(0)
+    _, n, _ = x.shape
+    gln_group = GeneralLinearGroup(n=n)
+    for one_mat in x:
+        assert is_pos_def(one_mat)
+        assert gln_group.belongs(one_mat)
+
+
 def riem_square_distance(batch_data, batch_recon):
     _, dim = batch_data.shape
-    n = int(np.sqrt(dim))
+    n = int((np.sqrt(8 * dim + 1) - 1) / 2)
     spd_space = SPDMatricesSpace(n=n)
-    batch_data = batch_data.view(-1, n, n)
-    batch_recon = batch_recon.view(-1, n, n)
-    sq_dist = spd_space.metric.squared_dist(batch_data, batch_recon)
+
+    batch_data_mat = spd_space.symmetric_matrix_from_vector(batch_data)
+    batch_recon_mat = spd_space.symmetric_matrix_from_vector(batch_recon)
+    is_spd(batch_data_mat)
+    is_spd(batch_recon_mat)
+    sq_dist = spd_space.metric.squared_dist(
+        batch_data_mat, batch_recon_mat)
     return sq_dist
 
 
@@ -85,8 +105,6 @@ def reconstruction_loss(batch_data, batch_recon, batch_logvarx,
         return bce_average
 
     batch_logvarx = batch_logvarx.squeeze()
-    print('batchlog')
-    print(batch_logvarx.shape)
     if batch_logvarx.shape == (n_batch_data,):
         # Isotropic Gaussian
         scale_term = - data_dim / 2. * batch_logvarx

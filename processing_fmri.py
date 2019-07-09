@@ -7,6 +7,8 @@ import luigi
 import numpy as np
 import operator
 import os
+import re
+import shutil
 import skimage.transform
 
 import imtk
@@ -17,21 +19,32 @@ warnings.filterwarnings("ignore")
 
 DEBUG = False
 
+SESSIONS = [
+    'ses001-022', 'ses023-045', 'ses046-068', 'ses069-091', 'ses092-107']
+SELECTED_SESSIONS = 'ses069-091'
+
+# Memory Bug
+START_SES = 69
+STOP_SES = 91
+
+FETCH_FROM = 'open_neuro'
+
 MY_CONNECTOME_ADDRESS = (
     's3://openneuro/ds000031/'
     'ds000031_R1.0.4/compressed/'
-    'ds000031_R1.0.4_fmriprep_ses001-022.zip')
+    'ds000031_R1.0.4_fmriprep_%s.zip' % SELECTED_SESSIONS)
 
-IMG_WIDTH = 128
-IMG_HEIGHT = 128
+IMG_WIDTH = 96
+IMG_HEIGHT = 96
 IMG_SHAPE = (IMG_WIDTH, IMG_HEIGHT)
 DEFAULT_FMRI_SHAPE = (128, 128, 52)
 IMG_DIM = len(IMG_SHAPE)
-N_4D_NII_MAX = 12  # Memory error otherwise
 
 FRAC_TEST = 0.1
 FRAC_VAL = 0.2
+
 NEURO_DIR = '/neuro'
+BOLD_DIR = os.path.join(NEURO_DIR, 'boldscans')
 
 CSV_COLS = ['path', 'ses', 'task', 'run', 'time']
 
@@ -39,53 +52,88 @@ CSV_COLS = ['path', 'ses', 'task', 'run', 'time']
 class FetchMyConnectomeDataset(luigi.Task):
     """
     Download data from the My Connectome project.
+    Data processed by fmriprep:
+    https://legacy.openfmri.org/dataset/ds000031/
     """
-    target_path = os.path.join(NEURO_DIR, 'fmri.zip')
+    target_dir = os.path.join(BOLD_DIR, 'processed_4d')
 
     def requires(self):
         pass
 
-    def run(self):
+    def fetch_from_open_fmri(self):
         logging.info(
-            'Downloading first 22 sessions of My Connectome...')
+            'Downloading %s sessions of My Connectome,'
+            ' processed by fmriprep...' % SELECTED_SESSIONS)
+        # target_path = os.path.join(
+        #   BOLD_DIR, 'ds000031_R1.0.4_fmriprep_%s' % SELECTED_SESSIONS)
         os.system(
-            "aws --no-sign-request s3 cp %s /neuro/fmri/" %
-            MY_CONNECTOME_ADDRESS)
-        #os.system("gunzip %s" % self.target_path)
+            "aws --no-sign-request s3 cp %s %s" %
+            (MY_CONNECTOME_ADDRESS, BOLD_DIR))
+
+        zip_path = os.path.join(
+            BOLD_DIR, 'ds000031_R1.0.4_fmriprep_%s.zip' % SELECTED_SESSIONS)
+
+        os.system("unzip %s -d tmp/" % zip_path)
+        os.system(
+            "mv tmp/ds000031_R1.0.4/derivatives/"
+            "fmriprep_1.0.0/fmriprep/sub-01/* .")
+        os.system("rm -r tmp/*")
+        # TODO(nina): Put data in processed_4d format
+
+    def fetch_from_open_neuro(self):
+        if len(os.listdir(BOLD_DIR)) == 0:
+            os.system(
+                "aws s3 sync --no-sign-request "
+                "s3://openneuro.org/ds000031 %s" % BOLD_DIR)
+
+        sub_dir = os.path.join(BOLD_DIR, 'sub-01')
+        modality = 'func'
+        if not os.path.isdir(self.target_dir):
+            logging.info('Make directory %s...' % self.target_dir)
+            os.mkdir(self.target_dir)
+            os.chmod(self.target_dir, 0o777)
+
+        for ses_dir in os.listdir(sub_dir):
+            ses_dir = os.path.join(sub_dir, ses_dir)
+            if not os.path.isdir(ses_dir):
+                continue
+            for modality_dir in os.listdir(ses_dir):
+                modality_dir = os.path.join(ses_dir, modality_dir)
+                for filename in os.listdir(modality_dir):
+                    path = os.path.join(modality_dir, filename)
+                    if not re.search(modality, path):
+                        continue
+                    if not re.search('bold.nii.gz', path):
+                        continue
+
+                    target_path = os.path.join(self.target_dir, filename)
+                    logging.info('Moving %s to %s...' % (path, target_path))
+                    shutil.move(path, target_path)
+
+    def run(self):
+        if FETCH_FROM == 'open_fmri':
+            self.fetch_from_open_fmri()
+        elif FETCH_FROM == 'open_neuro':
+            self.fetch_from_open_neuro()
 
     def output(self):
-        return luigi.LocalTarget(self.target_path)
+        return luigi.LocalTarget(self.target_dir)
 
 
 class Process4Dto3D(luigi.Task):
     depth = int(DEFAULT_FMRI_SHAPE[2] * IMG_SHAPE[0] / 128)
     shape_str = '%dx%dx%d' % (IMG_SHAPE + (depth,))
-    # Only rfMRI here, other nii have been removed:
-    # (Get them back from open neuro)
-    input_dir = '/neuro/boldscans/processed_4d/'
-    target_dir = '/neuro/boldscans/processed_%dd/' % IMG_DIM
+
+    input_dir = os.path.join(BOLD_DIR, 'processed_4d')
+    target_dir = os.path.join(BOLD_DIR, 'processed_%dd' % IMG_DIM)
     csv_path = os.path.join(target_dir, 'metadata.csv')
 
     def requires(self):
-        pass
+        return FetchMyConnectomeDataset()
 
     def process_file(self, path, output):
         if os.path.isdir(path):
             return
-
-        logging.info('Processing 4D file %s' % path)
-        array_4d = imtk.get_array_from_path(path)
-
-        if array_4d.shape[:2] != IMG_SHAPE:
-            array_4d = skimage.transform.resize(
-                array_4d,
-                (IMG_SHAPE[0], IMG_SHAPE[1],
-                 self.depth, array_4d.shape[-1]))
-
-        array_4d_min = np.min(array_4d)
-        array_4d_max = np.max(array_4d)
-        array_4d = (array_4d - array_4d_min) / (
-            array_4d_max - array_4d_min)
 
         basename = os.path.basename(path)
         _, ses, task, run, _ = basename.split('_')
@@ -93,16 +141,33 @@ class Process4Dto3D(luigi.Task):
         task = task.split('-')[1]
         run = int(run.split('-')[1])
 
+        if ses < START_SES or ses > STOP_SES:
+            return
+
+        logging.info('Processing 4D file %s' % path)
+
         prefix = basename.split('.')[0]
 
+        array_4d = imtk.get_array_from_path(path)
+
+        if array_4d.shape[:2] != IMG_SHAPE:
+            array_4d = skimage.transform.resize(
+                array_4d,
+                (IMG_SHAPE[0], IMG_SHAPE[1],
+                 self.depth, array_4d.shape[-1]))
         for i_img in range(array_4d.shape[-1]):
             img = array_4d[:, :, :, i_img]
 
             if IMG_DIM == 2:
                 img = img[:, :, int(img.shape[2] / 2)]
 
+            img_min = np.min(img)
+            img_max = np.max(img)
+            img = (img - img_min) / (img_max - img_min)
+
             img_basename = prefix + '_%d' % i_img + '.npy'
             img_path = os.path.join(self.target_dir, img_basename)
+            logging.info('Saving %dD image %s' % (IMG_DIM, img_path))
             np.save(img_path, img)
 
             row = [img_path, ses, task, run, i_img]
@@ -121,8 +186,7 @@ class Process4Dto3D(luigi.Task):
             delayed(self.process_file)(
                 os.path.join(self.input_dir, relpath),
                 output)
-            for i_relpath, relpath in enumerate(os.listdir(self.input_dir))
-            if i_relpath < N_4D_NII_MAX)
+            for relpath in os.listdir(self.input_dir))
 
         with open(self.csv_path, 'w') as csv_file:
             writer = csv.writer(csv_file)
@@ -220,6 +284,10 @@ class MakeDataset(luigi.Task):
         train = np.asarray(train_output)
         val = np.asarray(val_output)
         test = np.asarray(test_output)
+
+        train = np.expand_dims(train, axis=1)
+        val = np.expand_dims(val, axis=1)
+        test = np.expand_dims(test, axis=1)
 
         np.save(self.output()['train_fmri'].path, train)
         np.save(self.output()['val_fmri'].path, val)
