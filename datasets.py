@@ -67,7 +67,7 @@ def get_loaders(dataset_name, frac_val=FRAC_VAL, batch_size=8,
         train_dataset, val_dataset = get_dataset_connectomes(
             img_shape=img_shape)
     elif dataset_name == 'connectomes_schizophrenia':
-        dataset, _ = get_dataset_connectomes_schizophrenia()
+        train_dataset, val_dataset, _ = get_dataset_connectomes_schizophrenia()
     elif dataset_name in ['mri', 'segmentation', 'fmri']:
         train_loader, val_loader = get_loaders_brain(
             dataset_name, frac_val, batch_size, img_shape, kwargs)
@@ -120,6 +120,14 @@ def normalization_linear(dataset):
     return dataset
 
 
+def r_pearson_from_z_score(mat):
+    if mat.ndim == 2:
+        mat = np.expand_dims(mat, 0)
+    _, dim, _ = mat.shape
+    r_mat = 1 / (dim - 1) * np.einsum('nik, njk->nij', mat, mat)
+    return r_mat
+
+
 def get_dataset_connectomes(img_shape=(100, 100), partial_corr=True):
     """
     Connectomes from HCP 1200:
@@ -153,9 +161,10 @@ def get_dataset_connectomes(img_shape=(100, 100), partial_corr=True):
         netmats = np.loadtxt(netmats_path)
         netmats = netmats.reshape(-1, n_nodes, n_nodes)
 
-        netmats = np.expand_dims(netmats, axis=1)
-        netmats = normalization_linear(netmats)
-        dataset = netmats
+        r_mats = r_pearson_from_z_score(netmats)
+
+        r_mats = np.expand_dims(r_mats, axis=1)
+        dataset = r_mats
 
         assert len(dataset.shape) == 4
 
@@ -202,7 +211,8 @@ def get_dataset_connectomes_schizophrenia():
 
     all_labels = np.array(all_labels)
     all_graphs = np.array(all_graphs)
-    return all_graphs, all_labels
+    train_dataset, val_dataset = split_dataset(all_graphs)
+    return train_dataset, val_dataset, all_labels
 
 
 def get_dataset_cryo_sphere(img_shape=IMG_SHAPE, kwargs=KWARGS):
