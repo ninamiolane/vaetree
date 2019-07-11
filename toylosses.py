@@ -33,11 +33,12 @@ def is_spd(x):
 
 def riem_square_distance(batch_data, batch_recon):
     _, dim = batch_data.shape
-    n = int((np.sqrt(8 * dim + 1) - 1) / 2)
+    n = int(np.sqrt(dim))
     spd_space = SPDMatricesSpace(n=n)
-
-    batch_data_mat = spd_space.symmetric_matrix_from_vector(batch_data)
-    batch_recon_mat = spd_space.symmetric_matrix_from_vector(batch_recon)
+    batch_data_mat = batch_data.resize(-1, n, n)
+    batch_recon_mat = batch_recon.resize(-1, n, n)
+    #batch_data_mat = spd_space.symmetric_matrix_from_vector(batch_data)
+    #batch_recon_mat = spd_space.symmetric_matrix_from_vector(batch_recon)
     is_spd(batch_data_mat)
     is_spd(batch_recon_mat)
     sq_dist = spd_space.metric.squared_dist(

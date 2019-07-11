@@ -43,14 +43,23 @@ def get_loaders(dataset_name, frac_val=FRAC_VAL, batch_size=8,
     # TODO(nina): Consistency in datasets: add channels for all
     logging.info('Loading data from dataset: %s' % dataset_name)
     if dataset_name == 'mnist':
-        dataset = datasets.MNIST(
+        mnist = datasets.MNIST(
             '../data', train=True, download=True,
-            transform=transforms.ToTensor())
+            transform=transforms.Compose(
+                [transforms.Resize(img_shape), transforms.ToTensor()]))
+        dataset = mnist.data
+        train_dataset, val_dataset = split_dataset(
+                dataset, frac_val=FRAC_VAL)
+        # TODO(nina): This does not resize the mnist dataset
+        # TODO(nina): Thus provides ByteTensor that fail
+
     elif dataset_name == 'omniglot':
         dataset = datasets.Omniglot(
             '../data', download=True,
             transform=transforms.Compose(
                 [transforms.Resize(img_shape), transforms.ToTensor()]))
+        train_dataset, val_dataset = split_dataset(
+            dataset, frac_val=frac_val)
     elif dataset_name in [
             'randomrot1D_nodisorder',
             'randomrot1D_multiPDB',
@@ -75,21 +84,17 @@ def get_loaders(dataset_name, frac_val=FRAC_VAL, batch_size=8,
     else:
         raise ValueError('Unknown dataset name: %s' % dataset_name)
 
-    train_dataset = torch.Tensor(train_dataset)
-    val_dataset = torch.Tensor(val_dataset)
-    if dataset_name in ['mnist']:
-        train_tensor = train_dataset.dataset.data[train_dataset.indices]
-        val_tensor = val_dataset.dataset.data[val_dataset.indices]
-        logging.info(
-            '-- Train tensor: (%d, %d, %d)' % train_tensor.shape)
-        logging.info(
-            '-- Valid tensor: (%d, %d, %d)' % val_tensor.shape)
+    shape = train_dataset.shape
+    logging.info(
+        'Train tensor: (' + ('%s, ' * len(shape) % tuple(shape))[:-2] + ')')
+    shape = val_dataset.shape
+    logging.info(
+        'Train tensor: (' + ('%s, ' * len(shape) % tuple(shape))[:-2] + ')')
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=batch_size, shuffle=True, **kwargs)
-
     return train_loader, val_loader
 
 
@@ -212,6 +217,9 @@ def get_dataset_connectomes_schizophrenia():
     all_labels = np.array(all_labels)
     all_graphs = np.array(all_graphs)
     train_dataset, val_dataset = split_dataset(all_graphs)
+    train_dataset = torch.Tensor(train_dataset)
+    val_dataset = torch.Tensor(val_dataset)
+
     return train_dataset, val_dataset, all_labels
 
 

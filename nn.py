@@ -30,6 +30,8 @@ DIS_C = 64
 # for a more compact code, use log2(image_size) for #layers.
 # TODO(nina): Use nn.parallel to speed up?
 
+# Note: Torch convention is N, C, D, H, W
+
 
 def cnn_output_size(in_w, in_h, kernel_size=ENC_KS,
                     stride=ENC_STR,

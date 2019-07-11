@@ -23,11 +23,10 @@ import imnn
 import toylosses
 import toynn
 
-from geomstats.spd_matrices_space import SPDMatricesSpace
 import warnings
 warnings.filterwarnings("ignore")
 
-DATASET_NAME = 'mnist'
+DATASET_NAME = 'connectomes'
 
 HOME_DIR = '/scratch/users/nmiolane'
 OUTPUT_DIR = os.path.join(HOME_DIR, 'imoutput_%s' % DATASET_NAME)
@@ -55,12 +54,14 @@ torch.backends.cudnn.benchmark = False
 IM_H = 15
 IM_W = 15
 IMG_SHAPE = (IM_H, IM_W)
+IMG_DIM = len(IMG_SHAPE)
 DATA_DIM = IM_H * IM_W  # MNIST, and connectomes size
-if DATASET_NAME == 'connectomes':
-    DATA_DIM = int(IM_H * (IM_H + 1) / 2)
 LATENT_DIM = 30
 CNN = True
-RECONSTRUCTION_TYPE = 'bce'
+SPD = True
+if SPD:
+    CNN = True
+RECONSTRUCTION_TYPE = 'ssd'
 
 # MC samples
 N_VEM_ELBO = 1
@@ -227,24 +228,7 @@ class TrainVAE(luigi.Task):
 
             # TODO(nina): Uniformize batch_data across datasets
             if DATASET_NAME == 'connectomes':
-                _, _, dim, _ = batch_data.shape
-                spd_space = SPDMatricesSpace(n=dim)
-                batch_data = batch_data[:, 0, :, :]
-                toylosses.is_spd(batch_data)
-                print('0 is spd')
-                print('batch_data')
-                print(batch_data)
-                batch_data_vec = spd_space.vector_from_symmetric_matrix(batch_data)
-                batch_data_test = spd_space.symmetric_matrix_from_vector(batch_data_vec)
-                print('batch_data_test')
-                print(batch_data_test)
-                batch_data = batch_data.to(DEVICE)
-                # assert batch_data == batch_data_test
-                toylosses.is_spd(batch_data_test)
-                print('1 is spd')
-
-                batch_data = batch_data_vec.unsqueeze(1)
-                batch_data = batch_data.to(DEVICE)
+                batch_data = batch_data.to(DEVICE).float()
             else:
                 batch_data = batch_data[0].to(DEVICE)
             n_batch_data = len(batch_data)
@@ -381,12 +365,7 @@ class TrainVAE(luigi.Task):
 
             start = time.time()
             if DATASET_NAME == 'connectomes':
-                _, _, dim, _ = batch_data.shape
-                spd_space = SPDMatricesSpace(n=dim)
-                batch_data = batch_data[:, 0, :, :]
-                batch_data = spd_space.vector_from_symmetric_matrix(batch_data)
-                batch_data = batch_data.unsqueeze(1)
-                batch_data = batch_data.to(DEVICE)
+                batch_data = batch_data.to(DEVICE).float()
             else:
                 batch_data = batch_data[0].to(DEVICE)
             n_batch_data = len(batch_data)
@@ -479,10 +458,15 @@ class TrainVAE(luigi.Task):
             val_loader = pickle.load(pkl)
 
         if CNN:
+            print('spd?')
+            print(SPD)
             vae = imnn.VAECNN(
                 latent_dim=LATENT_DIM,
+                im_c=1,
                 im_h=IM_H,
-                im_w=IM_W)
+                im_w=IM_W,
+                cnn_dim=IMG_DIM,
+                spd=SPD)
             vae.to(DEVICE)
         else:
             vae = imnn.VAE(
