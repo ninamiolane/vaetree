@@ -458,8 +458,6 @@ class TrainVAE(luigi.Task):
             val_loader = pickle.load(pkl)
 
         if CNN:
-            print('spd?')
-            print(SPD)
             vae = imnn.VAECNN(
                 latent_dim=LATENT_DIM,
                 im_c=1,

@@ -21,7 +21,7 @@ CNN_DIM = 2
 VAECNN_LATENT_DIM = 20
 
 KS = (4, 4, 4)
-STR = (4, 4, 4)
+STR = (2, 2, 2)
 PAD = (15, 15, 15)
 OUT_PAD = (0, 0, 0)  # No output padding
 DIL = (1, 1, 1)  # No dilation
@@ -293,7 +293,8 @@ class VAE(nn.Module):
 def spd_layer(x):
     n_data = x.shape[0]
     n_channels = x.shape[1]
-    sq_dist = torch.zeros(n_data, n_channels, n_channels)
+    sq_dist = torch.zeros(
+        n_data, n_channels, n_channels).to(DEVICE)
     for i_channel in range(n_channels):
         for j_channel in range(i_channel):
             sq_dist[:, i_channel, j_channel] = torch.sum(
@@ -411,8 +412,11 @@ class DecoderCNN(nn.Module):
         # Layers given in reversed order
 
         # Conv transpose block (last)
+        self.convt2_out_channels = self.im_c
+        if spd:
+            self.convt2_out_channels = self.im_w
         self.convt2 = nn_conv_transpose(
-            in_channels=OUT_CHANNELS1, out_channels=self.im_c,
+            in_channels=OUT_CHANNELS1, out_channels=self.convt2_out_channels,
             kernel_size=KS, padding=PAD, stride=STR)
         self.in_shape2 = conv_transpose_input_size(
             out_shape=self.out_shape,
@@ -456,23 +460,17 @@ class DecoderCNN(nn.Module):
         assert x.shape[1:] == self.in_shape1
         x = self.leakyrelu(self.convt1(x, output_size=self.in_shape2[1:]))
 
-        if not self.spd:
-            assert x.shape[1:] == self.in_shape2
-            recon_x = self.sigmoid(self.convt2(x, output_size=self.out_shape[1:]))
-        else:
-            recon_x = spd_layer(x)
-            print('recon_x.shape')
-            print(recon_x.shape)
-            print(self.out_shape)
-            # TODO(nina): something here so that
-            # the output image has the right shape
-            # Some upsampling or CNN hacking
+        assert x.shape[1:] == self.in_shape2
+        x = self.sigmoid(self.convt2(x, output_size=self.out_shape[1:]))
+
+        if self.spd:
+            x = spd_layer(x)
 
         # Output flat recon_x
         # Note: this also multiplies the channels, assuming that im_c=1.
         # TODO(nina): Bring back the channels as their full dimension
         out_dim = functools.reduce((lambda x, y: x * y), self.out_shape)
-        recon_x = recon_x.view(-1, out_dim)
+        recon_x = x.view(-1, out_dim)
         return recon_x, torch.zeros_like(recon_x)  # HACK
 
 
