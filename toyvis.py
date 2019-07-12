@@ -527,7 +527,8 @@ def show_samples(output_dir, fig, outer, i, algo_name='vae',
 
     for i_recon, one_x_recon in enumerate(x_recon):
         ax = plt.Subplot(fig, inner[i_recon])
-        one_x_recon = one_x_recon.reshape((28, 28))
+        img_side = int(np.sqrt(data_dim))
+        one_x_recon = one_x_recon.reshape((img_side, img_side))
         ax.imshow(one_x_recon, cmap=cmap)
         ax.get_yaxis().set_visible(False)
         ax.get_xaxis().set_visible(False)

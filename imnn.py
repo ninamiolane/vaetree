@@ -21,13 +21,13 @@ CNN_DIM = 2
 VAECNN_LATENT_DIM = 20
 
 KS = (4, 4, 4)
-STR = (2, 2, 2)
-PAD = (15, 15, 15)
+STR = (4, 4, 4)
+PAD = (6, 6, 6)
 OUT_PAD = (0, 0, 0)  # No output padding
-DIL = (1, 1, 1)  # No dilation
-OUT_CHANNELS1 = 64
-OUT_CHANNELS2 = 128
-OUT_FC_FEATURES = 1024
+DIL = (2, 2, 2)  # No dilation
+OUT_CHANNELS1 = 32
+OUT_CHANNELS2 = 64
+OUT_FC_FEATURES = 256
 if CNN_DIM == 2:
     KS = KS[1:]
     STR = STR[1:]
@@ -174,7 +174,7 @@ def reparametrize(mu, logvar, n_samples=1):
 
     z = eps * std_expanded + mu_expanded
     z_flat = z.resize(n_samples * n_batch_data, latent_dim)
-    z_flat = z_flat.squeeze()  # case where latent_dim = 1: squeeze last dim
+    z_flat = z_flat.squeeze(dim=1)  # case where latent_dim = 1: squeeze last dim
     return z_flat
 
 
@@ -294,7 +294,7 @@ def spd_layer(x):
     n_data = x.shape[0]
     n_channels = x.shape[1]
     sq_dist = torch.zeros(
-        n_data, n_channels, n_channels).to(DEVICE)
+        n_data, n_channels, n_channels)
     for i_channel in range(n_channels):
         for j_channel in range(i_channel):
             sq_dist[:, i_channel, j_channel] = torch.sum(
@@ -302,7 +302,7 @@ def spd_layer(x):
 
     sigma2 = torch.mean(torch.sqrt(sq_dist)) ** 2
     sq_dist = sq_dist + sq_dist.permute(0, 2, 1)
-    spd = torch.exp(- sq_dist / (2 * sigma2))
+    spd = torch.exp(- sq_dist / (2 * sigma2)).to(DEVICE)
     return spd
 
 

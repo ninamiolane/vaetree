@@ -89,7 +89,7 @@ def get_loaders(dataset_name, frac_val=FRAC_VAL, batch_size=8,
         'Train tensor: (' + ('%s, ' * len(shape) % tuple(shape))[:-2] + ')')
     shape = val_dataset.shape
     logging.info(
-        'Train tensor: (' + ('%s, ' * len(shape) % tuple(shape))[:-2] + ')')
+        'Val tensor: (' + ('%s, ' * len(shape) % tuple(shape))[:-2] + ')')
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=batch_size, shuffle=True, **kwargs)

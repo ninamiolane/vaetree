@@ -105,7 +105,7 @@ def reconstruction_loss(batch_data, batch_recon, batch_logvarx,
         bce_average = bce_total / n_batch_data
         return bce_average
 
-    batch_logvarx = batch_logvarx.squeeze()
+    batch_logvarx = batch_logvarx.squeeze(dim=1)
     if batch_logvarx.shape == (n_batch_data,):
         # Isotropic Gaussian
         scale_term = - data_dim / 2. * batch_logvarx

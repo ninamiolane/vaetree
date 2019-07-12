@@ -36,7 +36,7 @@ TRAIN_VEM_DIR = os.path.join(OUTPUT_DIR, 'train_vem')
 TRAIN_VEGAN_DIR = os.path.join(OUTPUT_DIR, 'train_vegan')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
-DEBUG = True
+DEBUG = False
 CATASTROPHE = False
 
 CUDA = torch.cuda.is_available()
@@ -70,7 +70,7 @@ N_VAE = 1  # N_VEM_ELBO + N_VEM_IWELBO
 N_IWAE = N_VEM_ELBO + N_VEM_IWELBO
 
 # for IWELBO to estimate the NLL
-N_MC_NLL = 5000
+N_MC_NLL = 500
 
 # Train
 
@@ -222,6 +222,17 @@ class TrainVAE(luigi.Task):
         n_data = len(train_loader.dataset)
         n_batches = len(train_loader)
         for batch_idx, batch_data in enumerate(train_loader):
+            if batch_idx == 0:
+                shape = batch_data.shape
+                logging.info(
+                    'Starting Train Epoch %d with %d batches, ' % (
+                        epoch, n_batches)
+                    + 'each of shape: '
+                    '(' + ('%s, ' * len(shape) % shape)[:-2] + ')')
+                if CNN:
+                    logging.info('CNN mode.')
+                if SPD:
+                    logging.info('SPD mode.')
             if DEBUG and batch_idx > N_BATCH_PER_EPOCH:
                 continue
             start = time.time()
@@ -232,6 +243,11 @@ class TrainVAE(luigi.Task):
             else:
                 batch_data = batch_data[0].to(DEVICE)
             n_batch_data = len(batch_data)
+
+            if batch_idx == 0:
+                logging.info(
+                    'Memory allocated in CUDA: %d Bytes.'
+                    % torch.cuda.memory_allocated())
 
             for optimizer in optimizers.values():
                 optimizer.zero_grad()
@@ -360,6 +376,17 @@ class TrainVAE(luigi.Task):
         n_data = len(val_loader.dataset)
         n_batches = len(val_loader)
         for batch_idx, batch_data in enumerate(val_loader):
+            if batch_idx == 0:
+                shape = batch_data.shape
+                logging.info(
+                    'Starting Val Epoch %d with %d batches, ' % (
+                        epoch, n_batches)
+                    + 'each of shape: '
+                    '(' + ('%s, ' * len(shape) % shape)[:-2] + ')')
+                if CNN:
+                    logging.info('CNN mode.')
+                if SPD:
+                    logging.info('SPD mode.')
             if DEBUG and batch_idx > N_BATCH_PER_EPOCH:
                 continue
 
@@ -386,7 +413,8 @@ class TrainVAE(luigi.Task):
                 N_VAE*n_batch_data, DATA_DIM)
 
             loss_reconstruction = toylosses.reconstruction_loss(
-                batch_data_flat, batch_recon, batch_logvarx, reconstruction_type=RECONSTRUCTION_TYPE)
+                batch_data_flat, batch_recon, batch_logvarx,
+                reconstruction_type=RECONSTRUCTION_TYPE)
 
             loss_regularization = toylosses.regularization_loss(
                 mu, logvar)  # kld
@@ -399,6 +427,7 @@ class TrainVAE(luigi.Task):
             #     decoder, batch_data, mu, logvar, n_is_samples=N_MC_TOT, reconstruction_type=RECONSTRUCTION_TYPE)
 
             # Neg IW-ELBO is the estimator for NLL for a high N_MC_NLL
+            # TODO(nina): Release memory after neg_iwelbo computation
             neg_loglikelihood = toylosses.neg_iwelbo(
                 decoder, batch_data, mu, logvar, n_is_samples=N_MC_NLL, reconstruction_type=RECONSTRUCTION_TYPE)
 
