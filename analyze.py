@@ -14,12 +14,10 @@ DEVICE = 'cuda'
 N_PCA_COMPONENTS = 5
 
 
-def latent_projection(output_dir, dataset, epoch_id=None):
-    if epoch_id is None:
-        encoder = vis.load_last_module(output_dir, 'encoder')
-    else:
-        encoder = vis.load_module(
-            output_dir, 'encoder', epoch_id=epoch_id)
+def latent_projection(output, dataset_path, epoch_id=None):
+    dataset = np.load(dataset_path)
+    encoder = vis.load_module(
+        output, module_name='encoder', epoch_id=epoch_id)
     dataset = torch.Tensor(dataset)
     dataset = torch.utils.data.TensorDataset(dataset)
     loader = torch.utils.data.DataLoader(
@@ -66,7 +64,7 @@ def plot_kde(ax, projected_mus):
     return ax
 
 
-def get_subset_fmri(output_dir, metadata_csv, ses_ids=None, task_names=None,
+def get_subset_fmri(output, metadata_csv, ses_ids=None, task_names=None,
                     epoch_id=None, n_pcs=2):
     paths_subset = []
 
@@ -101,7 +99,7 @@ def get_subset_fmri(output_dir, metadata_csv, ses_ids=None, task_names=None,
     subset = np.array(subset)
 
     # Note: dataset needs to be unshuffled here
-    mus = latent_projection(output_dir, subset, epoch_id=epoch_id)
+    mus = latent_projection(output, subset, epoch_id=epoch_id)
     _, projected_mus = pca_projection(mus, n_pcs)
 
     labels_subset = {

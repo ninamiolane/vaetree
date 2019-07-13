@@ -14,7 +14,6 @@ import pickle
 
 import torch
 import torch.autograd
-import torch.nn as tnn
 from torch.nn import functional as F
 import torch.optim
 import torch.utils.data
@@ -24,6 +23,7 @@ import datasets
 import losses
 import metrics
 import nn
+import train_utils
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -33,7 +33,7 @@ DATASET_NAME = 'connectomes'
 
 HOME_DIR = '/scratch/users/nmiolane'
 OUTPUT_DIR = os.path.join(HOME_DIR, 'output_%s' % DATASET_NAME)
-TRAIN_DIR = os.path.join(OUTPUT_DIR, 'training')
+TRAIN_DIR = os.path.join(OUTPUT_DIR, 'train_vae')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
 
@@ -45,17 +45,27 @@ DEVICE = torch.device("cuda" if CUDA else "cpu")
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 torch.manual_seed(SEED)
 
-IMG_WIDTH = 100
-IMG_HEIGHT = 100
-IMG_SHAPE = (IMG_WIDTH, IMG_HEIGHT)
+IMG_W = 100
+IMG_H = 100
+IMG_SHAPE = (IMG_W, IMG_H)
+DATA_DIM = IMG_H * IMG_W  # MNIST, and connectomes size
+IMG_DIM = len(IMG_SHAPE)
+LATENT_DIM = 3
+
+NN_ARCHITECTURE = {
+    'img_shape': IMG_SHAPE,
+    'img_dim': IMG_DIM,
+    'data_dim': DATA_DIM,
+    'latent_dim': LATENT_DIM}
 
 BATCH_SIZES = {15: 128, 25: 64, 64: 32, 96: 32, 100: 8, 128: 8}
-BATCH_SIZE = BATCH_SIZES[IMG_WIDTH]
+BATCH_SIZE = BATCH_SIZES[IMG_W]
 FRAC_TEST = 0.1
 FRAC_VAL = 0.2
 N_SES_DEBUG = 3
 if DEBUG:
     FRAC_VAL = 0.5
+CKPT_PERIOD = 1
 
 AXIS = {'fmri': 3, 'mri': 1, 'seg': 1}
 
@@ -71,8 +81,6 @@ N_EPOCHS = 60
 if DEBUG:
     N_EPOCHS = 2
     N_FILEPATHS = 10
-
-LATENT_DIM = 3
 
 LR = 15e-6
 if 'adversarial' in RECONSTRUCTIONS:
@@ -91,12 +99,10 @@ TEMPLATE_NAME = 'report.jinja2'
 
 
 class Train(luigi.Task):
-    path = TRAIN_DIR
-    imgs_path = os.path.join(TRAIN_DIR, 'imgs')
-    models_path = os.path.join(TRAIN_DIR, 'models')
-    losses_path = os.path.join(TRAIN_DIR, 'losses')
-    train_losses_path = os.path.join(path, 'train_losses.pkl')
-    val_losses_path = os.path.join(path, 'val_losses.pkl')
+    train_dir = TRAIN_DIR
+    losses_path = os.path.join(train_dir, 'losses')
+    train_losses_path = os.path.join(train_dir, 'train_losses.pkl')
+    val_losses_path = os.path.join(train_dir, 'val_losses.pkl')
 
     def requires(self):
         pass
@@ -171,10 +177,10 @@ class Train(luigi.Task):
                 if batch_idx < n_batches - 3:
                     continue
             if DATASET_NAME not in ['cryo', 'cryo_sim',
-                                 'cryo_exp', 'connectomes']:
+                                    'cryo_exp', 'connectomes']:
                 batch_data = batch_data[0].to(DEVICE)
             else:
-                batch_data = batch_data.to(DEVICE)
+                batch_data = batch_data.to(DEVICE).float()
             n_batch_data = len(batch_data)
 
             for optimizer in optimizers.values():
@@ -234,7 +240,7 @@ class Train(luigi.Task):
                 # update the discriminator with the reconstruction loss.
                 optimizers['discriminator_reconstruction'].step()
 
-                # -- Update Generator/Decoder
+                # -- Update Generator/DecoderGAN
                 # Note that we need to do a forward pass with detached vars
                 # in order not to propagate gradients through the encoder
                 batch_recon_detached, _ = decoder(z.detach())
@@ -327,19 +333,19 @@ class Train(luigi.Task):
                     win=data_win,
                     opts=dict(
                         title='Train Epoch {}: Data'.format(epoch),
-                        width=150*IMG_WIDTH/64, height=150*IMG_HEIGHT/64))
+                        width=150*IMG_W/64, height=150*IMG_H/64))
                 recon_win = train_vis.image(
                     batch_recon[0],
                     win=recon_win,
                     opts=dict(
                         title='Train Epoch {}: Reconstruction'.format(epoch),
-                        width=150*IMG_WIDTH/64, height=150*IMG_HEIGHT/64))
+                        width=150*IMG_W/64, height=150*IMG_H/64))
                 from_prior_win = train_vis.image(
                     batch_from_prior[0],
                     win=from_prior_win,
                     opts=dict(
                         title='Train Epoch {}: From prior'.format(epoch),
-                        width=150*IMG_WIDTH/64, height=150*IMG_HEIGHT/64))
+                        width=150*IMG_W/64, height=150*IMG_H/64))
 
             total_loss_reconstruction += loss_reconstruction.item()
             total_loss_regularization += loss_regularization.item()
@@ -395,10 +401,10 @@ class Train(luigi.Task):
                     if batch_idx < n_batches - 3:
                         continue
                 if DATASET_NAME not in ['cryo', 'cryo_sim',
-                                     'cryo_exp', 'connectomes']:
+                                        'cryo_exp', 'connectomes']:
                     batch_data = batch_data[0].to(DEVICE)
                 else:
-                    batch_data = batch_data.to(DEVICE)
+                    batch_data = batch_data.to(DEVICE).float()
                 n_batch_data = batch_data.shape[0]
 
                 encoder = modules['encoder']
@@ -444,7 +450,7 @@ class Train(luigi.Task):
                         loss_dis_data
                         + loss_dis_from_prior)
 
-                    # -- Compute Generator/Decoder Loss
+                    # -- Compute Generator/DecoderGAN Loss
                     # Note that we need to do a forward pass with detached vars
                     # in order not to propagate gradients through the encoder
                     batch_recon_detached, _ = decoder(z.detach())
@@ -505,7 +511,7 @@ class Train(luigi.Task):
                 total_loss += loss.item()
 
                 if batch_idx == n_batches - 1:
-                    # On last batch: visualize and save
+                    # On last batch: visualize
                     batch_data = batch_data.cpu().numpy()
                     batch_recon = batch_recon.cpu().numpy()
                     batch_from_prior = batch_from_prior.cpu().numpy()
@@ -516,36 +522,23 @@ class Train(luigi.Task):
                         win=data_win,
                         opts=dict(
                             title='Val Epoch {}: Data'.format(epoch),
-                            width=150*IMG_WIDTH/64,
-                            height=150*IMG_HEIGHT/64))
+                            width=150*IMG_W/64,
+                            height=150*IMG_H/64))
                     recon_win = vis.image(
                         batch_recon[0][0],
                         win=recon_win,
                         opts=dict(
                             title='Val Epoch {}: Reconstruction'.format(
                                 epoch),
-                            width=150*IMG_WIDTH/64,
-                            height=150*IMG_HEIGHT/64))
+                            width=150*IMG_W/64,
+                            height=150*IMG_H/64))
                     from_prior_win = vis.image(
                         batch_from_prior[0][0],
                         win=from_prior_win,
                         opts=dict(
                             title='Val Epoch {}: From prior'.format(epoch),
-                            width=150*IMG_WIDTH/64,
-                            height=150*IMG_HEIGHT/64))
-
-                    # Save only last batch
-                    data_path = os.path.join(
-                        self.imgs_path, 'epoch_{}_data.npy'.format(epoch))
-                    recon_path = os.path.join(
-                        self.imgs_path, 'epoch_{}_recon.npy'.format(epoch))
-                    from_prior_path = os.path.join(
-                        self.imgs_path,
-                        'epoch_{}_from_prior.npy'.format(epoch))
-
-                    np.save(data_path, batch_data)
-                    np.save(recon_path, batch_recon)
-                    np.save(from_prior_path, batch_from_prior)
+                            width=150*IMG_W/64,
+                            height=150*IMG_H/64))
 
         average_loss_reconstruction = total_loss_reconstruction / n_data
         average_loss_regularization = total_loss_regularization / n_data
@@ -565,7 +558,7 @@ class Train(luigi.Task):
         return val_losses
 
     def run(self):
-        for directory in (self.imgs_path, self.models_path, self.losses_path):
+        for directory in (self.train_dir, self.losses_path):
             if not os.path.isdir(directory):
                 os.mkdir(directory)
                 os.chmod(directory, 0o777)
@@ -576,7 +569,7 @@ class Train(luigi.Task):
                 batch_size=BATCH_SIZE,
                 img_shape=IMG_SHAPE)
         torch.cuda.empty_cache()
-        vae = nn.VAE(
+        vae = nn.VAEGAN(
             n_channels=1,
             latent_dim=LATENT_DIM,
             in_w=IMG_SHAPE[0],
@@ -620,39 +613,16 @@ class Train(luigi.Task):
                 lr=LR,
                 betas=(BETA1, BETA2))
 
-        def init_xavier_normal(m):
-            if type(m) == tnn.Linear:
-                tnn.init.xavier_normal_(m.weight)
-            if type(m) == tnn.Conv2d:
-                tnn.init.xavier_normal_(m.weight)
-
-        def init_kaiming_normal(m):
-            if type(m) == tnn.Linear:
-                tnn.init.kaiming_normal_(m.weight)
-            if type(m) == tnn.Conv2d:
-                tnn.init.kaiming_normal_(m.weight)
-
-        def init_custom(m):
-            classname = m.__class__.__name__
-            if classname.find('Conv') != -1:
-                m.weight.data.normal_(0.0, 0.02)
-            elif classname.find('BatchNorm') != -1:
-                m.weight.data.normal_(1.0, 0.02)
-                m.bias.data.fill_(0)
-
         for module in modules.values():
             if WEIGHTS_INIT == 'xavier':
-                module.apply(init_xavier_normal)
+                module.apply(train_utils.init_xavier_normal)
             elif WEIGHTS_INIT == 'kaiming':
-                module.apply(init_kaiming_normal)
+                module.apply(train_utils.init_kaiming_normal)
             elif WEIGHTS_INIT == 'custom':
-                module.apply(init_custom)
+                module.apply(train_utils.init_custom)
             else:
                 raise NotImplementedError(
                     'This weight initialization is not implemented.')
-
-        train_losses_all_epochs = []
-        val_losses_all_epochs = []
 
         vis2 = visdom.Visdom()
         vis2.env = 'losses'
@@ -671,13 +641,20 @@ class Train(luigi.Task):
                       title='Val loss',
                       legend=['loss']))
 
-        for epoch in range(N_EPOCHS):
+        m, o, s, t, v = train_utils.init_training(
+            self.train_dir, modules, optimizers)
+        modules, optimizers, start_epoch = m, o, s
+        train_losses_all_epochs, val_losses_all_epochs = t, v
+        for epoch in range(start_epoch, N_EPOCHS):
             train_losses = self.train(
                 epoch, train_loader, modules, optimizers,
                 RECONSTRUCTIONS, REGULARIZATIONS)
             val_losses = self.val(
                 epoch, val_loader, modules,
                 RECONSTRUCTIONS, REGULARIZATIONS)
+
+            train_losses_all_epochs.append(train_losses)
+            val_losses_all_epochs.append(val_losses)
 
             # TODO(nina): Fix bug that losses do not show on visdom.
             train_loss = train_losses['total']
@@ -693,29 +670,21 @@ class Train(luigi.Task):
                 win=val_loss_window,
                 update='append')
 
-            for module_name, module in modules.items():
-                module_path = os.path.join(
-                    self.models_path,
-                    'epoch_{}_{}_'
-                    'train_loss_{:.4f}_val_loss_{:.4f}.pth'.format(
-                        epoch, module_name,
-                        train_losses['total'], val_losses['total']))
-                torch.save(module, module_path)
+            if epoch % CKPT_PERIOD == 0:
+                train_utils.save_checkpoint(
+                    epoch=epoch, modules=modules, optimizers=optimizers,
+                    dir_path=self.train_dir,
+                    train_losses_all_epochs=train_losses_all_epochs,
+                    val_losses_all_epochs=val_losses_all_epochs,
+                    nn_architecture=NN_ARCHITECTURE)
 
-            train_val_path = os.path.join(
-                self.losses_path, 'epoch_{}.pkl'.format(epoch))
-            with open(train_val_path, 'wb') as pkl:
-                pickle.dump(
-                    {'train': train_losses,
-                     'val': val_losses},
-                    pkl)
-
-        train_losses_all_epochs.append(train_losses)
-        val_losses_all_epochs.append(val_losses)
+        for module_name, module in modules.items():
+            module_path = os.path.join(
+                self.train_dir, '{}.pth'.format(module_name))
+            torch.save(module, module_path)
 
         with open(self.output()['train_losses'].path, 'wb') as pkl:
             pickle.dump(train_losses_all_epochs, pkl)
-
         with open(self.output()['val_losses'].path, 'wb') as pkl:
             pickle.dump(val_losses_all_epochs, pkl)
 

@@ -1,7 +1,6 @@
 """Data processing pipeline."""
 
 import datetime as dt
-import glob
 import jinja2
 import logging
 import luigi
@@ -14,7 +13,6 @@ import time
 import torch
 import torch.autograd
 from torch.nn import functional as F
-import torch.nn as tnn
 import torch.optim
 import torch.utils.data
 
@@ -22,6 +20,7 @@ import datasets
 import imnn
 import toylosses
 import toynn
+import train_utils
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -50,18 +49,26 @@ torch.manual_seed(SEED)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
-# NN architecture
-IM_H = 15
-IM_W = 15
-IMG_SHAPE = (IM_H, IM_W)
+# NN nn_architecture
+IMG_H = 15
+IMG_W = 15
+IMG_SHAPE = (IMG_H, IMG_W)
 IMG_DIM = len(IMG_SHAPE)
-DATA_DIM = IM_H * IM_W  # MNIST, and connectomes size
-LATENT_DIM = 30
+DATA_DIM = IMG_H * IMG_W  # MNIST, and connectomes size
+LATENT_DIM = 10
 CNN = True
 SPD = True
 if SPD:
     CNN = True
-RECONSTRUCTION_TYPE = 'ssd'
+RECONSTRUCTION_TYPE = 'riem'
+
+NN_ARCHITECTURE = {
+    'img_shape': IMG_SHAPE,
+    'img_dim': IMG_DIM,
+    'data_dim': DATA_DIM,
+    'latent_dim': LATENT_DIM,
+    'cnn': CNN,
+    'spd': SPD}
 
 # MC samples
 N_VEM_ELBO = 1
@@ -85,7 +92,7 @@ torch.backends.cudnn.benchmark = True
 
 N_EPOCHS = 25
 CKPT_PERIOD = 1
-LR = 1e-4
+LR = 1e-3
 
 BETA1 = 0.5
 BETA2 = 0.999
@@ -114,66 +121,6 @@ TEMPLATE_ENVIRONMENT = jinja2.Environment(
 TEMPLATE_NAME = 'report.jinja2'
 
 
-def save_checkpoint(epoch, modules, optimizers, dir_path,
-                    train_losses_all_epochs, val_losses_all_epochs,
-                    ckpt_period=CKPT_PERIOD):
-    if epoch % ckpt_period == 0:
-        checkpoint = {}
-        for module_name in modules.keys():
-            module = modules[module_name]
-            optimizer = optimizers[module_name]
-            checkpoint[module_name] = {
-                'module_state_dict': module.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict()}
-            checkpoint['epoch'] = epoch
-            checkpoint['train_losses'] = train_losses_all_epochs
-            checkpoint['val_losses'] = val_losses_all_epochs
-
-        checkpoint_path = os.path.join(
-            dir_path, 'epoch_%d_checkpoint.pth' % epoch)
-        torch.save(checkpoint, checkpoint_path)
-
-
-def init_xavier_normal(m):
-    if type(m) == tnn.Linear:
-        tnn.init.xavier_normal_(m.weight)
-
-
-def init_training(models_path, modules, optimizers):
-    """Initialization: Load ckpts or xavier normal init."""
-    start_epoch = 0
-    train_losses_all_epochs = []
-    val_losses_all_epochs = []
-
-    path_base = os.path.join(
-        models_path, 'epoch_*_checkpoint.pth')
-    ckpts = glob.glob(path_base)
-    if len(ckpts) == 0:
-        logging.info('No checkpoints found. Initializing with Xavier Normal.')
-        for module in modules.values():
-            module.apply(init_xavier_normal)
-    else:
-        ckpts_ids_and_paths = [
-            (int(f.split('_')[2]), f) for f in ckpts]
-        ckpt_id, ckpt_path = max(
-            ckpts_ids_and_paths, key=lambda item: item[0])
-        logging.info('Found checkpoints. Initializing with %s.' % ckpt_path)
-        ckpt = torch.load(ckpt_path, map_location=DEVICE)
-        for module_name in modules.keys():
-            module = modules[module_name]
-            optimizer = optimizers[module_name]
-            module_ckpt = ckpt[module_name]
-            module.load_state_dict(module_ckpt['module_state_dict'])
-            optimizer.load_state_dict(
-                module_ckpt['optimizer_state_dict'])
-            start_epoch = ckpt['epoch'] + 1
-            train_losses_all_epochs = ckpt['train_losses']
-            val_losses_all_epochs = ckpt['val_losses']
-
-    return (modules, optimizers, start_epoch,
-            train_losses_all_epochs, val_losses_all_epochs)
-
-
 class LoadData(luigi.Task):
     train_loader_path = os.path.join(OUTPUT_DIR, 'train_loader.pkl')
     val_loader_path = os.path.join(OUTPUT_DIR, 'val_loader.pkl')
@@ -200,7 +147,7 @@ class LoadData(luigi.Task):
 
 
 class TrainVAE(luigi.Task):
-    models_path = os.path.join(TRAIN_VAE_DIR, 'models')
+    train_dir = os.path.join(TRAIN_VAE_DIR)
     train_losses_path = os.path.join(
         TRAIN_VAE_DIR, 'train_losses.pkl')
     val_losses_path = os.path.join(
@@ -475,9 +422,9 @@ class TrainVAE(luigi.Task):
         return val_losses
 
     def run(self):
-        if not os.path.isdir(self.models_path):
-            os.mkdir(self.models_path)
-            os.chmod(self.models_path, 0o777)
+        if not os.path.isdir(self.train_dir):
+            os.mkdir(self.train_dir)
+            os.chmod(self.train_dir, 0o777)
 
         train_loader_pkl = self.input()['train_loader'].path
         val_loader_pkl = self.input()['val_loader'].path
@@ -490,8 +437,8 @@ class TrainVAE(luigi.Task):
             vae = imnn.VAECNN(
                 latent_dim=LATENT_DIM,
                 im_c=1,
-                im_h=IM_H,
-                im_w=IM_W,
+                im_h=IMG_H,
+                im_w=IMG_W,
                 cnn_dim=IMG_DIM,
                 spd=SPD)
             vae.to(DEVICE)
@@ -504,14 +451,14 @@ class TrainVAE(luigi.Task):
         modules = {}
         modules['encoder'] = vae.encoder
         modules['decoder'] = vae.decoder
-
         optimizers = {}
         optimizers['encoder'] = torch.optim.Adam(
             modules['encoder'].parameters(), lr=LR, betas=(BETA1, BETA2))
         optimizers['decoder'] = torch.optim.Adam(
             modules['decoder'].parameters(), lr=LR, betas=(BETA1, BETA2))
 
-        m, o, s, t, v = init_training(self.models_path, modules, optimizers)
+        m, o, s, t, v = train_utils.init_training(
+            self.train_dir, modules, optimizers)
         modules, optimizers, start_epoch = m, o, s
         train_losses_all_epochs, val_losses_all_epochs = t, v
 
@@ -524,13 +471,17 @@ class TrainVAE(luigi.Task):
             train_losses_all_epochs.append(train_losses)
             val_losses_all_epochs.append(val_losses)
 
-            save_checkpoint(
-                epoch, modules, optimizers, self.models_path,
-                train_losses_all_epochs, val_losses_all_epochs)
+            if epoch % CKPT_PERIOD == 0:
+                train_utils.save_checkpoint(
+                    epoch=epoch, modules=modules, optimizers=optimizers,
+                    dir_path=self.train_dir,
+                    train_losses_all_epochs=train_losses_all_epochs,
+                    val_losses_all_epochs=val_losses_all_epochs,
+                    nn_architecture=NN_ARCHITECTURE)
 
         for module_name, module in modules.items():
             module_path = os.path.join(
-                self.models_path, '{}.pth'.format(module_name))
+                self.train_dir, '{}.pth'.format(module_name))
             torch.save(module, module_path)
 
         with open(self.output()['train_losses'].path, 'wb') as pkl:
@@ -545,7 +496,7 @@ class TrainVAE(luigi.Task):
 
 
 class TrainIWAE(luigi.Task):
-    models_path = os.path.join(TRAIN_IWAE_DIR, 'models')
+    train_dir = os.path.join(TRAIN_IWAE_DIR)
     train_losses_path = os.path.join(
         TRAIN_IWAE_DIR, 'train_losses.pkl')
     val_losses_path = os.path.join(
@@ -788,9 +739,9 @@ class TrainIWAE(luigi.Task):
         return val_losses
 
     def run(self):
-        if not os.path.isdir(self.models_path):
-            os.mkdir(self.models_path)
-            os.chmod(self.models_path, 0o777)
+        if not os.path.isdir(self.train_dir):
+            os.mkdir(self.train_dir)
+            os.chmod(self.train_dir, 0o777)
 
         train_loader_pkl = self.input()['train_loader'].path
         val_loader_pkl = self.input()['val_loader'].path
@@ -814,7 +765,7 @@ class TrainIWAE(luigi.Task):
         optimizers['decoder'] = torch.optim.Adam(
             modules['decoder'].parameters(), lr=LR, betas=(BETA1, BETA2))
 
-        m, o, s, t, v = init_training(self.models_path, modules, optimizers)
+        m, o, s, t, v = train_utils.init_training(self.train_dir, modules, optimizers)
         modules, optimizers, start_epoch = m, o, s
         train_losses_all_epochs, val_losses_all_epochs = t, v
 
@@ -827,13 +778,13 @@ class TrainIWAE(luigi.Task):
             train_losses_all_epochs.append(train_losses)
             val_losses_all_epochs.append(val_losses)
 
-            save_checkpoint(
-                epoch, modules, optimizers, self.models_path,
+            train_utils.save_checkpoint(
+                epoch, modules, optimizers, self.train_dir,
                 train_losses_all_epochs, val_losses_all_epochs)
 
         for module_name, module in modules.items():
             module_path = os.path.join(
-                self.models_path,
+                self.train_dir,
                 '{}.pth'.format(module_name))
             torch.save(module, module_path)
 
@@ -849,7 +800,7 @@ class TrainIWAE(luigi.Task):
 
 
 class TrainVEM(luigi.Task):
-    models_path = os.path.join(TRAIN_VEM_DIR, 'models')
+    train_dir = os.path.join(TRAIN_VEM_DIR)
     train_losses_path = os.path.join(TRAIN_VEM_DIR, 'train_losses.pkl')
     val_losses_path = os.path.join(TRAIN_VEM_DIR, 'val_losses.pkl')
 
@@ -1171,9 +1122,9 @@ class TrainVEM(luigi.Task):
         return val_losses
 
     def run(self):
-        if not os.path.isdir(self.models_path):
-            os.mkdir(self.models_path)
-            os.chmod(self.models_path, 0o777)
+        if not os.path.isdir(self.train_dir):
+            os.mkdir(self.train_dir)
+            os.chmod(self.train_dir, 0o777)
 
         train_loader_pkl = self.input()['train_loader'].path
         val_loader_pkl = self.input()['val_loader'].path
@@ -1197,7 +1148,8 @@ class TrainVEM(luigi.Task):
         optimizers['decoder'] = torch.optim.Adam(
             modules['decoder'].parameters(), lr=LR, betas=(BETA1, BETA2))
 
-        m, o, s, t, v = init_training(self.models_path, modules, optimizers)
+        m, o, s, t, v = train_utils.init_training(
+            self.train_dir, modules, optimizers)
         modules, optimizers, start_epoch = m, o, s
         train_losses_all_epochs, val_losses_all_epochs = t, v
 
@@ -1209,13 +1161,13 @@ class TrainVEM(luigi.Task):
                 epoch, val_loader, modules)
             val_losses_all_epochs.append(val_losses)
 
-            save_checkpoint(
-                epoch, modules, optimizers, self.models_path,
+            train_utils.save_checkpoint(
+                epoch, modules, optimizers, self.train_dir,
                 train_losses_all_epochs, val_losses_all_epochs)
 
         for module_name, module in modules.items():
             module_path = os.path.join(
-                self.models_path,
+                self.train_dir,
                 '{}.pth'.format(module_name))
             torch.save(module, module_path)
 
@@ -1231,7 +1183,7 @@ class TrainVEM(luigi.Task):
 
 
 class TrainVEGAN(luigi.Task):
-    models_path = os.path.join(TRAIN_VEGAN_DIR, 'models')
+    train_dir = os.path.join(TRAIN_VEGAN_DIR, 'models')
     train_losses_path = os.path.join(TRAIN_VEGAN_DIR, 'train_losses.pkl')
     val_losses_path = os.path.join(TRAIN_VEGAN_DIR, 'val_losses.pkl')
 
@@ -1512,9 +1464,9 @@ class TrainVEGAN(luigi.Task):
         return val_losses
 
     def run(self):
-        if not os.path.isdir(self.models_path):
-            os.mkdir(self.models_path)
-            os.chmod(self.models_path, 0o777)
+        if not os.path.isdir(self.train_dir):
+            os.mkdir(self.train_dir)
+            os.chmod(self.train_dir, 0o777)
 
         train_loader, val_loader = datasets.get_loaders(
             DATASET_NAME, FRAC_VAL, BATCH_SIZE[DATASET_NAME])
@@ -1547,12 +1499,8 @@ class TrainVEGAN(luigi.Task):
         optimizers['discriminator'] = torch.optim.Adam(
             modules['discriminator'].parameters(), lr=LR, betas=(BETA1, BETA2))
 
-        def init_xavier_normal(m):
-            if type(m) == tnn.Linear:
-                tnn.init.xavier_normal_(m.weight)
-
         for module in modules.values():
-            module.apply(init_xavier_normal)
+            module.apply(train_utils.init_xavier_normal)
 
         train_losses_all_epochs = []
         val_losses_all_epochs = []
@@ -1567,7 +1515,7 @@ class TrainVEGAN(luigi.Task):
 
         for module_name, module in modules.items():
             module_path = os.path.join(
-                self.models_path,
+                self.train_dir,
                 '{}.pth'.format(module_name))
             torch.save(module, module_path)
 
