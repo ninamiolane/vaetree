@@ -18,13 +18,11 @@ from torchvision import datasets, transforms
 CUDA = torch.cuda.is_available()
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 
-IMG_SHAPE = (128, 128)
-
 CRYO_DIR = '/cryo'
 NEURO_DIR = '/neuro'
 
-NEURO_TRAIN_VAL_DIR = '/neuro/train_val_datasets'
-CRYO_TRAIN_VAL_DIR = '/cryo/train_val_datasets'
+NEURO_TRAIN_VAL_DIR = os.path.join(NEURO_DIR, 'train_val_datasets')
+CRYO_TRAIN_VAL_DIR = os.path.join(CRYO_DIR, 'train_val_datasets')
 
 N_NODES = 28
 CORR_THRESH = 0.1
@@ -39,14 +37,22 @@ FRAC_VAL = 0.2
 
 
 def get_loaders(dataset_name, frac_val=FRAC_VAL, batch_size=8,
-                img_shape=IMG_SHAPE, kwargs=KWARGS):
+                img_shape=None, kwargs=KWARGS):
+
+    img_shape_no_channel = None
+    if img_shape is not None:
+        img_shape_no_channel = img_shape[1:]
     # TODO(nina): Consistency in datasets: add channels for all
     logging.info('Loading data from dataset: %s' % dataset_name)
     if dataset_name == 'mnist':
+        if img_shape_no_channel is not None:
+            transform = transforms.Compose([
+                transforms.Resize(img_shape_no_channel),
+                transforms.ToTensor()])
+        else:
+            transform = transforms.ToTensor()
         mnist = datasets.MNIST(
-            '../data', train=True, download=True,
-            transform=transforms.Compose(
-                [transforms.Resize(img_shape), transforms.ToTensor()]))
+            '../data', train=True, download=True, transform=transform)
         dataset = mnist.data
         train_dataset, val_dataset = split_dataset(
                 dataset, frac_val=FRAC_VAL)
@@ -54,32 +60,36 @@ def get_loaders(dataset_name, frac_val=FRAC_VAL, batch_size=8,
         # TODO(nina): Thus provides ByteTensor that fail
 
     elif dataset_name == 'omniglot':
+        if img_shape_no_channel is not None:
+            transform = transforms.Compose([
+                transforms.Resize(img_shape_no_channel),
+                transforms.ToTensor()])
+        else:
+            transform = transforms.ToTensor()
         dataset = datasets.Omniglot(
-            '../data', download=True,
-            transform=transforms.Compose(
-                [transforms.Resize(img_shape), transforms.ToTensor()]))
+            '../data', download=True, transform=transform)
         train_dataset, val_dataset = split_dataset(
             dataset, frac_val=frac_val)
     elif dataset_name in [
             'randomrot1D_nodisorder',
             'randomrot1D_multiPDB',
             'randomrot_nodisorder']:
-        dataset = get_dataset_cryo(dataset_name, img_shape, kwargs)
+        dataset = get_dataset_cryo(dataset_name, img_shape_no_channel, kwargs)
         train_dataset, val_dataset = split_dataset(dataset)
     elif dataset_name == 'cryo_sphere':
-        dataset = get_dataset_cryo_sphere(img_shape, kwargs)
+        dataset = get_dataset_cryo_sphere(img_shape_no_channel, kwargs)
         train_dataset, val_dataset = split_dataset(dataset)
     elif dataset_name == 'cryo_exp':
-        dataset = get_dataset_cryo_exp(img_shape, kwargs)
+        dataset = get_dataset_cryo_exp(img_shape_no_channel, kwargs)
         train_dataset, val_dataset = split_dataset(dataset)
     elif dataset_name == 'connectomes':
         train_dataset, val_dataset = get_dataset_connectomes(
-            img_shape=img_shape)
+            img_shape_no_channel=img_shape_no_channel)
     elif dataset_name == 'connectomes_schizophrenia':
         train_dataset, val_dataset, _ = get_dataset_connectomes_schizophrenia()
     elif dataset_name in ['mri', 'segmentation', 'fmri']:
         train_loader, val_loader = get_loaders_brain(
-            dataset_name, frac_val, batch_size, img_shape, kwargs)
+            dataset_name, frac_val, batch_size, img_shape_no_channel, kwargs)
         return train_loader, val_loader
     else:
         raise ValueError('Unknown dataset name: %s' % dataset_name)
@@ -106,11 +116,11 @@ def split_dataset(dataset, frac_val=FRAC_VAL):
     return train_dataset, val_dataset
 
 
-def get_shape_string(img_shape=IMG_SHAPE):
-    if len(img_shape) == 2:
-        shape_str = '%dx%d' % img_shape
-    elif len(img_shape) == 3:
-        shape_str = '%dx%dx%d' % img_shape
+def get_shape_string(img_shape_no_channel):
+    if len(img_shape_no_channel) == 2:
+        shape_str = '%dx%d' % img_shape_no_channel
+    elif len(img_shape_no_channel) == 3:
+        shape_str = '%dx%dx%d' % img_shape_no_channel
     else:
         raise ValueError('Weird image shape.')
     return shape_str
@@ -133,7 +143,8 @@ def r_pearson_from_z_score(mat):
     return r_mat
 
 
-def get_dataset_connectomes(img_shape=(100, 100), partial_corr=True):
+def get_dataset_connectomes(img_shape_no_channel=(100, 100),
+                            partial_corr=True):
     """
     Connectomes from HCP 1200:
     https://www.humanconnectome.org/storage/app/media/
@@ -141,7 +152,7 @@ def get_dataset_connectomes(img_shape=(100, 100), partial_corr=True):
     """
     netmat_type = int(partial_corr) + 1
 
-    shape_str = get_shape_string(img_shape)
+    shape_str = get_shape_string(img_shape_no_channel)
     train_path = os.path.join(
         NEURO_TRAIN_VAL_DIR, 'train_conn_%s.npy' % shape_str)
     val_path = os.path.join(
@@ -156,7 +167,7 @@ def get_dataset_connectomes(img_shape=(100, 100), partial_corr=True):
         val_dataset = np.load(val_path)
 
     else:
-        n_nodes = img_shape[0]
+        n_nodes = img_shape_no_channel[0]
         hcp_dir = os.path.join(
             NEURO_DIR, 'HCP_PTN1200_recon2')
         netmats_path = os.path.join(
@@ -223,8 +234,8 @@ def get_dataset_connectomes_schizophrenia():
     return train_dataset, val_dataset, all_labels
 
 
-def get_dataset_cryo_sphere(img_shape=IMG_SHAPE, kwargs=KWARGS):
-    shape_str = get_shape_string(img_shape)
+def get_dataset_cryo_sphere(img_shape_no_channel=None, kwargs=KWARGS):
+    shape_str = get_shape_string(img_shape_no_channel)
     cryo_path = os.path.join(
         CRYO_TRAIN_VAL_DIR, 'cryo_%s.npy' % shape_str)
 
@@ -239,9 +250,10 @@ def get_dataset_cryo_sphere(img_shape=IMG_SHAPE, kwargs=KWARGS):
                 data = pickle.load(pkl)
                 dataset = data['ParticleStack']
                 n_data = len(dataset)
-                img_h, img_w = img_shape
-                dataset = skimage.transform.resize(
-                    dataset, (n_data, img_h, img_w))
+                if img_shape_no_channel is not None:
+                    img_h, img_w = img_shape_no_channel
+                    dataset = skimage.transform.resize(
+                        dataset, (n_data, img_h, img_w))
 
                 dataset = normalization_linear(dataset)
 
@@ -272,8 +284,8 @@ def recursively_load_dict_contents_from_group(h5file, path):
 
 
 def get_dataset_cryo(
-        dataset_name, img_shape=IMG_SHAPE, kwargs=KWARGS):
-    shape_str = get_shape_string(img_shape)
+        dataset_name, img_shape_no_channel=None, kwargs=KWARGS):
+    shape_str = get_shape_string(img_shape_no_channel)
     cryo_img_path = os.path.join(
         CRYO_TRAIN_VAL_DIR,
         'cryo_%s_%s.npy' % (dataset_name, shape_str))
@@ -302,9 +314,10 @@ def get_dataset_cryo(
             focus = np.repeat(focus, n_data)
             theta = data_dict['coordinates'][:, 3]
 
-            img_h, img_w = img_shape
-            dataset = skimage.transform.resize(
-                dataset, (n_data, img_h, img_w))
+            if img_shape_no_channel is not None:
+                img_h, img_w = img_shape_no_channel
+                dataset = skimage.transform.resize(
+                    dataset, (n_data, img_h, img_w))
             dataset = normalization_linear(dataset)
 
             all_datasets.append(dataset)
@@ -332,9 +345,9 @@ def get_dataset_cryo(
     return dataset
 
 
-def get_dataset_cryo_exp(img_shape=IMG_SHAPE, kwargs=KWARGS):
+def get_dataset_cryo_exp(img_shape_no_channel=None, kwargs=KWARGS):
     NEURO_TRAIN_VAL_DIR = os.path.join(CRYO_DIR, 'train_val_datasets')
-    shape_str = get_shape_string(img_shape)
+    shape_str = get_shape_string(img_shape_no_channel)
     cryo_img_path = os.path.join(
         NEURO_TRAIN_VAL_DIR, 'cryo_exp_%s.npy' % shape_str)
     if os.path.isfile(cryo_img_path):
@@ -346,11 +359,13 @@ def get_dataset_cryo_exp(img_shape=IMG_SHAPE, kwargs=KWARGS):
         logging.info('Loading file %s...' % path)
         data_dict = load_dict_from_hdf5(path)
         dataset = data_dict['particles']
-        n_data = len(dataset)
 
-        img_h, img_w = img_shape
-        dataset = skimage.transform.resize(
-            dataset, (n_data, img_h, img_w))
+        if img_shape_no_channel is not None:
+            n_data = len(dataset)
+            img_h, img_w = img_shape_no_channel
+            dataset = skimage.transform.resize(
+                dataset, (n_data, img_h, img_w))
+
         dataset = normalization_linear(dataset)
         dataset = np.expand_dims(dataset, axis=1)
 
@@ -361,7 +376,7 @@ def get_dataset_cryo_exp(img_shape=IMG_SHAPE, kwargs=KWARGS):
 
 
 def get_loaders_brain(dataset_name, frac_val, batch_size,
-                      img_shape=IMG_SHAPE, kwargs=KWARGS):
+                      img_shape, kwargs=KWARGS):
 
     shape_str = get_shape_string(img_shape)
     NEURO_TRAIN_VAL_DIR = os.path.join(NEURO_DIR, 'train_val_datasets')

@@ -15,7 +15,6 @@ from matplotlib import animation
 from scipy.stats import gaussian_kde
 
 import analyze
-import imnn
 import nn
 import toylosses
 import toynn
@@ -207,11 +206,15 @@ def plot_weights(ax, output, algo_name='vae',
     label = '%s' % ALGO_STRINGS[algo_name]
 
     if not dashes:
-        ax.plot(weight_w[start_epoch_id:epoch_id], weight_phi[start_epoch_id:epoch_id],
-                label=label, color=color)
+        ax.plot(
+            weight_w[start_epoch_id:epoch_id],
+            weight_phi[start_epoch_id:epoch_id],
+            label=label, color=color)
     else:
-        ax.plot(weight_w[start_epoch_id:epoch_id], weight_phi[start_epoch_id:epoch_id],
-                label=label, color=color, dashes=[2, 2, 2, 2])
+        ax.plot(
+            weight_w[start_epoch_id:epoch_id],
+            weight_phi[start_epoch_id:epoch_id],
+            label=label, color=color, dashes=[2, 2, 2, 2])
 
     return ax
 
@@ -245,29 +248,22 @@ def load_module(output, algo_name='vae', module_name='encoder', epoch_id=None):
         output=output, algo_name=algo_name, epoch_id=epoch_id)
     nn_architecture = ckpt['nn_architecture']
 
-    if nn_architecture['cnn']:
-        img_shape = nn_architecture['img_shape']
-        if img_shape is None:
-            raise ValueError('Need image shape to load VAE CNN.')
-        im_w = img_shape[0]
-        im_h = img_shape[1]
-        im_d = None
-        img_dim = len(img_shape)
-        if img_dim == 3:
-            im_d = img_shape[2]
-        vae = imnn.VAECNN(
-                latent_dim=nn_architecture['latent_dim'],
-                im_c=1,
-                im_d=im_d,
-                im_h=im_h,
-                im_w=im_w,
-                cnn_dim=img_dim,
-                spd=nn_architecture['spd'])
+    nn_type = nn_architecture['nn_type']
+    assert nn_type in ['linear', 'conv', 'gan']
 
-    else:
-        vae = imnn.VAE(
+    if nn_type == 'linear':
+        vae = nn.Vae(
             latent_dim=nn_architecture['latent_dim'],
             data_dim=nn_architecture['data_dim'])
+    elif nn_type == 'conv':
+        vae = nn.VaeConv(
+                latent_dim=nn_architecture['latent_dim'],
+                img_shape=nn_architecture['img_shape'],
+                spd=nn_architecture['spd'])
+    else:
+        vae = nn.VaeGan(
+            latent_dim=nn_architecture['latent_dim'],
+            img_shape=nn_architecture['img_shape'])
     vae.to(DEVICE)
 
     modules = {}
@@ -310,11 +306,15 @@ def plot_criterion(ax, output, algo_name='vae', crit_name='neg_elbo',
         CRIT_STRINGS[crit_name])
 
     if not dashes:
-        ax.plot(epochs[start_epoch_id:epoch_id], losses_total[start_epoch_id:epoch_id],
-                label=label, color=color)
+        ax.plot(
+            epochs[start_epoch_id:epoch_id],
+            losses_total[start_epoch_id:epoch_id],
+            label=label, color=color)
     else:
-        ax.plot(epochs[start_epoch_id:epoch_id], losses_total[start_epoch_id:epoch_id],
-                label=label, color=color, dashes=[2, 2, 2, 2])
+        ax.plot(
+            epochs[start_epoch_id:epoch_id],
+            losses_total[start_epoch_id:epoch_id],
+            label=label, color=color, dashes=[2, 2, 2, 2])
     ax.set_xlabel('epochs')
     ax.legend()
     return ax
@@ -334,7 +334,8 @@ def kl_posterior(w, phi, subdataset):
 
 
 def plot_kl_posterior(ax, output, algo_name='vae', mode='train', n_train=0,
-                      start_epoch_id=0, epoch_id=None, color='blue', dashes=False):
+                      start_epoch_id=0, epoch_id=None,
+                      color='blue', dashes=False):
 
     string_base = '%s/train_%s/%s_losses.pkl' % (output, algo_name, mode)
     losses_path = glob.glob(string_base)[0]
@@ -409,11 +410,12 @@ def plot_convergence(ax, output, algo_name, crit_name,
                      start_epoch_id=0, epoch_id=None):
     ax = plot_criterion(
         ax, output, algo_name=algo_name, crit_name=crit_name, mode='train',
-        start_epoch_id=start_epoch_id, epoch_id=epoch_id, color=COLOR_DICT[crit_name])
+        start_epoch_id=start_epoch_id, epoch_id=epoch_id,
+        color=COLOR_DICT[crit_name])
     ax = plot_criterion(
         ax, output, algo_name=algo_name, crit_name=crit_name, mode='val',
-        start_epoch_id=start_epoch_id, epoch_id=epoch_id, color=COLOR_DICT[crit_name],
-        dashes=True)
+        start_epoch_id=start_epoch_id, epoch_id=epoch_id,
+        color=COLOR_DICT[crit_name], dashes=True)
     ax.set_title('Convergence of %s.' % ALGO_STRINGS[algo_name])
     return ax
 
@@ -630,7 +632,7 @@ def show_img_and_recon(output, dataset_path, algo_name='vae', epoch_id=None,
     recon = recon.cpu().detach().numpy()
 
     data_dim = functools.reduce(
-           (lambda x, y: x * y), encoder.in_shape)
+           (lambda x, y: x * y), encoder.img_shape)
 
     if recon.shape[-1] == data_dim:
         img_side = int(np.sqrt(data_dim))  # HACK
@@ -667,7 +669,7 @@ def show_samples_from_prior(output, fig, outer, i,
     decoder = load_module(
         output, algo_name=algo_name, module_name='decoder', epoch_id=epoch_id)
     data_dim = functools.reduce(
-            (lambda x, y: x * y), decoder.out_shape)
+            (lambda x, y: x * y), decoder.img_shape)
 
     z_from_prior = nn.sample_from_prior(
         latent_dim=decoder.latent_dim, n_samples=n_samples)

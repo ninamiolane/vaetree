@@ -36,4 +36,4 @@ From: ../../simgs/base.simg
 
 
 %runscript
-    exec /usr/bin/python3 -u pipeline.py
+    exec /usr/bin/python3 -u impipeline.py

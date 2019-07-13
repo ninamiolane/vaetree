@@ -1,5 +1,6 @@
 """Data processing pipeline."""
 
+import functools
 import jinja2
 import logging
 import luigi
@@ -11,6 +12,7 @@ import matplotlib.pylab as pylab
 import numpy as np
 import os
 import pickle
+import random
 
 import torch
 import torch.autograd
@@ -36,30 +38,39 @@ OUTPUT_DIR = os.path.join(HOME_DIR, 'output_%s' % DATASET_NAME)
 TRAIN_DIR = os.path.join(OUTPUT_DIR, 'train_vae')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
-
 DEBUG = False
 
 CUDA = torch.cuda.is_available()
-SEED = 12345
-DEVICE = torch.device("cuda" if CUDA else "cpu")
+DEVICE = torch.device('cuda' if CUDA else 'cpu')
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
-torch.manual_seed(SEED)
 
-IMG_W = 100
-IMG_H = 100
-IMG_SHAPE = (IMG_W, IMG_H)
-DATA_DIM = IMG_H * IMG_W  # MNIST, and connectomes size
+# Seed
+SEED = 12345
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
+IMG_SHAPE = (1, 100, 100)
+DATA_DIM = functools.reduce((lambda x, y: x * y), IMG_SHAPE)
 IMG_DIM = len(IMG_SHAPE)
 LATENT_DIM = 3
+NN_TYPE = 'gan'
+SPD = False
+if SPD:
+    NN_TYPE = 'conv'
+assert NN_TYPE in ['linear', 'conv', 'gan']
 
 NN_ARCHITECTURE = {
     'img_shape': IMG_SHAPE,
-    'img_dim': IMG_DIM,
     'data_dim': DATA_DIM,
-    'latent_dim': LATENT_DIM}
+    'latent_dim': LATENT_DIM,
+    'nn_type': NN_TYPE,
+    'spd': SPD}
 
 BATCH_SIZES = {15: 128, 25: 64, 64: 32, 96: 32, 100: 8, 128: 8}
-BATCH_SIZE = BATCH_SIZES[IMG_W]
+BATCH_SIZE = BATCH_SIZES[IMG_SHAPE[1]]
 FRAC_TEST = 0.1
 FRAC_VAL = 0.2
 N_SES_DEBUG = 3
@@ -208,7 +219,7 @@ class Train(luigi.Task):
                 real_labels = torch.full((n_batch_data,), 1, device=DEVICE)
                 fake_labels = torch.full((n_batch_data,), 0, device=DEVICE)
 
-                # -- Update Discriminator
+                # -- Update DiscriminatorGan
                 labels_data, h_data, _ = discriminator(
                     batch_data)
                 labels_recon, h_recon, h_logvar_recon = discriminator(
@@ -328,24 +339,26 @@ class Train(luigi.Task):
                 # Visdom first images of batch
                 # TODO(nina): Why does it print black images for batch_data??
                 # print(torch.sum(batch_data[0]))
+                height = 150 * IMG_SHAPE[1] / 64
+                width = 150 * IMG_SHAPE[2] / 64
                 data_win = train_vis.image(
                     batch_data[0],
                     win=data_win,
                     opts=dict(
                         title='Train Epoch {}: Data'.format(epoch),
-                        width=150*IMG_W/64, height=150*IMG_H/64))
+                        height=height, width=width))
                 recon_win = train_vis.image(
                     batch_recon[0],
                     win=recon_win,
                     opts=dict(
                         title='Train Epoch {}: Reconstruction'.format(epoch),
-                        width=150*IMG_W/64, height=150*IMG_H/64))
+                        height=height, width=width))
                 from_prior_win = train_vis.image(
                     batch_from_prior[0],
                     win=from_prior_win,
                     opts=dict(
                         title='Train Epoch {}: From prior'.format(epoch),
-                        width=150*IMG_W/64, height=150*IMG_H/64))
+                        height=height, width=width))
 
             total_loss_reconstruction += loss_reconstruction.item()
             total_loss_regularization += loss_regularization.item()
@@ -428,7 +441,7 @@ class Train(luigi.Task):
                     real_labels = torch.full((n_batch_data,), 1, device=DEVICE)
                     fake_labels = torch.full((n_batch_data,), 0, device=DEVICE)
 
-                    # -- Compute Discriminator Loss
+                    # -- Compute DiscriminatorGan Loss
                     labels_data, h_data, _ = discriminator(batch_data)
                     labels_recon, h_recon, h_logvar_recon = discriminator(
                         batch_recon.detach())
@@ -517,28 +530,27 @@ class Train(luigi.Task):
                     batch_from_prior = batch_from_prior.cpu().numpy()
 
                     # Visdom first images of last batch
+                    height = 150 * IMG_SHAPE[1] / 64
+                    width = 150 * IMG_SHAPE[2] / 64
                     data_win = vis.image(
                         batch_data[0][0]+0.5,
                         win=data_win,
                         opts=dict(
                             title='Val Epoch {}: Data'.format(epoch),
-                            width=150*IMG_W/64,
-                            height=150*IMG_H/64))
+                            height=height, width=width))
                     recon_win = vis.image(
                         batch_recon[0][0],
                         win=recon_win,
                         opts=dict(
                             title='Val Epoch {}: Reconstruction'.format(
                                 epoch),
-                            width=150*IMG_W/64,
-                            height=150*IMG_H/64))
+                            height=height, width=width))
                     from_prior_win = vis.image(
                         batch_from_prior[0][0],
                         win=from_prior_win,
                         opts=dict(
                             title='Val Epoch {}: From prior'.format(epoch),
-                            width=150*IMG_W/64,
-                            height=150*IMG_H/64))
+                            height=height, width=width))
 
         average_loss_reconstruction = total_loss_reconstruction / n_data
         average_loss_regularization = total_loss_regularization / n_data
@@ -568,31 +580,25 @@ class Train(luigi.Task):
                 frac_val=FRAC_VAL,
                 batch_size=BATCH_SIZE,
                 img_shape=IMG_SHAPE)
-        torch.cuda.empty_cache()
-        vae = nn.VAEGAN(
-            n_channels=1,
+
+        vae = nn.VaeGan(
             latent_dim=LATENT_DIM,
-            in_w=IMG_SHAPE[0],
-            in_h=IMG_SHAPE[1]).to(DEVICE)
+            img_shape=IMG_SHAPE).to(DEVICE)
 
         modules = {}
         modules['encoder'] = vae.encoder
         modules['decoder'] = vae.decoder
 
         if 'adversarial' in RECONSTRUCTIONS:
-            discriminator = nn.Discriminator(
+            discriminator = nn.DiscriminatorGan(
                 latent_dim=LATENT_DIM,
-                in_channels=1,
-                in_w=IMG_SHAPE[0],
-                in_h=IMG_SHAPE[1]).to(DEVICE)
+                img_shape=IMG_SHAPE).to(DEVICE)
             modules['discriminator_reconstruction'] = discriminator
 
         if 'adversarial' in REGULARIZATIONS:
-            discriminator = nn.Discriminator(
+            discriminator = nn.DiscriminatorGan(
                 latent_dim=LATENT_DIM,
-                in_channels=1,
-                in_w=IMG_SHAPE[0],
-                in_h=IMG_SHAPE[1]).to(DEVICE)
+                img_shape=IMG_SHAPE).to(DEVICE)
             modules['discriminator_regularization'] = discriminator
 
         optimizers = {}
@@ -801,7 +807,7 @@ class Report(luigi.Task):
             [loss_type for loss_type in loss_types if loss_type != 'total'],
             loc='upper right')
 
-        # Only Discriminator and Generator
+        # Only DiscriminatorGan and Generator
         plt.subplot(n_rows, n_cols, 5)
         plt.plot(epochs, train_losses['discriminator'])
         plt.plot(epochs, train_losses['generator'])
