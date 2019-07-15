@@ -31,7 +31,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # Decide on using segmentations, image intensities or fmri,
-DATASET_NAME = 'connectomes'
+DATASET_NAME = 'cryo_exp'
 
 HOME_DIR = '/scratch/users/nmiolane'
 OUTPUT_DIR = os.path.join(HOME_DIR, 'output_%s' % DATASET_NAME)
@@ -52,7 +52,7 @@ torch.manual_seed(SEED)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
-IMG_SHAPE = (1, 100, 100)
+IMG_SHAPE = (1, 128, 128)
 DATA_DIM = functools.reduce((lambda x, y: x * y), IMG_SHAPE)
 IMG_DIM = len(IMG_SHAPE)
 LATENT_DIM = 3
@@ -76,7 +76,7 @@ FRAC_VAL = 0.2
 N_SES_DEBUG = 3
 if DEBUG:
     FRAC_VAL = 0.5
-CKPT_PERIOD = 1
+CKPT_PERIOD = 5
 
 AXIS = {'fmri': 3, 'mri': 1, 'seg': 1}
 
@@ -184,6 +184,7 @@ class Train(luigi.Task):
         n_batches = len(train_loader)
 
         for batch_idx, batch_data in enumerate(train_loader):
+            print('Entering batch: %d' % batch_idx)
             if DEBUG:
                 if batch_idx < n_batches - 3:
                     continue

@@ -227,7 +227,7 @@ def load_checkpoint(output, algo_name='train_vae', epoch_id=None):
         if len(ckpts) == 0:
             raise ValueError('No checkpoints found.')
         else:
-            ckpts_ids_and_paths = [(int(f.split('_')[3]), f) for f in ckpts]
+            ckpts_ids_and_paths = [(int(f.split('_')[-2]), f) for f in ckpts]
             ckpt_id, ckpt_path = max(
                 ckpts_ids_and_paths, key=lambda item: item[0])
     else:
