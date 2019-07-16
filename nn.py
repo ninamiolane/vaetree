@@ -44,7 +44,7 @@ ENC_C = 64
 
 DEC_KS = 3
 DEC_STR = 1
-DEC_PAD = 1
+DEC_PAD = 0
 DEC_DIL = 1
 DEC_C = 64
 
@@ -262,30 +262,6 @@ class Encoder(nn.Module):
         x = x.float()
         h1 = F.relu(self.fc1(x))
         return self.fc21(h1), self.fc22(h1)
-        # #print('x = ', x)
-        # n_batch_data, _ = x.shape
-        # assert not torch.isnan(x).any()
-        # #print('x1 = ', x)
-        # assert not torch.isnan(x).any()
-        # h1 = self.leakyrelu(self.fc1(x))
-        # #print('x2 = ', x)
-        # assert not torch.isnan(x).any()
-        # #x = self.leakyrelu(self.fc1a(x))
-        # #print('x3 = ', x)
-        # assert not torch.isnan(x).any()
-        # #x = self.leakyrelu(self.fc1b(x))
-        # #print('x4 = ', x)
-        # assert not torch.isnan(x).any()
-        # #h1 = self.leakyrelu(self.fc1c(x))
-        # #print('h1 = ', h1)
-        # assert not torch.isnan(h1).any()
-        # muz = self.fc21(h1)
-        # assert not torch.isnan(muz).any()
-        # #print('muz = ', muz)
-        # logvarz = self.fc22(h1)
-        # assert not torch.isnan(logvarz).any()
-        # #print('logvarz = ', logvarz)
-        # return muz, logvarz
 
 
 class Decoder(nn.Module):
@@ -600,8 +576,6 @@ class EncoderGan(nn.Module):
 
     def forward(self, x):
         """Forward pass of the encoder is encode."""
-        print('Entering encoder forward')
-        print(x.shape)
         h1 = self.leakyrelu(self.bn1(self.enc1(x)))
         h2 = self.leakyrelu(self.bn2(self.enc2(h1)))
         h3 = self.leakyrelu(self.bn3(self.enc3(h2)))
@@ -615,7 +589,7 @@ class EncoderGan(nn.Module):
 
 
 class DecoderGan(nn.Module):
-    def dec_conv_output_size(self, in_shape, out_channels):
+    def conv_output_size(self, in_shape, out_channels):
         return conv_output_size(
                 in_shape, out_channels,
                 kernel_size=DEC_KS,
@@ -623,8 +597,8 @@ class DecoderGan(nn.Module):
                 padding=DEC_PAD,
                 dilation=DEC_DIL)
 
-    def dec_block(self, block_id, in_shape,
-                  channels_fact, scale_factor=2, pad=1):
+    def block(self, block_id, in_shape,
+              channels_fact, scale_factor=2, pad=1):
         conv_dim = len(in_shape[1:])
         nn_conv = NN_CONV[conv_dim]
         in_channels = in_shape[0]
@@ -638,12 +612,24 @@ class DecoderGan(nn.Module):
             stride=DEC_STR)
         bn = nn.BatchNorm2d(conv.out_channels, 1.e-3)
 
-        out_shape = self.dec_conv_output_size(
+        out_shape = self.conv_output_size(
             in_shape=(in_channels,
                       scale_factor*self.in_shape[1] + 2*pad,
                       scale_factor*self.in_shape[2] + 2*pad),
             out_channels=conv.out_channels)
         return up, pd, conv, bn, out_shape
+
+    def end_block(self, block_id, in_shape, scale_factor=2, pad=1):
+        up = nn.UpsamplingNearest2d(scale_factor=scale_factor)
+        pd = nn.ReplicationPad2d(pad)
+        conv = nn.Conv2d(
+            in_channels=in_shape[0],
+            out_channels=self.img_shape[0],
+            kernel_size=DEC_KS,
+            stride=DEC_STR)
+        # TODO(nina): put last resampling at other position?
+        end_up = nn.UpsamplingNearest2d(size=self.img_shape[1:])
+        return up, pd, conv, end_up
 
     def __init__(self, latent_dim, img_shape, in_shape=None):
         super(DecoderGan, self).__init__()
@@ -662,111 +648,41 @@ class DecoderGan(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
         # decoder
-        self.d1 = nn.Linear(
+        self.l0 = nn.Linear(
             in_features=latent_dim, out_features=self.fcs_infeatures)
 
-        self.up1, self.pd1, self.d2, self.bnd1, self.dec2_out_shape = self.dec_block(
-            block_id=1, in_shape=self.in_shape, channels_fact=16)
+        self.up1, self.pd1, self.conv1, self.bn1, self.out_shape1 = self.block(
+            block_id=1, in_shape=self.in_shape, channels_fact=8)
 
-        scale_factor = 2
-        pad = 1
-        self.up2 = nn.UpsamplingNearest2d(scale_factor=scale_factor)
-        self.pd2 = nn.ReplicationPad2d(pad)
-        self.d3 = nn.Conv2d(
-            in_channels=self.d2.out_channels,
-            out_channels=DEC_C * 8,
-            kernel_size=DEC_KS,
-            stride=DEC_STR)
-        self.bnd2 = nn.BatchNorm2d(self.d3.out_channels, 1.e-3)
-        self.dec3_out_shape = self.dec_conv_output_size(
-            in_shape=(1,
-                      scale_factor*self.dec2_out_shape[1] + 2*pad,
-                      scale_factor*self.dec2_out_shape[2] + 2*pad),
-            out_channels=self.d3.out_channels)
+        self.up2, self.pd2, self.conv2, self.bn2, self.out_shape2 = self.block(
+            block_id=2, in_shape=self.out_shape1, channels_fact=4)
 
-        scale_factor = 2
-        pad = 1
-        self.up3 = nn.UpsamplingNearest2d(scale_factor=scale_factor)
-        self.pd3 = nn.ReplicationPad2d(pad)
-        self.d4 = nn.Conv2d(
-            in_channels=self.d3.out_channels,
-            out_channels=DEC_C * 4,
-            kernel_size=DEC_KS,
-            stride=DEC_STR)
-        self.bnd3 = nn.BatchNorm2d(self.d4.out_channels, 1.e-3)
-        self.dec4_out_shape = self.dec_conv_output_size(
-            in_shape=(1,
-                      scale_factor*self.dec3_out_shape[1] + 2*pad,
-                      scale_factor*self.dec3_out_shape[2] + 2*pad),
-            out_channels=self.d4.out_channels)
+        self.up3, self.pd3, self.conv3, self.bn3, self.out_shape3 = self.block(
+            block_id=3, in_shape=self.out_shape2, channels_fact=2)
 
-        scale_factor = 2
-        pad = 1
-        self.up4 = nn.UpsamplingNearest2d(scale_factor=scale_factor)
-        self.pd4 = nn.ReplicationPad2d(pad)
-        self.d5 = nn.Conv2d(
-            in_channels=self.d4.out_channels,
-            out_channels=DEC_C * 2,
-            kernel_size=DEC_KS,
-            stride=DEC_STR)
-        self.bnd4 = nn.BatchNorm2d(self.d5.out_channels, 1.e-3)
-        self.dec5_out_shape = self.dec_conv_output_size(
-            in_shape=(1,
-                      scale_factor*self.dec4_out_shape[1] + 2*pad,
-                      scale_factor*self.dec4_out_shape[2] + 2*pad),
-            out_channels=self.d5.out_channels)
+        self.up4, self.pd4, self.conv4, self.bn4, self.out_shape4 = self.block(
+            block_id=4, in_shape=self.out_shape3, channels_fact=1)
 
-        # Generates recon
-        scale_factor = 2
-        pad = 1
-        self.up5 = nn.UpsamplingNearest2d(scale_factor=scale_factor)
-        self.pd5 = nn.ReplicationPad2d(pad)
-        self.d6 = nn.Conv2d(
-            in_channels=self.d5.out_channels,
-            out_channels=self.img_shape[0],
-            kernel_size=DEC_KS,
-            stride=DEC_STR)
-        # TODO(nina): put the last resampling at another
-        # position?
-        self.uprecon = nn.UpsamplingNearest2d(size=self.img_shape[1:])
+        block5_recon = self.end_block(block_id=5, in_shape=self.out_shape4)
+        self.up5_r, self.pd5_r, self.conv5_r, self.end_up_r = block5_recon
 
-        # Generates scale_b
-        scale_factor = 2
-        pad = 1
-        self.up6 = nn.UpsamplingNearest2d(scale_factor=2)
-        self.pd6 = nn.ReplicationPad2d(1)
-        self.d7 = nn.Conv2d(
-            in_channels=self.d5.out_channels,
-            out_channels=self.img_shape[0],
-            kernel_size=DEC_KS,
-            stride=DEC_STR)
-        self.upscale = nn.UpsamplingNearest2d(size=self.img_shape[1:])
+        block5_scale = self.end_block(block_id=5, in_shape=self.out_shape4)
+        self.up5_s, self.pd5_s, self.conv5_s, self.end_up_s = block5_scale
 
     def forward(self, z):
         """Forward pass of the decoder is to decode."""
-        print('Entering decoder forward')
-        print(z.shape)
-        print(torch.cuda.max_memory_allocated(device=DEVICE))
-        h1 = self.relu(self.d1(z))
-        print(torch.cuda.max_memory_allocated(device=DEVICE))
+        h1 = self.relu(self.l0(z))
         h1 = h1.view((-1,) + self.in_shape)
-        print(torch.cuda.max_memory_allocated(device=DEVICE))
-        h2 = self.leakyrelu(self.bnd1(self.d2(self.pd1(self.up1(h1)))))
-        print(torch.cuda.max_memory_allocated(device=DEVICE))
-        h3 = self.leakyrelu(self.bnd2(self.d3(self.pd2(self.up2(h2)))))
-        print(torch.cuda.max_memory_allocated(device=DEVICE))
-        h4 = self.leakyrelu(self.bnd3(self.d4(self.pd3(self.up3(h3)))))
-        print(torch.cuda.max_memory_allocated(device=DEVICE))
-        h5 = self.leakyrelu(self.bnd4(self.d5(self.pd4(self.up4(h4)))))
-        print(torch.cuda.max_memory_allocated(device=DEVICE))
-        h6 = self.d6(self.pd5(self.up5(h5)))
-        print(torch.cuda.max_memory_allocated(device=DEVICE))
-        h7 = self.d7(self.pd6(self.up6(h5)))
-        print(torch.cuda.max_memory_allocated(device=DEVICE))
-        recon = self.sigmoid(self.uprecon(h6))
-        print(torch.cuda.max_memory_allocated(device=DEVICE))
-        scale_b = self.sigmoid(self.upscale(h7))
-        print(torch.cuda.max_memory_allocated(device=DEVICE))
+        h2 = self.leakyrelu(self.bn1(self.conv1(self.pd1(self.up1(h1)))))
+        h3 = self.leakyrelu(self.bn2(self.conv2(self.pd2(self.up2(h2)))))
+        h4 = self.leakyrelu(self.bn3(self.conv3(self.pd3(self.up3(h3)))))
+        h5 = self.leakyrelu(self.bn4(self.conv4(self.pd4(self.up4(h4)))))
+
+        h6_r = self.conv5_r(self.pd5_r(self.up5_r(h5)))
+        h6_s = self.conv5_s(self.pd5_s(self.up5_s(h5)))
+
+        recon = self.sigmoid(self.end_up_r(h6_r))
+        scale_b = self.sigmoid(self.end_up_s(h6_s))
         return recon, scale_b
 
 

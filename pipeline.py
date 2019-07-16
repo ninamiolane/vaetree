@@ -184,7 +184,6 @@ class Train(luigi.Task):
         n_batches = len(train_loader)
 
         for batch_idx, batch_data in enumerate(train_loader):
-            print('Entering batch: %d' % batch_idx)
             if DEBUG:
                 if batch_idx < n_batches - 3:
                     continue

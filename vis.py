@@ -13,6 +13,7 @@ import torch
 
 from matplotlib import animation
 from scipy.stats import gaussian_kde
+from torchviz import make_dot
 
 import analyze
 import nn
@@ -659,6 +660,14 @@ def show_img_and_recon(output, dataset_path, algo_name='vae', epoch_id=None,
         i += 1
 
 
+def recon_from_z(output, z, algo_name='vae', epoch_id=None):
+    decoder = load_module(
+        output, algo_name=algo_name, module_name='decoder', epoch_id=epoch_id)
+    recon, _ = decoder(z)
+    recon = recon.cpu().detach().numpy()
+    return recon
+
+
 def show_samples_from_prior(output, fig, outer, i,
                             algo_name='vae', epoch_id=None,
                             sqrt_n_samples=10, cmap=None):
@@ -765,3 +774,18 @@ def plot_fmri(ax, projected_mus, labels,
     handles, labels = ax.get_legend_handles_labels()
     ax.legend(handles, labels)
     return im, ax
+
+
+def plot_nn_graph(module_name='encoder', epoch_id=None):
+    module = load_module(module_name=module_name, epoch_id=epoch_id)
+    if module_name == 'encoder':
+        in_shape = module.img_shape
+    elif module_name == 'decoder':
+        in_shape = module.in_shape
+    else:
+        in_shape = (1, 1, 1, 1)  # placeholder
+    x = torch.zeros(
+        in_shape[0], in_shape[1], in_shape[2], in_shape[3],
+        dtype=torch.float, requires_grad=False)
+    out = module(x)
+    make_dot(out)
