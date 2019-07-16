@@ -2,6 +2,7 @@ FROM anibali/pytorch:cuda-9.0
 RUN conda install git pip
 RUN pip install git+git://github.com/geomstats/geomstats.git@nina-spd-pytorch
 RUN pip install torchviz
+RUN pip install ray
 RUN conda install jupyter
 RUN conda install pytorch=1.1.0 torchvision cudatoolkit=9.0 -c pytorch
 RUN conda install -c conda-forge matplotlib scikit-image scikit-learn nibabel
