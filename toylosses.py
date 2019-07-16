@@ -32,14 +32,15 @@ def is_spd(x):
 
 
 def riem_square_distance(batch_data, batch_recon):
-    _, dim = batch_data.shape
-    n = int((np.sqrt(8 * dim + 1) - 1) / 2)
+    n_batch_data, dim = batch_data.shape
+    n = int(np.sqrt(dim))
     spd_space = SPDMatricesSpace(n=n)
-
-    batch_data_mat = spd_space.symmetric_matrix_from_vector(batch_data)
-    batch_recon_mat = spd_space.symmetric_matrix_from_vector(batch_recon)
+    batch_data_mat = batch_data.resize(n_batch_data, n, n)
+    batch_recon_mat = batch_recon.resize(n_batch_data, n, n)
+    #batch_data_mat = spd_space.symmetric_matrix_from_vector(batch_data)
+    #batch_recon_mat = spd_space.symmetric_matrix_from_vector(batch_recon)
     is_spd(batch_data_mat)
-    is_spd(batch_recon_mat)
+    #is_spd(batch_recon_mat)
     sq_dist = spd_space.metric.squared_dist(
         batch_data_mat, batch_recon_mat)
     return sq_dist
@@ -96,6 +97,15 @@ def reconstruction_loss(batch_data, batch_recon, batch_logvarx,
     """
     n_batch_data, data_dim = batch_data.shape
     assert batch_data.shape == batch_recon.shape, batch_recon.shape
+    n_batch_data, dim = batch_data.shape
+    n = int(np.sqrt(dim))
+    spd_space = SPDMatricesSpace(n=n)
+    batch_data_mat = batch_data.resize(n_batch_data, n, n)
+    batch_recon_mat = batch_recon.resize(n_batch_data, n, n)
+    #batch_data_mat = spd_space.symmetric_matrix_from_vector(batch_data)
+    #batch_recon_mat = spd_space.symmetric_matrix_from_vector(batch_recon)
+    is_spd(batch_data_mat)
+    #is_spd(batch_recon_mat)
 
     if reconstruction_type == 'bce':
         bce_image = F.binary_cross_entropy(batch_data, batch_recon)
@@ -104,14 +114,14 @@ def reconstruction_loss(batch_data, batch_recon, batch_logvarx,
         bce_average = bce_total / n_batch_data
         return bce_average
 
-    batch_logvarx = batch_logvarx.squeeze()
+    batch_logvarx = batch_logvarx.squeeze(dim=1)
     if batch_logvarx.shape == (n_batch_data,):
         # Isotropic Gaussian
         scale_term = - data_dim / 2. * batch_logvarx
         if reconstruction_type == 'ssd':
             sq_dist = torch.sum((batch_data - batch_recon) ** 2, dim=1)
         elif reconstruction_type == 'riem':
-            sq_dist = riem_square_distance(batch_data, batch_recon)
+            sq_dist = riem_square_distance(batch_data, batch_recon)[:, 0]
         sq_dist_term = - sq_dist / (2. * batch_logvarx.exp())
 
     else:
@@ -254,7 +264,7 @@ def neg_iwelbo(decoder, x, mu, logvar, n_is_samples,
     batch_recon_expanded = batch_recon_expanded_flat.resize(
         n_is_samples, n_batch_data, data_dim)
     batch_logvarx_expanded = batch_logvarx_expanded_flat.resize(
-        n_is_samples, n_batch_data, data_dim)
+        n_is_samples, n_batch_data, batch_logvarx_expanded_flat.shape[-1])
 
     x_expanded = x.expand(
         n_is_samples, n_batch_data, data_dim)
