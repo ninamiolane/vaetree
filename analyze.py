@@ -7,7 +7,7 @@ import torch
 from scipy.stats import gaussian_kde
 from sklearn.decomposition import PCA
 
-import vis
+import train_utils
 
 DEVICE = 'cuda'
 
@@ -16,7 +16,7 @@ N_PCA_COMPONENTS = 5
 
 def latent_projection(output, dataset_path, epoch_id=None):
     dataset = np.load(dataset_path)
-    encoder = vis.load_module(
+    encoder = train_utils.load_module(
         output, module_name='encoder', epoch_id=epoch_id)
     dataset = torch.Tensor(dataset)
     dataset = torch.utils.data.TensorDataset(dataset)

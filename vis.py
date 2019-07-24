@@ -6,7 +6,6 @@ import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import numpy as np
-import os
 import pickle
 import seaborn as sns
 import torch
@@ -19,6 +18,7 @@ import analyze
 import nn
 import toylosses
 import toynn
+import train_utils
 
 
 CUDA = torch.cuda.is_available()
@@ -220,66 +220,9 @@ def plot_weights(ax, output, algo_name='vae',
     return ax
 
 
-def load_checkpoint(output, algo_name='train_vae', epoch_id=None):
-    if epoch_id is None:
-        ckpts = glob.glob(
-            '%s/train_%s/epoch_*_checkpoint.pth' % (
-                output, algo_name))
-        if len(ckpts) == 0:
-            raise ValueError('No checkpoints found.')
-        else:
-            ckpts_ids_and_paths = [(int(f.split('_')[-2]), f) for f in ckpts]
-            ckpt_id, ckpt_path = max(
-                ckpts_ids_and_paths, key=lambda item: item[0])
-    else:
-        # Load module corresponding to epoch_id
-        ckpt_path = '%s/train_%s/epoch_%d_checkpoint.pth' % (
-                output, algo_name, epoch_id)
-        if not os.path.isfile(ckpt_path):
-            raise ValueError('No checkpoints found for epoch %d.' % epoch_id)
-
-    print('Found checkpoint. Getting: %s.' % ckpt_path)
-    ckpt = torch.load(ckpt_path, map_location=DEVICE)
-    return ckpt
-
-
-def load_module(output, algo_name='vae', module_name='encoder', epoch_id=None):
-    print('Loading %s...' % module_name)
-    ckpt = load_checkpoint(
-        output=output, algo_name=algo_name, epoch_id=epoch_id)
-    nn_architecture = ckpt['nn_architecture']
-
-    nn_type = nn_architecture['nn_type']
-    assert nn_type in ['linear', 'conv', 'gan']
-
-    if nn_type == 'linear':
-        vae = nn.Vae(
-            latent_dim=nn_architecture['latent_dim'],
-            data_dim=nn_architecture['data_dim'])
-    elif nn_type == 'conv':
-        vae = nn.VaeConv(
-                latent_dim=nn_architecture['latent_dim'],
-                img_shape=nn_architecture['img_shape'],
-                spd=nn_architecture['spd'])
-    else:
-        vae = nn.VaeGan(
-            latent_dim=nn_architecture['latent_dim'],
-            img_shape=nn_architecture['img_shape'])
-    vae.to(DEVICE)
-
-    modules = {}
-    modules['encoder'] = vae.encoder
-    modules['decoder'] = vae.decoder
-    module = modules[module_name]
-    module_ckpt = ckpt[module_name]
-    module.load_state_dict(module_ckpt['module_state_dict'])
-
-    return module
-
-
 def load_losses(output, algo_name='vae', epoch_id=None,
                 crit_name='neg_elbo', mode='train'):
-    ckpt = load_checkpoint(
+    ckpt = train_utils.load_checkpoint(
         output=output, algo_name=algo_name, epoch_id=epoch_id)
 
     losses = ckpt['%s_losses' % mode]
@@ -623,17 +566,26 @@ def show_img_and_recon(output, dataset_path, algo_name='vae', epoch_id=None,
     ncols = min(5, len(dataset))
     img = dataset[:ncols]
 
-    encoder = load_module(
+    encoder = train_utils.load_module(
         output, algo_name=algo_name, module_name='encoder', epoch_id=epoch_id)
-    decoder = load_module(
+    decoder = train_utils.load_module(
         output, algo_name=algo_name, module_name='decoder', epoch_id=epoch_id)
 
     z, _ = encoder(torch.Tensor(img).to(DEVICE))
     recon, _ = decoder(z)
     recon = recon.cpu().detach().numpy()
+    z = z.cpu().detach().numpy()
+    #for i in range(len(recon)-1):
+    #    assert not np.all(recon[i] == recon[i+1])
+    #assert np.all(z[1] == z[2])
+    #assert np.all(z[2] == z[3])
+    #assert np.all(z[3] == z[4])
 
-    data_dim = functools.reduce(
-           (lambda x, y: x * y), encoder.img_shape)
+    try:
+        data_dim = functools.reduce(
+               (lambda x, y: x * y), encoder.img_shape)
+    except AttributeError:
+        data_dim = encoder.data_dim
 
     if recon.shape[-1] == data_dim:
         img_side = int(np.sqrt(data_dim))  # HACK
@@ -661,7 +613,7 @@ def show_img_and_recon(output, dataset_path, algo_name='vae', epoch_id=None,
 
 
 def recon_from_z(output, z, algo_name='vae', epoch_id=None):
-    decoder = load_module(
+    decoder = train_utils.load_module(
         output, algo_name=algo_name, module_name='decoder', epoch_id=epoch_id)
     recon, _ = decoder(z)
     recon = recon.cpu().detach().numpy()
@@ -675,10 +627,13 @@ def show_samples_from_prior(output, fig, outer, i,
         cmap = CMAPS_DICT[algo_name]
     n_samples = sqrt_n_samples ** 2
 
-    decoder = load_module(
+    decoder = train_utils.load_module(
         output, algo_name=algo_name, module_name='decoder', epoch_id=epoch_id)
-    data_dim = functools.reduce(
-            (lambda x, y: x * y), decoder.img_shape)
+    try:
+        data_dim = functools.reduce(
+               (lambda x, y: x * y), decoder.img_shape)
+    except AttributeError:
+        data_dim = decoder.data_dim
 
     z_from_prior = nn.sample_from_prior(
         latent_dim=decoder.latent_dim, n_samples=n_samples)
@@ -777,7 +732,8 @@ def plot_fmri(ax, projected_mus, labels,
 
 
 def plot_nn_graph(module_name='encoder', epoch_id=None):
-    module = load_module(module_name=module_name, epoch_id=epoch_id)
+    module = train_utils.load_module(
+        module_name=module_name, epoch_id=epoch_id)
     if module_name == 'encoder':
         in_shape = module.img_shape
     elif module_name == 'decoder':
