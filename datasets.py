@@ -2,6 +2,7 @@
 
 import csv
 import glob
+import gzip
 import h5py
 import logging
 import os
@@ -13,7 +14,10 @@ import torch
 import torch.utils
 import skimage
 
+from geomstats.general_linear_group import GeneralLinearGroup
+from geomstats.spd_matrices_space import SPDMatricesSpace
 from torchvision import datasets, transforms
+from urllib import request
 
 CUDA = torch.cuda.is_available()
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
@@ -28,8 +32,9 @@ N_NODES = 28
 CORR_THRESH = 0.1
 GAMMA = 1.0
 N_GRAPHS = 86
+ID_COEF = 4  # Make Positive definite
 
-FRAC_VAL = 0.2
+FRAC_VAL = 0.05
 
 # TODO(nina): Reorganize:
 # get_datasets provide train/val in np.array,
@@ -45,20 +50,7 @@ def get_loaders(dataset_name, frac_val=FRAC_VAL, batch_size=8,
     # TODO(nina): Consistency in datasets: add channels for all
     logging.info('Loading data from dataset: %s' % dataset_name)
     if dataset_name == 'mnist':
-        if img_shape_no_channel is not None:
-            transform = transforms.Compose([
-                transforms.Resize(img_shape_no_channel),
-                transforms.ToTensor()])
-        else:
-            transform = transforms.ToTensor()
-        mnist = datasets.MNIST(
-            '../data', train=True, download=True, transform=transform)
-        dataset = mnist.data
-        train_dataset, val_dataset = split_dataset(
-                dataset, frac_val=FRAC_VAL)
-        # TODO(nina): This does not resize the mnist dataset
-        # TODO(nina): Thus provides ByteTensor that fail
-
+        train_dataset, val_dataset = get_dataset_mnist()
     elif dataset_name == 'omniglot':
         if img_shape_no_channel is not None:
             transform = transforms.Compose([
@@ -84,6 +76,9 @@ def get_loaders(dataset_name, frac_val=FRAC_VAL, batch_size=8,
         train_dataset, val_dataset = split_dataset(dataset)
     elif dataset_name == 'connectomes':
         train_dataset, val_dataset = get_dataset_connectomes(
+            img_shape_no_channel=img_shape_no_channel)
+    elif dataset_name == 'connectomes_simu':
+        train_dataset, val_dataset = get_dataset_connectomes_simu(
             img_shape_no_channel=img_shape_no_channel)
     elif dataset_name == 'connectomes_schizophrenia':
         train_dataset, val_dataset, _ = get_dataset_connectomes_schizophrenia()
@@ -135,12 +130,88 @@ def normalization_linear(dataset):
     return dataset
 
 
+def add_channels(dataset, img_dim=2):
+    if dataset.ndim == 3:
+        dataset = np.expand_dims(dataset, axis=1)
+    return dataset
+
+
+def is_pos_def(x):
+    eig, _ = np.linalg.eig(x)
+    return (eig > 0).all()
+
+
+def is_spd(x):
+    if x.ndim == 2:
+        x = np.expand_dims(x, axis=0)
+    _, n, _ = x.shape
+    gln_group = GeneralLinearGroup(n=n)
+    for one_mat in x:
+        assert is_pos_def(one_mat)
+        assert gln_group.belongs(one_mat)
+
+
 def r_pearson_from_z_score(mat):
-    if mat.ndim == 2:
-        mat = np.expand_dims(mat, 0)
-    _, dim, _ = mat.shape
-    r_mat = 1 / (dim - 1) * np.einsum('nik, njk->nij', mat, mat)
+    """Inverse Fisher transformation"""
+    r_mat = np.tanh(mat)
     return r_mat
+
+
+def get_dataset_mnist(img_shape_no_channel=(28, 28)):
+    shape_str = get_shape_string(img_shape_no_channel)
+    train_path = os.path.join(
+        NEURO_TRAIN_VAL_DIR, 'train_mnist_%s.npy' % shape_str)
+    val_path = os.path.join(
+        NEURO_TRAIN_VAL_DIR, 'val_mnist_%s.npy' % shape_str)
+
+    train_exists = os.path.isfile(train_path)
+    val_exists = os.path.isfile(val_path)
+    if train_exists and val_exists:
+        print('Loading %s...' % train_path)
+        print('Loading %s...' % val_path)
+        train_dataset = np.load(train_path)
+        val_dataset = np.load(val_path)
+    else:
+        filename = [
+            ['training_images', 'train-images-idx3-ubyte.gz'],
+            ['test_images', 't10k-images-idx3-ubyte.gz'],
+            ['training_labels', 'train-labels-idx1-ubyte.gz'],
+            ['test_labels', 't10k-labels-idx1-ubyte.gz']
+            ]
+        base_url = 'http://yann.lecun.com/exdb/mnist/'
+        save_folder = '/neuro/train_val_datasets/'
+        for name in filename:
+            print('Downloading ' + name[1] + '...')
+            request.urlretrieve(base_url + name[1], save_folder + name[1])
+        print('Download complete.')
+
+        mnist = {}
+
+        for name in filename[:2]:
+            with gzip.open(name[1], 'rb') as f:
+                mnist[name[0]] = np.frombuffer(
+                    f.read(), np.uint8, offset=16).reshape(-1, 28, 28)
+        for name in filename[-2:]:
+            with gzip.open(name[1], 'rb') as f:
+                mnist[name[0]] = np.frombuffer(f.read(), np.uint8, offset=8)
+        with open('mnist.pkl', 'wb') as f:
+            pickle.dump(mnist, f)
+        print('Save complete.')
+
+        with open('mnist.pkl', 'rb') as f:
+            mnist = pickle.load(f)  # training_labels, test_labels also
+
+        dataset = mnist['training_images']
+        dataset = add_channels(dataset, img_dim=2)
+        dataset = dataset / 255  # normalization
+        train_dataset, val_dataset = split_dataset(
+                dataset, frac_val=FRAC_VAL)
+        print('Saving %s...' % train_path)
+        print('Saving %s...' % val_path)
+        np.save(train_path, train_dataset)
+        np.save(val_path, val_dataset)
+
+    return train_dataset, val_dataset
 
 
 def get_dataset_connectomes(img_shape_no_channel=(100, 100),
@@ -176,13 +247,88 @@ def get_dataset_connectomes(img_shape_no_channel=(100, 100),
         print('Loading %s...' % netmats_path)
         netmats = np.loadtxt(netmats_path)
         netmats = netmats.reshape(-1, n_nodes, n_nodes)
+        n_mats, _, _ = netmats.shape
 
         r_mats = r_pearson_from_z_score(netmats)
 
-        r_mats = np.expand_dims(r_mats, axis=1)
+        # HACK
+        r_mats = 1 / 4 * (r_mats + ID_COEF * np.tile(
+            np.eye(n_nodes, n_nodes), (n_mats, 1, 1)))
+        r_mats = np.abs(r_mats)
+
+        r_mats = add_channels(r_mats, img_dim=2)
+
         dataset = r_mats
 
         assert len(dataset.shape) == 4
+
+        # dataset = normalization_linear(dataset)
+
+        train_dataset, val_dataset = split_dataset(dataset)
+        print('Saving %s...' % train_path)
+        print('Saving %s...' % val_path)
+        np.save(train_path, train_dataset)
+        np.save(val_path, val_dataset)
+
+    return train_dataset, val_dataset
+
+
+def get_dataset_connectomes_simu(img_shape_no_channel=(15, 15)):
+    """
+    Simulating a geodesic triangle.
+    """
+    shape_str = get_shape_string(img_shape_no_channel)
+    train_path = os.path.join(
+        NEURO_TRAIN_VAL_DIR, 'train_conn_simu_%s.npy' % shape_str)
+    val_path = os.path.join(
+        NEURO_TRAIN_VAL_DIR, 'val_conn_simu_%s.npy' % shape_str)
+
+    train_exists = os.path.isfile(train_path)
+    val_exists = os.path.isfile(val_path)
+    if train_exists and val_exists:
+        print('Loading %s...' % train_path)
+        print('Loading %s...' % val_path)
+        train_dataset = np.load(train_path)
+        val_dataset = np.load(val_path)
+
+    else:
+        n, _ = img_shape_no_channel
+        spd_space = SPDMatricesSpace(n=n)
+        spd_mat_a = spd_space.random_uniform()
+        spd_mat_b = spd_space.random_uniform()
+        spd_mat_c = spd_space.random_uniform()
+
+        vec_ab = spd_space.metric.log(base_point=spd_mat_a, point=spd_mat_b)
+        geod_ab = spd_space.metric.geodesic(
+            initial_point=spd_mat_a, initial_tangent_vec=vec_ab)
+        points_ab = geod_ab(np.arange(0, 1, 0.0002))
+
+        vec_bc = spd_space.metric.log(base_point=spd_mat_b, point=spd_mat_c)
+        geod_bc = spd_space.metric.geodesic(
+            initial_point=spd_mat_b, initial_tangent_vec=vec_bc)
+        points_bc = geod_bc(np.arange(0, 1, 0.0002))
+
+        vec_ca = spd_space.metric.log(base_point=spd_mat_c, point=spd_mat_a)
+        geod_ca = spd_space.metric.geodesic(
+            initial_point=spd_mat_c, initial_tangent_vec=vec_ca)
+        points_ca = geod_ca(np.arange(0, 1, 0.0002))
+
+        dataset = np.concatenate([points_ab, points_bc, points_ca], axis=0)
+        np.random.shuffle(dataset)
+
+        eigenvalues, _ = np.linalg.eig(dataset)
+        min_eigenvalues = np.min(eigenvalues)
+        dataset = dataset + np.abs(min_eigenvalues) * np.tile(
+            np.eye(img_shape_no_channel[0], img_shape_no_channel[1]),
+            (len(dataset), 1, 1))
+        #dataset = np.abs(dataset)
+        #dataset = dataset / np.amax(dataset, axis=0)
+        is_spd(dataset)
+
+        dataset = add_channels(dataset, img_dim=2)
+        assert len(dataset.shape) == 4
+
+        # dataset = normalization_linear(dataset)
 
         train_dataset, val_dataset = split_dataset(dataset)
         print('Saving %s...' % train_path)

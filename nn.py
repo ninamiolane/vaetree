@@ -227,18 +227,23 @@ def sample_from_prior(latent_dim, n_samples=1):
     return reparametrize(mu, logvar)
 
 
-def spd_layer(x):
-    n_data = x.shape[0]
-    n_channels = x.shape[1]
-    sq_dist = torch.zeros(
-        n_data, n_channels, n_channels)
+def kernel_aggregation(x):
+    """
+    From: https://arxiv.org/pdf/1711.06540.pdf.
+    """
+    n_data, n_channels, _, _ = x.shape
+
+    sq_dist = torch.zeros(n_data, n_channels, n_channels)
     for i_channel in range(n_channels):
         for j_channel in range(i_channel):
-            sq_dist[:, i_channel, j_channel] = torch.sum(
-                (x[:, i_channel, :, :] - x[:, j_channel, :, :])**2)
+            sq_dist_aux = torch.sum(
+                (x[:, i_channel, :, :] - x[:, j_channel, :, :])**2, dim=-1)
+            sq_dist_aux = torch.sum(sq_dist_aux, dim=-1)
+            assert sq_dist_aux.shape == (n_data,), sq_dist_aux.shape
+            sq_dist[:, i_channel, j_channel] = sq_dist_aux
 
     sigma2 = torch.mean(sq_dist)
-    sq_dist = sq_dist + sq_dist.permute(0, 2, 1)
+    sq_dist = 2 * (sq_dist + sq_dist.permute(0, 2, 1))  # -- HACK
     spd = torch.exp(- sq_dist / (2 * sigma2)).to(DEVICE)
     return spd
 
@@ -258,8 +263,8 @@ class Encoder(nn.Module):
         self.fc22 = nn.Linear(latent_dim ** 2, latent_dim)
 
     def forward(self, x):
-        x = x.view(-1, self.data_dim)
-        x = x.float()
+        # Note: no channels
+        x = x.view(-1, self.data_dim).float()
         h1 = F.relu(self.fc1(x))
         return self.fc21(h1), self.fc22(h1)
 
@@ -281,7 +286,7 @@ class Decoder(nn.Module):
         h3 = F.relu(self.fc3(z))
         recon_x = torch.sigmoid(self.fc4(h3))
         n_batch_data = recon_x.shape[0]
-        return recon_x, torch.zeros(n_batch_data)  # HACK
+        return recon_x, torch.zeros((n_batch_data, 1)).to(DEVICE)  # HACK
 
 
 class Vae(nn.Module):
@@ -300,9 +305,9 @@ class Vae(nn.Module):
             data_dim=data_dim)
 
     def reparameterize(self, mu, logvar):
-        std = torch.exp(0.5*logvar)
+        std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
-        return mu + eps*std
+        return mu + eps * std
 
     def forward(self, x):
         muz, logvarz = self.encoder(x)
@@ -442,16 +447,19 @@ class DecoderConv(nn.Module):
         x = self.leakyrelu(self.convt1(x, output_size=self.in_shape2[1:]))
 
         assert x.shape[1:] == self.in_shape2
-        x = self.sigmoid(self.convt2(x, output_size=self.img_shape[1:]))
-
         if self.spd:
-            x = spd_layer(x)
+            x = self.convt2(x, output_size=self.img_shape[1:])
+            x = kernel_aggregation(x)
+        else:
+            x = self.sigmoid(self.convt2(x, output_size=self.img_shape[1:]))
 
         # Output flat recon_x
         # Note: this also multiplies the channels, assuming that img_c=1.
         # TODO(nina): Bring back the channels as their full dimension
+
         out_dim = functools.reduce((lambda x, y: x * y), self.img_shape)
         recon_x = x.view(-1, out_dim)
+
         return recon_x, torch.zeros((recon_x.shape[0], 1)).to(DEVICE)  # HACK
 
 

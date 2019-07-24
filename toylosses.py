@@ -13,7 +13,7 @@ from geomstats.general_linear_group import GeneralLinearGroup
 
 
 CUDA = torch.cuda.is_available()
-DEVICE = torch.device("cuda" if CUDA else "cpu")
+DEVICE = torch.device('cuda' if CUDA else 'cpu')
 
 
 def is_pos_def(x):
@@ -37,10 +37,10 @@ def riem_square_distance(batch_data, batch_recon):
     spd_space = SPDMatricesSpace(n=n)
     batch_data_mat = batch_data.resize(n_batch_data, n, n)
     batch_recon_mat = batch_recon.resize(n_batch_data, n, n)
-    #batch_data_mat = spd_space.symmetric_matrix_from_vector(batch_data)
-    #batch_recon_mat = spd_space.symmetric_matrix_from_vector(batch_recon)
+
     is_spd(batch_data_mat)
-    #is_spd(batch_recon_mat)
+    # is_spd(batch_recon_mat)
+
     sq_dist = spd_space.metric.squared_dist(
         batch_data_mat, batch_recon_mat)
     return sq_dist
@@ -95,17 +95,11 @@ def reconstruction_loss(batch_data, batch_recon, batch_logvarx,
     Then take the average.
     Then take the inverse, as we want a loss.
     """
+    assert reconstruction_type in ['ssd', 'bce', 'riem']
     n_batch_data, data_dim = batch_data.shape
-    assert batch_data.shape == batch_recon.shape, batch_recon.shape
+    assert batch_data.shape == batch_recon.shape, [
+        batch_data.shape, batch_recon.shape]
     n_batch_data, dim = batch_data.shape
-    n = int(np.sqrt(dim))
-    spd_space = SPDMatricesSpace(n=n)
-    batch_data_mat = batch_data.resize(n_batch_data, n, n)
-    batch_recon_mat = batch_recon.resize(n_batch_data, n, n)
-    #batch_data_mat = spd_space.symmetric_matrix_from_vector(batch_data)
-    #batch_recon_mat = spd_space.symmetric_matrix_from_vector(batch_recon)
-    is_spd(batch_data_mat)
-    #is_spd(batch_recon_mat)
 
     if reconstruction_type == 'bce':
         bce_image = F.binary_cross_entropy(batch_data, batch_recon)
@@ -114,35 +108,47 @@ def reconstruction_loss(batch_data, batch_recon, batch_logvarx,
         bce_average = bce_total / n_batch_data
         return bce_average
 
-    batch_logvarx = batch_logvarx.squeeze(dim=1)
-    if batch_logvarx.shape == (n_batch_data,):
+    elif reconstruction_type == 'riem':
+        n = int(np.sqrt(dim))
+        batch_data_mat = batch_data.resize(n_batch_data, n, n)
+        batch_recon_mat = batch_recon.resize(n_batch_data, n, n)
+
+        is_spd(batch_data_mat)
+        # is_spd(batch_recon_mat)
+
+        batch_logvarx = batch_logvarx.squeeze(dim=1)
+        assert batch_logvarx.shape == (n_batch_data,)
         # Isotropic Gaussian
         scale_term = - data_dim / 2. * batch_logvarx
-        if reconstruction_type == 'ssd':
-            sq_dist = torch.sum((batch_data - batch_recon) ** 2, dim=1)
-        elif reconstruction_type == 'riem':
-            sq_dist = riem_square_distance(batch_data, batch_recon)[:, 0]
+        sq_dist = riem_square_distance(batch_data, batch_recon)[:, 0]
         sq_dist_term = - sq_dist / (2. * batch_logvarx.exp())
 
-    else:
-        assert reconstruction_type == 'ssd', reconstruction_type
-        # Diagonal Gaussian
-        assert batch_logvarx.shape == (
-            n_batch_data, data_dim), batch_logvarx.shape
-        scale_term = - 1. / 2. * torch.sum(batch_logvarx, dim=1)
+    elif reconstruction_type == 'ssd':
+        if batch_logvarx.dim() > 1:
+            batch_logvarx = batch_logvarx.squeeze(dim=1)
+        if batch_logvarx.shape == (n_batch_data,):
+            # Isotropic Gaussian
+            scale_term = - data_dim / 2. * batch_logvarx
+            sq_dist = torch.sum((batch_data - batch_recon) ** 2, dim=1)
+            sq_dist_term = - sq_dist / (2. * batch_logvarx.exp())
+        else:
+            # Diagonal Gaussian
+            assert batch_logvarx.shape == (
+                n_batch_data, data_dim), batch_logvarx.shape
+            scale_term = - 1. / 2. * torch.sum(batch_logvarx, dim=1)
 
-        batch_varx = batch_logvarx.exp()
-        norms = np.linalg.norm(batch_varx.cpu().detach().numpy(), axis=1)
-        if np.isclose(norms, 0.).any():
-            print('Warning: norms close to 0.')
-        aux = (batch_data - batch_recon) ** 2 / batch_varx
+            batch_varx = batch_logvarx.exp()
+            norms = np.linalg.norm(batch_varx.cpu().detach().numpy(), axis=1)
+            if np.isclose(norms, 0.).any():
+                print('Warning: norms close to 0.')
+            aux = (batch_data - batch_recon) ** 2 / batch_varx
 
-        assert aux.shape == (n_batch_data, data_dim), aux.shape
-        sq_dist_term = - 1. / 2. * torch.sum(aux, dim=1)
+            assert aux.shape == (n_batch_data, data_dim), aux.shape
+            sq_dist_term = - 1. / 2. * torch.sum(aux, dim=1)
 
-        for i in range(len(sq_dist_term)):
-            if math.isinf(sq_dist_term[i]):
-                raise ValueError()
+            for i in range(len(sq_dist_term)):
+                if math.isinf(sq_dist_term[i]):
+                    raise ValueError()
 
     # We keep the constant term to have an interpretation to the loss
     cst_term = - data_dim / 2. * torch.log(torch.Tensor([2 * np.pi]))
@@ -263,6 +269,7 @@ def neg_iwelbo(decoder, x, mu, logvar, n_is_samples,
         z_expanded_flat)
     batch_recon_expanded = batch_recon_expanded_flat.resize(
         n_is_samples, n_batch_data, data_dim)
+
     batch_logvarx_expanded = batch_logvarx_expanded_flat.resize(
         n_is_samples, n_batch_data, batch_logvarx_expanded_flat.shape[-1])
 
