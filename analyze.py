@@ -14,8 +14,16 @@ DEVICE = 'cuda'
 N_PCA_COMPONENTS = 5
 
 
-def latent_projection(output, dataset_path, epoch_id=None):
+def latent_projection(output, dataset_path, algo_name='vae', epoch_id=None):
+    ckpt = train_utils.load_checkpoint(
+        output=output, algo_name=algo_name, epoch_id=epoch_id)
+    spd_feature = ckpt['nn_architecture']['spd_feature']
+
     dataset = np.load(dataset_path)
+    if spd_feature is not None:
+        dataset = train_utils.spd_feature_from_matrix(
+            dataset, spd_feature=spd_feature)
+
     encoder = train_utils.load_module(
         output, module_name='encoder', epoch_id=epoch_id)
     dataset = torch.Tensor(dataset)
@@ -28,7 +36,6 @@ def latent_projection(output, dataset_path, epoch_id=None):
         data = data[0].to(DEVICE)  # extract from loader's list
         if len(data.shape) == 3:
             data = torch.unsqueeze(data, dim=0)
-
         assert len(data.shape) == 4
         mu, logvar = encoder(data)
         mus.append(np.array(mu.cpu().detach()))

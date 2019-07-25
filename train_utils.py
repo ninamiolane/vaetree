@@ -4,8 +4,12 @@ import glob
 import logging
 import os
 
+import numpy as np
 import torch
 import torch.nn as tnn
+
+import geomstats.backend as gs
+from geomstats.spd_matrices_space import SPDMatricesSpace
 
 import nn
 
@@ -58,28 +62,31 @@ def init_modules_and_optimizers(nn_architecture, train_params):
     img_shape = nn_architecture['img_shape']
     latent_dim = nn_architecture['latent_dim']
     data_dim = nn_architecture['data_dim']
+    with_sigmoid = nn_architecture['with_sigmoid']
 
     lr = train_params['lr']
     beta1 = train_params['beta1']
     beta2 = train_params['beta2']
 
-    assert nn_type in ['linear', 'conv', 'gan']
+    assert nn_type in ['fc', 'conv', 'conv_plus']
 
     # Modules
-    if nn_type == 'linear':
+    if nn_type == 'fc':
         vae = nn.Vae(
             latent_dim=latent_dim,
-            data_dim=data_dim).to(DEVICE)
+            data_dim=data_dim,
+            with_sigmoid=with_sigmoid).to(DEVICE)
     elif nn_type == 'conv':
         vae = nn.VaeConv(
-                latent_dim=latent_dim,
-                img_shape=img_shape,
-                spd=nn_architecture['spd']).to(DEVICE)
-    else:
-        vae = nn.VaeGan(
             latent_dim=latent_dim,
-            img_shape=img_shape).to(DEVICE)
-        discriminator = nn.DiscriminatorGan(
+            img_shape=img_shape,
+            with_sigmoid=with_sigmoid).to(DEVICE)
+    else:
+        vae = nn.VaeConvPlus(
+            latent_dim=latent_dim,
+            img_shape=img_shape,
+            with_sigmoid=with_sigmoid).to(DEVICE)
+        discriminator = nn.DiscriminatorConvPlus(
             latent_dim=latent_dim,
             img_shape=img_shape).to(DEVICE)
         modules['discriminator_reconstruction'] = discriminator
@@ -93,7 +100,7 @@ def init_modules_and_optimizers(nn_architecture, train_params):
     optimizers['decoder'] = torch.optim.Adam(
         modules['decoder'].parameters(), lr=lr, betas=(beta1, beta2))
 
-    if nn_type == 'gan':
+    if nn_type == 'conv_plus':
         optimizers['discriminator_reconstruction'] = torch.optim.Adam(
             modules['discriminator_reconstruction'].parameters(),
             lr=lr,
@@ -144,7 +151,7 @@ def init_training(train_dir, nn_architecture, train_params):
 
 def save_checkpoint(epoch, modules, optimizers, dir_path,
                     train_losses_all_epochs, val_losses_all_epochs,
-                    nn_architecture):
+                    nn_architecture, train_params):
     checkpoint = {}
     for module_name in modules.keys():
         module = modules[module_name]
@@ -156,6 +163,7 @@ def save_checkpoint(epoch, modules, optimizers, dir_path,
         checkpoint['train_losses'] = train_losses_all_epochs
         checkpoint['val_losses'] = val_losses_all_epochs
         checkpoint['nn_architecture'] = nn_architecture
+        checkpoint['train_params'] = train_params
 
     checkpoint_path = os.path.join(
         dir_path, 'epoch_%d_checkpoint.pth' % epoch)
@@ -193,21 +201,23 @@ def load_module(output, algo_name='vae', module_name='encoder', epoch_id=None):
     nn_type = nn_architecture['nn_type']
     print('Loading %s from network of architecture: %s...' % (
         module_name, nn_type))
-    assert nn_type in ['linear', 'conv', 'gan']
+    assert nn_type in ['fc', 'conv', 'conv_plus']
 
-    if nn_type == 'linear':
+    if nn_type == 'fc':
         vae = nn.Vae(
             latent_dim=nn_architecture['latent_dim'],
-            data_dim=nn_architecture['data_dim'])
+            data_dim=nn_architecture['data_dim'],
+            with_sigmoid=nn_architecture['with_sigmoid'])
     elif nn_type == 'conv':
         vae = nn.VaeConv(
-                latent_dim=nn_architecture['latent_dim'],
-                img_shape=nn_architecture['img_shape'],
-                spd=nn_architecture['spd'])
-    else:
-        vae = nn.VaeGan(
             latent_dim=nn_architecture['latent_dim'],
-            img_shape=nn_architecture['img_shape'])
+            img_shape=nn_architecture['img_shape'],
+            with_sigmoid=nn_architecture['with_sigmoid'])
+    else:
+        vae = nn.VaeConvPlus(
+            latent_dim=nn_architecture['latent_dim'],
+            img_shape=nn_architecture['img_shape'],
+            with_sigmoid=nn_architecture['with_sigmoid'])
     vae.to(DEVICE)
 
     modules = {}
@@ -218,3 +228,47 @@ def load_module(output, algo_name='vae', module_name='encoder', epoch_id=None):
     module.load_state_dict(module_ckpt['module_state_dict'])
 
     return module
+
+
+def get_logging_shape(tensor):
+    shape = tensor.shape
+    logging_shape = '(' + ('%s, ' * len(shape) % tuple(shape))[:-2] + ')'
+    return logging_shape
+
+
+def spd_feature_from_matrix(dataset, spd_feature='matrix'):
+    """Transform everything in the np dataset"""
+    os.environ['GEOMSTATS_BACKEND'] = 'numpy'
+    if spd_feature == 'matrix' or spd_feature == 'point':
+        dataset = dataset
+        assert dataset.ndim == 4
+    else:
+        _, _, n, _ = dataset.shape
+        spd_space = SPDMatricesSpace(n=n)
+        dataset = dataset[:, 0, :, :]  # channels
+
+        if spd_feature == 'vector':
+            dataset = spd_space.vector_from_symmetric_matrix(dataset)
+            dataset = gs.expand_dims(dataset, axis=1)
+        if spd_feature == 'log_vector':
+            dataset = spd_space.metric.log(dataset)
+            dataset = spd_space.vector_from_symmetric_matrix(dataset)
+            dataset = gs.expand_dims(dataset, axis=1)
+    os.environ['GEOMSTATS_BACKEND'] = 'pytorch'
+    return dataset
+
+
+def matrix_from_spd_feature(dataset, spd_feature='matrix'):
+    if spd_feature == 'matrix' or spd_feature == 'point':
+        return dataset
+    _, vec_dim = dataset.shape
+    n = int((np.sqrt(8 * vec_dim + 1) - 1) / 2)
+    spd_space = SPDMatricesSpace(n=n)
+
+    if spd_feature == 'vector':
+        dataset = spd_space.symmetric_matrix_from_vector(dataset)
+        return dataset
+    if spd_feature == 'log_vector':
+        dataset = spd_space.symmetric_matrix_from_vector(dataset)
+        dataset = spd_space.metric.exp(dataset)
+        return dataset

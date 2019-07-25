@@ -14,7 +14,6 @@ import torch
 import torch.utils
 import skimage
 
-from geomstats.general_linear_group import GeneralLinearGroup
 from geomstats.spd_matrices_space import SPDMatricesSpace
 from torchvision import datasets, transforms
 from urllib import request
@@ -41,8 +40,8 @@ FRAC_VAL = 0.05
 # get_loaders shuflles and transforms in tensors/loaders
 
 
-def get_loaders(dataset_name, frac_val=FRAC_VAL, batch_size=8,
-                img_shape=None, kwargs=KWARGS):
+def get_datasets(dataset_name, frac_val=FRAC_VAL, batch_size=8,
+                 img_shape=None, kwargs=KWARGS):
 
     img_shape_no_channel = None
     if img_shape is not None:
@@ -89,18 +88,7 @@ def get_loaders(dataset_name, frac_val=FRAC_VAL, batch_size=8,
     else:
         raise ValueError('Unknown dataset name: %s' % dataset_name)
 
-    shape = train_dataset.shape
-    logging.info(
-        'Train tensor: (' + ('%s, ' * len(shape) % tuple(shape))[:-2] + ')')
-    shape = val_dataset.shape
-    logging.info(
-        'Val tensor: (' + ('%s, ' * len(shape) % tuple(shape))[:-2] + ')')
-
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, **kwargs)
-    val_loader = torch.utils.data.DataLoader(
-        val_dataset, batch_size=batch_size, shuffle=True, **kwargs)
-    return train_loader, val_loader
+    return train_dataset, val_dataset
 
 
 def split_dataset(dataset, frac_val=FRAC_VAL):
@@ -141,14 +129,28 @@ def is_pos_def(x):
     return (eig > 0).all()
 
 
+def is_sym(x):
+    return np.all(np.isclose(x, np.transpose(x), rtol=1e-4))
+
+
 def is_spd(x):
+    """Assumes the matrix is symmetric"""
     if x.ndim == 2:
         x = np.expand_dims(x, axis=0)
+    elif x.ndim == 4:
+        x = x[:, 0, :, :]
     _, n, _ = x.shape
-    gln_group = GeneralLinearGroup(n=n)
-    for one_mat in x:
-        assert is_pos_def(one_mat)
-        assert gln_group.belongs(one_mat)
+    all_spd = True
+    for i, one_mat in enumerate(x):
+        if not is_pos_def(one_mat):
+            print('problem pos def at %d' % i)
+            print(np.linalg.eig(one_mat)[0])
+        if not is_sym(one_mat):
+            print('problem sym at %d' % i)
+            print(one_mat - np.transpose(one_mat))
+
+        all_spd = all_spd & is_sym(one_mat) & is_pos_def(one_mat)
+    return all_spd
 
 
 def r_pearson_from_z_score(mat):
@@ -293,37 +295,60 @@ def get_dataset_connectomes_simu(img_shape_no_channel=(15, 15)):
 
     else:
         n, _ = img_shape_no_channel
+        os.environ['GEOMSTATS_BACKEND'] = 'numpy'
         spd_space = SPDMatricesSpace(n=n)
-        spd_mat_a = spd_space.random_uniform()
-        spd_mat_b = spd_space.random_uniform()
-        spd_mat_c = spd_space.random_uniform()
+        vec_dim = int(n * (n + 1) / 2)
+        vec_a = np.zeros(vec_dim)
+        vec_b = np.zeros(vec_dim)
+        vec_c = np.zeros(vec_dim)
+
+        cos_angle = np.cos(np.pi / 3)
+        sin_angle = np.cos(np.pi / 3)
+        vec_a[0] = cos_angle
+        vec_a[1] = sin_angle
+        vec_b[0] = -cos_angle
+        vec_c[1] = sin_angle
+        vec_c[0] = 0.
+        vec_c[1] = -1.
+
+        mat_identity = np.eye(n)
+        sym_mat_a = spd_space.symmetric_matrix_from_vector(vec_a)
+        spd_mat_a = spd_space.metric.exp(
+            base_point=mat_identity, tangent_vec=sym_mat_a)
+        sym_mat_b = spd_space.symmetric_matrix_from_vector(vec_b)
+        spd_mat_b = spd_space.metric.exp(
+            base_point=mat_identity, tangent_vec=sym_mat_b)
+        sym_mat_c = spd_space.symmetric_matrix_from_vector(vec_c)
+        spd_mat_c = spd_space.metric.exp(
+            base_point=mat_identity, tangent_vec=sym_mat_c)
+
+        assert is_spd(spd_mat_a)
+        assert is_spd(spd_mat_b)
+        assert is_spd(spd_mat_c)
 
         vec_ab = spd_space.metric.log(base_point=spd_mat_a, point=spd_mat_b)
         geod_ab = spd_space.metric.geodesic(
             initial_point=spd_mat_a, initial_tangent_vec=vec_ab)
         points_ab = geod_ab(np.arange(0, 1, 0.0002))
+        assert is_spd(points_ab)
 
         vec_bc = spd_space.metric.log(base_point=spd_mat_b, point=spd_mat_c)
         geod_bc = spd_space.metric.geodesic(
             initial_point=spd_mat_b, initial_tangent_vec=vec_bc)
         points_bc = geod_bc(np.arange(0, 1, 0.0002))
+        assert is_spd(points_bc)
 
         vec_ca = spd_space.metric.log(base_point=spd_mat_c, point=spd_mat_a)
         geod_ca = spd_space.metric.geodesic(
             initial_point=spd_mat_c, initial_tangent_vec=vec_ca)
         points_ca = geod_ca(np.arange(0, 1, 0.0002))
+        assert is_spd(points_ca)
+        os.environ['GEOMSTATS_BACKEND'] = 'pytorch'
 
         dataset = np.concatenate([points_ab, points_bc, points_ca], axis=0)
+        assert is_spd(dataset)
+        assert np.all(spd_space.belongs(dataset))
         np.random.shuffle(dataset)
-
-        eigenvalues, _ = np.linalg.eig(dataset)
-        min_eigenvalues = np.min(eigenvalues)
-        dataset = dataset + np.abs(min_eigenvalues) * np.tile(
-            np.eye(img_shape_no_channel[0], img_shape_no_channel[1]),
-            (len(dataset), 1, 1))
-        #dataset = np.abs(dataset)
-        #dataset = dataset / np.amax(dataset, axis=0)
-        is_spd(dataset)
 
         dataset = add_channels(dataset, img_dim=2)
         assert len(dataset.shape) == 4

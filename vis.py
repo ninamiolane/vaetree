@@ -570,22 +570,27 @@ def show_img_and_recon(output, dataset_path, algo_name='vae', epoch_id=None,
         output, algo_name=algo_name, module_name='encoder', epoch_id=epoch_id)
     decoder = train_utils.load_module(
         output, algo_name=algo_name, module_name='decoder', epoch_id=epoch_id)
+    ckpt = train_utils.load_checkpoint(
+        output=output, algo_name=algo_name, epoch_id=epoch_id)
+    spd_feature = ckpt['nn_architecture']['spd_feature']
 
-    z, _ = encoder(torch.Tensor(img).to(DEVICE))
+    if spd_feature is not None:
+        feature = train_utils.spd_feature_from_matrix(
+            img, spd_feature=spd_feature)
+    z, _ = encoder(torch.Tensor(feature).to(DEVICE))
     recon, _ = decoder(z)
     recon = recon.cpu().detach().numpy()
     z = z.cpu().detach().numpy()
-    #for i in range(len(recon)-1):
-    #    assert not np.all(recon[i] == recon[i+1])
-    #assert np.all(z[1] == z[2])
-    #assert np.all(z[2] == z[3])
-    #assert np.all(z[3] == z[4])
 
     try:
         data_dim = functools.reduce(
                (lambda x, y: x * y), encoder.img_shape)
     except AttributeError:
         data_dim = encoder.data_dim
+
+    if spd_feature is not None:
+        recon = train_utils.matrix_from_spd_feature(
+            recon, spd_feature=spd_feature)
 
     if recon.shape[-1] == data_dim:
         img_side = int(np.sqrt(data_dim))  # HACK
@@ -629,24 +634,27 @@ def show_samples_from_prior(output, fig, outer, i,
 
     decoder = train_utils.load_module(
         output, algo_name=algo_name, module_name='decoder', epoch_id=epoch_id)
-    try:
-        data_dim = functools.reduce(
-               (lambda x, y: x * y), decoder.img_shape)
-    except AttributeError:
-        data_dim = decoder.data_dim
 
     z_from_prior = nn.sample_from_prior(
         latent_dim=decoder.latent_dim, n_samples=n_samples)
     x_recon, _ = decoder(z_from_prior)
     x_recon = x_recon.cpu().detach().numpy()
+    ckpt = train_utils.load_checkpoint(
+        output=output, algo_name=algo_name, epoch_id=epoch_id)
+    spd_feature = ckpt['nn_architecture']['spd_feature']
+    if spd_feature is not None:
+        x_recon = train_utils.matrix_from_spd_feature(
+            x_recon, spd_feature=spd_feature)
+        # Assume x_reocn.shape = n_data, 15, 15 no channels
+        x_recon = x_recon.reshape((-1, x_recon.shape[1]*x_recon.shape[2]))
 
     inner = gridspec.GridSpecFromSubplotSpec(
         sqrt_n_samples, sqrt_n_samples,
         subplot_spec=outer[i], wspace=0., hspace=0.)
 
+    img_side = int(np.sqrt(x_recon.shape[1]))
     for i_recon, one_x_recon in enumerate(x_recon):
         ax = plt.Subplot(fig, inner[i_recon])
-        img_side = int(np.sqrt(data_dim))
         one_x_recon = one_x_recon.reshape((img_side, img_side))
         ax.imshow(one_x_recon, cmap=cmap)
         ax.get_yaxis().set_visible(False)
