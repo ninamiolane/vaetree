@@ -8,7 +8,6 @@ import numpy as np
 import torch
 import torch.nn as tnn
 
-import geomstats.backend as gs
 from geomstats.spd_matrices_space import SPDMatricesSpace
 
 import nn
@@ -244,16 +243,27 @@ def spd_feature_from_matrix(dataset, spd_feature='matrix'):
         assert dataset.ndim == 4
     else:
         _, _, n, _ = dataset.shape
+        mat_identity = np.eye(n)
         spd_space = SPDMatricesSpace(n=n)
         dataset = dataset[:, 0, :, :]  # channels
 
         if spd_feature == 'vector':
             dataset = spd_space.vector_from_symmetric_matrix(dataset)
-            dataset = gs.expand_dims(dataset, axis=1)
+            if type(dataset) == torch.Tensor:
+                dataset = dataset.cpu().numpy()
+            dataset = np.expand_dims(dataset, axis=1)
         if spd_feature == 'log_vector':
-            dataset = spd_space.metric.log(dataset)
+            print(type(dataset))
+            print(os.environ['GEOMSTATS_BACKEND'])
+            dataset = spd_space.metric.log(
+                base_point=mat_identity, point=dataset)
+            print(type(dataset))
+            print(os.environ['GEOMSTATS_BACKEND'])
             dataset = spd_space.vector_from_symmetric_matrix(dataset)
-            dataset = gs.expand_dims(dataset, axis=1)
+            if type(dataset) == torch.Tensor:
+                dataset = dataset.cpu().numpy()
+            print(type(dataset))
+            dataset = np.expand_dims(dataset, axis=1)
     os.environ['GEOMSTATS_BACKEND'] = 'pytorch'
     return dataset
 
@@ -270,5 +280,7 @@ def matrix_from_spd_feature(dataset, spd_feature='matrix'):
         return dataset
     if spd_feature == 'log_vector':
         dataset = spd_space.symmetric_matrix_from_vector(dataset)
-        dataset = spd_space.metric.exp(dataset)
+        mat_identity = np.eye(n)
+        dataset = spd_space.metric.exp(
+            base_point=mat_identity, tangent_vec=dataset)
         return dataset

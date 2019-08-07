@@ -59,7 +59,7 @@ assert NN_TYPE in ['fc', 'conv', 'conv_plus']
 RECONSTRUCTIONS = 'l2'
 assert RECONSTRUCTIONS in ['riem', 'l2', 'l2_inner', 'bce']
 
-SPD_FEATURE = 'vector'
+SPD_FEATURE = 'log_vector'
 assert SPD_FEATURE in [
     'matrix', 'vector',
     'log', 'log_vector',
@@ -409,9 +409,11 @@ class TrainVAE(luigi.Task):
         logging.info(
             'Val tensor: %s' % train_utils.get_logging_shape(val_dataset))
 
+        print(type(train_dataset))
         train_dataset = train_utils.spd_feature_from_matrix(
             train_dataset,
             spd_feature=NN_ARCHITECTURE['spd_feature'])
+        print(type(train_dataset))
         val_dataset = train_utils.spd_feature_from_matrix(
             val_dataset,
             spd_feature=NN_ARCHITECTURE['spd_feature'])

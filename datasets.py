@@ -311,17 +311,20 @@ def get_dataset_connectomes_simu(img_shape_no_channel=(15, 15)):
         vec_c[0] = 0.
         vec_c[1] = -1.
 
-        mat_identity = np.eye(n)
-        sym_mat_a = spd_space.symmetric_matrix_from_vector(vec_a)
-        spd_mat_a = spd_space.metric.exp(
-            base_point=mat_identity, tangent_vec=sym_mat_a)
-        sym_mat_b = spd_space.symmetric_matrix_from_vector(vec_b)
-        spd_mat_b = spd_space.metric.exp(
-            base_point=mat_identity, tangent_vec=sym_mat_b)
-        sym_mat_c = spd_space.symmetric_matrix_from_vector(vec_c)
-        spd_mat_c = spd_space.metric.exp(
-            base_point=mat_identity, tangent_vec=sym_mat_c)
+        # mat_identity = np.eye(n)
+        # sym_mat_a = spd_space.symmetric_matrix_from_vector(vec_a)
+        # spd_mat_a = spd_space.metric.exp(
+        #     base_point=mat_identity, tangent_vec=sym_mat_a)
+        # sym_mat_b = spd_space.symmetric_matrix_from_vector(vec_b)
+        # spd_mat_b = spd_space.metric.exp(
+        #     base_point=mat_identity, tangent_vec=sym_mat_b)
+        # sym_mat_c = spd_space.symmetric_matrix_from_vector(vec_c)
+        # spd_mat_c = spd_space.metric.exp(
+        #     base_point=mat_identity, tangent_vec=sym_mat_c)
 
+        spd_mat_a = np.eye(n)  # spd_space.random_uniform()
+        spd_mat_b = spd_space.random_uniform()
+        spd_mat_c = spd_space.random_uniform()
         assert is_spd(spd_mat_a)
         assert is_spd(spd_mat_b)
         assert is_spd(spd_mat_c)
@@ -347,7 +350,7 @@ def get_dataset_connectomes_simu(img_shape_no_channel=(15, 15)):
 
         dataset = np.concatenate([points_ab, points_bc, points_ca], axis=0)
         assert is_spd(dataset)
-        assert np.all(spd_space.belongs(dataset))
+        # assert np.all(spd_space.belongs(dataset))
         np.random.shuffle(dataset)
 
         dataset = add_channels(dataset, img_dim=2)
