@@ -250,66 +250,105 @@ def kernel_aggregation(x):
 
 
 class Encoder(nn.Module):
-    def __init__(self, latent_dim, data_dim):
+    def __init__(self, latent_dim, data_dim, inner_dim=4096):
         super(Encoder, self).__init__()
 
         self.latent_dim = latent_dim
         self.data_dim = data_dim
 
-        self.fc1 = nn.Linear(data_dim, latent_dim ** 2)
+        self.fc10 = nn.Linear(data_dim, inner_dim)
+        self.fc11 = nn.Linear(inner_dim, inner_dim)
+        self.fc12 = nn.Linear(inner_dim, inner_dim)
 
         # Decrease amortization error with fc1a, fc1b, etc if needed.
 
-        self.fc21 = nn.Linear(latent_dim ** 2, latent_dim)
-        self.fc22 = nn.Linear(latent_dim ** 2, latent_dim)
+        self.fc21 = nn.Linear(inner_dim, latent_dim)
+        self.fc22 = nn.Linear(inner_dim, latent_dim)
 
     def forward(self, x):
         # Note: no channels
         """Encoder flattens the data, as its first step."""
         x = x.view(-1, self.data_dim).float()
-        h1 = F.relu(self.fc1(x))
+        h1 = F.relu(self.fc10(x))
+        h1 = F.relu(self.fc11(h1))
+        h1 = F.relu(self.fc12(h1))
         return self.fc21(h1), self.fc22(h1)
 
 
 class Decoder(nn.Module):
-    def __init__(self, latent_dim, data_dim, with_sigmoid):
+    def __init__(self, latent_dim, data_dim, with_sigmoid,
+                 n_layers=4, inner_dim=128, with_skip=False, logvar=0.):
         super(Decoder, self).__init__()
 
         self.latent_dim = latent_dim
         self.data_dim = data_dim
         self.with_sigmoid = with_sigmoid
+        self.n_layers = n_layers
+        self.inner_dim = inner_dim
+        self.with_skip = with_skip
+        self.logvar = logvar
+        add_dim = 0
+        if with_skip:
+            add_dim = latent_dim
 
-        # TODO(nina): Find a better dim for intermediate activations
-        self.fc3 = nn.Linear(
-            in_features=latent_dim, out_features=latent_dim ** 2)
-        self.fc4 = nn.Linear(
-            in_features=latent_dim ** 2, out_features=data_dim)
+        self.layers = torch.nn.ModuleList()
+
+        fc_in = nn.Linear(
+            in_features=latent_dim, out_features=inner_dim)
+        self.layers.append(fc_in)
+
+        for i in range(self.n_layers - 2):
+            fc = nn.Linear(
+                in_features=inner_dim+add_dim, out_features=inner_dim)
+            self.layers.append(fc)
+
+        fc_out = nn.Linear(
+            in_features=inner_dim+add_dim, out_features=data_dim)
+        self.layers.append(fc_out)
 
     def forward(self, z):
-        h3 = F.relu(self.fc3(z))
-        recon_x = self.fc4(h3)
+        h = z
+
+        for i in range(self.n_layers - 1):
+            h = torch.sigmoid(self.layers[i](h))
+            if self.with_skip:
+                h = torch.cat([h, z], dim=1)
+
+        recon_x = self.layers[self.n_layers-1](h)
         if self.with_sigmoid:
             recon_x = torch.sigmoid(recon_x)
+
         n_batch_data = recon_x.shape[0]
-        return recon_x, torch.zeros((n_batch_data, 1)).to(DEVICE)  # HACK
+        logvar_x = self.logvar * torch.ones((n_batch_data, 1)).to(DEVICE)
+        return recon_x, logvar_x
 
 
 class Vae(nn.Module):
     """ Inspired by pytorch/examples Vae."""
-    def __init__(self, latent_dim, data_dim, with_sigmoid):
+    def __init__(self, latent_dim, data_dim, with_sigmoid,
+                 n_layers=4, inner_dim=128, with_skip=False, logvar=0.):
         super(Vae, self).__init__()
         self.latent_dim = latent_dim
         self.data_dim = data_dim
         self.with_sigmoid = with_sigmoid
+        self.n_layers = n_layers
+        self.inner_dim = inner_dim
+        self.with_skip = with_skip
+        self.logvar = logvar
 
         self.encoder = Encoder(
             latent_dim=latent_dim,
-            data_dim=data_dim)
+            data_dim=data_dim,
+            inner_dim=inner_dim)
 
         self.decoder = Decoder(
             latent_dim=latent_dim,
             data_dim=data_dim,
-            with_sigmoid=with_sigmoid)
+            with_sigmoid=with_sigmoid,
+            n_layers=n_layers,
+            inner_dim=inner_dim,
+            with_skip=with_skip,
+            logvar=logvar)
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)

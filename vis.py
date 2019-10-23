@@ -10,6 +10,7 @@ import pickle
 import seaborn as sns
 import torch
 
+import geomstats.visualization as visualization
 from matplotlib import animation
 from scipy.stats import gaussian_kde
 from torchviz import make_dot
@@ -56,7 +57,7 @@ ALPHA = 0.2
 BINS = 40
 
 ALGO_STRINGS = {
-    'vae': 'VAE', 'iwae': 'IWAE', 'vem': 'AVEM'}
+    'vae': 'VAE', 'iwae': 'IWAE', 'vem': 'AVEM', 'vem_02': 'AVEM 20%'}
 CRIT_STRINGS = {
     # From toypipeline and impipeline
     'neg_elbo': 'Neg ELBO',
@@ -70,6 +71,7 @@ CRIT_STRINGS = {
     'generator': 'Generator'}
 TRAIN_VAL_STRINGS = {'train': 'Train', 'val': 'Valid'}
 COLOR_DICT = {
+    'neg_loglikelihood': 'blue',
     'neg_elbo': 'red',
     'neg_iwelbo': 'orange',
     'total': 'lightblue',
@@ -77,23 +79,34 @@ COLOR_DICT = {
     'regularization': 'darkred',
     'discriminator': 'purple',
     'generator': 'violet'}
-ALGO_COLOR_DICT = {'vae': 'red', 'iwae': 'orange', 'vem': 'blue'}
+ALGO_COLOR_DICT = {
+    'vae': 'red',
+    'iwae': 'orange',
+    'vem': 'blue',
+    'vem_02': 'darkblue'}
 CMAPS_DICT = {'vae': 'Reds', 'iwae': 'Oranges', 'vem': 'Blues'}
-
+VIS_DICT = {'s2': 'S2', 'h2': 'H2_poincare_disk'}
 
 FRAC_VAL = 0.2
 N_SAMPLES = 10000
 N_TRAIN = int((1 - FRAC_VAL) * N_SAMPLES)
 
 
-def plot_data(x_data, color='darkgreen', label=None, ax=None):
+def plot_data(x_data, color='darkgreen', label=None, s=20, alpha=0.3, ax=None):
+    print('inplotdata')
     _, data_dim = x_data.shape
     if data_dim == 1:
         ax.hist(
             x_data, bins=BINS, alpha=ALPHA,
             color=color, label=label, density=True)
+    elif data_dim == 2:
+        sns.scatterplot(
+            x_data[:, 0], x_data[:, 1], x_data[:, 2],
+            ax=ax, label=label, color=color, alpha=alpha, s=s)
     else:
-        sns.scatterplot(x_data[:, 0], x_data[:, 1], ax=ax, color=color)
+        sns.scatterplot(
+            x_data[:, 0], x_data[:, 1],
+            ax=ax, label=label, color=color, alpha=alpha, s=s)
     return ax
 
 
@@ -244,21 +257,25 @@ def plot_criterion(ax, output, algo_name='vae', crit_name='neg_elbo',
     if epoch_id is not None:
         epoch_id = min(epoch_id, n_epochs)
 
-    label = '%s: %s %s' % (
-        ALGO_STRINGS[algo_name],
-        TRAIN_VAL_STRINGS[mode],
-        CRIT_STRINGS[crit_name])
+    label = '%s Loss' % (
+        #ALGO_STRINGS[algo_name],
+        TRAIN_VAL_STRINGS[mode])
+        #CRIT_STRINGS[crit_name])
+    #label = '%s: %s %s' % (
+    #    ALGO_STRINGS[algo_name],
+    #    TRAIN_VAL_STRINGS[mode],
+    #    CRIT_STRINGS[crit_name])
 
     if not dashes:
         ax.plot(
             epochs[start_epoch_id:epoch_id],
             losses_total[start_epoch_id:epoch_id],
-            label=label, color=color)
+            label=label, color=color, linewidth=3)
     else:
         ax.plot(
             epochs[start_epoch_id:epoch_id],
             losses_total[start_epoch_id:epoch_id],
-            label=label, color=color, dashes=[2, 2, 2, 2])
+            label=label, color=color, dashes=[2, 2, 2, 2], linewidth=3)
     ax.set_xlabel('epochs')
     ax.legend()
     return ax
@@ -538,6 +555,7 @@ def show_data(filename, nrows=4, ncols=18, figsize=(18, 4), cmap='gray'):
     print('Loading %s' % filename)
     dataset = np.load(filename)
     print('Dataset shape:', dataset.shape)
+    np.random.shuffle(dataset)
 
     fig, axes = plt.subplots(
         nrows=nrows, ncols=ncols, figsize=figsize)
@@ -552,19 +570,11 @@ def show_data(filename, nrows=4, ncols=18, figsize=(18, 4), cmap='gray'):
         ax.imshow(one_img, cmap=cmap)
         ax.get_yaxis().set_visible(False)
         ax.get_xaxis().set_visible(False)
+    plt.tight_layout()
 
 
-def show_img_and_recon(output, dataset_path, algo_name='vae', epoch_id=None,
-                       cmap=None):
-    if cmap is None:
-        cmap = CMAPS_DICT[algo_name]
-    print('Loading %s' % dataset_path)
-    dataset = np.load(dataset_path)
-    print('Dataset shape:', dataset.shape)
-
-    nrows = 2
-    ncols = min(5, len(dataset))
-    img = dataset[:ncols]
+def get_recon(output, img, algo_name='vae', epoch_id=None,
+              cmap=None):
 
     encoder = train_utils.load_module(
         output, algo_name=algo_name, module_name='encoder', epoch_id=epoch_id)
@@ -572,12 +582,14 @@ def show_img_and_recon(output, dataset_path, algo_name='vae', epoch_id=None,
         output, algo_name=algo_name, module_name='decoder', epoch_id=epoch_id)
     ckpt = train_utils.load_checkpoint(
         output=output, algo_name=algo_name, epoch_id=epoch_id)
-    spd_feature = ckpt['nn_architecture']['spd_feature']
 
-    if spd_feature is not None:
-        feature = train_utils.spd_feature_from_matrix(
-            img, spd_feature=spd_feature)
-    z, _ = encoder(torch.Tensor(feature).to(DEVICE))
+    if 'spd_feature' in ckpt['nn_architecture']:
+        spd_feature = ckpt['nn_architecture']['spd_feature']
+
+        if spd_feature is not None:
+            img = train_utils.spd_feature_from_matrix(
+                img, spd_feature=spd_feature)
+    z, _ = encoder(torch.Tensor(img).to(DEVICE))
     recon, _ = decoder(z)
     recon = recon.cpu().detach().numpy()
     z = z.cpu().detach().numpy()
@@ -588,14 +600,34 @@ def show_img_and_recon(output, dataset_path, algo_name='vae', epoch_id=None,
     except AttributeError:
         data_dim = encoder.data_dim
 
-    if spd_feature is not None:
-        recon = train_utils.matrix_from_spd_feature(
-            recon, spd_feature=spd_feature)
+    if 'spd_feature' in ckpt['nn_architecture']:
+        if spd_feature is not None:
+            recon = train_utils.matrix_from_spd_feature(
+                recon, spd_feature=spd_feature)
 
     if recon.shape[-1] == data_dim:
         img_side = int(np.sqrt(data_dim))  # HACK
         recon = recon.reshape(
             (-1,) * len(recon.shape[:-1]) + (img_side, img_side))
+
+    return recon
+
+
+def show_img_and_recon(output, dataset_path, algo_name='vae', epoch_id=None,
+                       cmap=None):
+    if cmap is None:
+        cmap = CMAPS_DICT[algo_name]
+
+    print('Loading %s' % dataset_path)
+    dataset = np.load(dataset_path)
+    print('Dataset shape:', dataset.shape)
+
+    nrows = 2
+    ncols = min(5, len(dataset))
+    img = dataset[10:ncols+10]
+
+    recon = get_recon(
+        output=output, img=img, algo_name=algo_name, epoch_id=epoch_id)
 
     fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(18, 8))
     i = 0
@@ -612,6 +644,8 @@ def show_img_and_recon(output, dataset_path, algo_name='vae', epoch_id=None,
         ax.get_xaxis().set_visible(False)
         ax = axes[1, i]
         ax.imshow(one_recon, cmap=cmap)
+        if i != 0:
+            assert np.all(recon[i] != recon[i-1])
         ax.get_yaxis().set_visible(False)
         ax.get_xaxis().set_visible(False)
         i += 1
@@ -689,18 +723,20 @@ def plot_losses(output, epoch_id=None):
         epoch_id=epoch_id)
 
 
-def plot_variance_explained(output, dataset_path, epoch_id=None):
+def plot_variance_explained(output, dataset_path, epoch_id=None, axes=None):
     mus = analyze.latent_projection(
         output=output, dataset_path=dataset_path, epoch_id=epoch_id)
     n_pca_components = mus.shape[-1]
 
     pca, projected_mus = analyze.pca_projection(mus, n_pca_components)
 
-    fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(18, 6))
+    if axes is None:
+        fig, axes = plt.subplots(nrows=1, ncols=2, figsize=(18, 6))
 
     ax = axes[0]
     ax.plot(
-        np.arange(1, n_pca_components+1), pca.explained_variance_ratio_)
+        np.arange(1, n_pca_components+1), pca.explained_variance_ratio_,
+        label='Latent dim: %d' % n_pca_components)
     ax.set_ylim(0, 1.1)
     ax.set_xlabel('PCA components')
     ax.set_ylabel('Percentage of variance explained')
@@ -709,7 +745,8 @@ def plot_variance_explained(output, dataset_path, epoch_id=None):
     ax = axes[1]
     ax.plot(
         np.arange(1, n_pca_components+1),
-        np.cumsum(pca.explained_variance_ratio_))
+        np.cumsum(pca.explained_variance_ratio_),
+        label='Latent dim: %d' % n_pca_components)
     ax.set_ylim(0, 1.1)
     ax.set_xlabel('PCA components')
     ax.set_ylabel('Cumulative sum of variance explained')
@@ -753,3 +790,163 @@ def plot_nn_graph(module_name='encoder', epoch_id=None):
         dtype=torch.float, requires_grad=False)
     out = module(x)
     make_dot(out)
+
+
+def generate_submanifolds(output, algo_name, epoch,
+                          n_samples=1000,
+                          manifold_name='r2',
+                          tangent_space=False):
+    decoder_true_path = glob.glob('%s/synthetic/decoder_true.pth' % output)[0]
+    decoder_true = torch.load(decoder_true_path, map_location=DEVICE)
+    decoder = train_utils.load_module(
+        output, algo_name, module_name='decoder', epoch_id=int(epoch))
+
+    ckpt = train_utils.load_checkpoint(
+        output, algo_name=algo_name, epoch_id=epoch)
+    logvarx_true = ckpt['nn_architecture']['logvarx_true']
+
+    if manifold_name == 'r2':
+        true_x = toynn.generate_from_decoder_fixed_var(
+            decoder_true, logvarx=logvarx_true, n_samples=n_samples)
+        _, true_x_novarx, _ = decoder_true.generate(n_samples)
+        true_x_novarx = true_x_novarx.detach().cpu().numpy()
+
+        x = toynn.generate_from_decoder(decoder, n_samples)
+        _, x_novarx, _ = decoder.generate(n_samples)
+        x_novarx = x_novarx.detach().cpu().numpy()
+    elif manifold_name == 's2' or manifold_name == 'h2':
+        if tangent_space is True:
+            true_x_novarx = toynn.generate_from_decoder_fixed_var_tgt(
+                decoder_true, logvarx=-1000, n_samples=n_samples,
+                manifold_name=manifold_name)
+
+            true_x = toynn.generate_from_decoder_fixed_var_tgt(
+                decoder_true, logvarx=logvarx_true, n_samples=n_samples,
+                manifold_name=manifold_name)
+
+            x_novarx = toynn.generate_from_decoder_fixed_var_tgt(
+                decoder, logvarx=-1000, n_samples=n_samples,
+                manifold_name=manifold_name)
+            # TODO(nina): here logvar is 0 because of the
+            # default setting in training: adapt?
+            x = toynn.generate_from_decoder_fixed_var_tgt(
+                decoder, logvarx=-5, n_samples=n_samples,
+                manifold_name=manifold_name)
+
+        else:
+            true_x_novarx = toynn.generate_from_decoder_fixed_var_riem(
+                decoder_true, logvarx=-1000, n_samples=n_samples,
+                manifold_name=manifold_name)
+
+            true_x = toynn.generate_from_decoder_fixed_var_riem(
+                decoder_true, logvarx=logvarx_true, n_samples=n_samples,
+                manifold_name=manifold_name)
+
+            x_novarx = toynn.generate_from_decoder_fixed_var_riem(
+                decoder, logvarx=-1000, n_samples=n_samples,
+                manifold_name=manifold_name)
+
+            # TODO(nina): here logvar is 0 because of the
+            # default setting in training: adapt?
+            x = toynn.generate_from_decoder_fixed_var_riem(
+                decoder, logvarx=-5, n_samples=n_samples,
+                manifold_name=manifold_name)
+    else:
+        raise ValueError('Manifold not supported.')
+
+    return true_x, true_x_novarx, x, x_novarx
+
+
+def plot_submanifolds(ax, epoch,
+                      generated_true_x, generated_true_x_novarx,
+                      generated_x, generated_x_novarx, algo_name,
+                      xlim=(-15, 15), ylim=(-45, 5),
+                      manifold_name='r2', tangent_space=False):
+    if manifold_name == 'r2' or tangent_space is True:
+        xlim = (-0.8, 0.8)
+        ylim = (-1.5, 0.5)
+        ax = plot_data(
+            generated_true_x_novarx, color='lime',
+            label='True submanifold', ax=ax)
+        ax = plot_data(
+            generated_true_x, color='green',
+            label='Samples from true generator', ax=ax)
+        ax = plot_data(
+            generated_x_novarx, color='black',
+            label='Learned submanifold', ax=ax)
+        ax = plot_data(
+            generated_x, color=ALGO_COLOR_DICT[algo_name],
+            label='Samples from learned generator', ax=ax)
+        handles, labels = ax.get_legend_handles_labels()
+        ax.legend(handles, labels, loc=3)
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+        ax.set_title('%s at epoch %d' % (ALGO_STRINGS[algo_name], epoch))
+        ax.grid(True)
+    else:
+        manifold_vis = VIS_DICT[manifold_name]
+        visualization.plot(
+            generated_x, ax=ax, space=manifold_vis,
+            color=ALGO_COLOR_DICT[algo_name], alpha=0.3)
+        if manifold_name == 'h2':
+            visualization.plot(
+                generated_x_novarx, ax=ax, space=manifold_vis,
+                color='black', alpha=0.3)
+            visualization.plot(
+                generated_true_x, ax=ax, space=manifold_vis,
+                color='green', alpha=0.3)
+            visualization.plot(
+                generated_true_x_novarx, ax=ax, space=manifold_vis,
+                color='lime', alpha=0.1)
+        else:
+            ax.scatter(
+                    generated_x_novarx[:, 0],
+                    generated_x_novarx[:, 1],
+                    generated_x_novarx[:, 2], color='black', alpha=0.3)
+            ax.scatter(
+                    generated_true_x[:, 0],
+                    generated_true_x[:, 1],
+                    generated_true_x[:, 2], color='green', alpha=0.3)
+            ax.scatter(
+                    generated_true_x_novarx[:, 0],
+                    generated_true_x_novarx[:, 1],
+                    generated_true_x_novarx[:, 2], color='lime', alpha=0.1)
+    return ax
+
+
+def get_unexplained_variance(output, dataset_path, variance_name='eucl'):
+    """
+    For variance_name == eucl
+    Use L2 norm between data points to compute unexplained variance:
+        unexplained_variance
+            = sum_i (img_i - recon_i)**2 / sum_i (img_i - mean) ** 2
+    It amounts to the residual variance in the Euclidean space with L2 norm.
+
+    For variance_name == log_eucl
+    For SSD matrices, compute residual variances on the log-matrices.
+    """
+    print('Loading %s' % dataset_path)
+    img = np.load(dataset_path)
+    print('Dataset shape:', img.shape)
+
+    recon = get_recon(output, img, algo_name='vae')
+
+    if variance_name == 'log_eucl':
+        img = train_utils.spd_feature_from_matrix(img, 'log_matrix')
+        recon = np.expand_dims(recon, axis=1)
+        recon = train_utils.spd_feature_from_matrix(recon, 'log_matrix')
+
+    img = np.squeeze(img)
+    recon = np.squeeze(recon)
+    assert len(recon.shape) == 3
+    assert len(img.shape) == 3
+
+    ssd = np.sum((img - recon)**2, axis=(1, 2))
+    mean_ssd = np.mean(ssd)
+
+    mean_img = np.mean(img, axis=0)
+
+    variance = np.mean(np.sum((img - mean_img)**2, axis=(1, 2)))
+
+    unexplained_var = mean_ssd / variance
+    return unexplained_var

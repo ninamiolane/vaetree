@@ -14,7 +14,7 @@ import torch
 import torch.utils
 import skimage
 
-from geomstats.spd_matrices_space import SPDMatricesSpace
+from geomstats.geometry.spd_matrices_space import SPDMatricesSpace
 from torchvision import datasets, transforms
 from urllib import request
 
@@ -62,6 +62,7 @@ def get_datasets(dataset_name, frac_val=FRAC_VAL, batch_size=8,
         train_dataset, val_dataset = split_dataset(
             dataset, frac_val=frac_val)
     elif dataset_name in [
+            'cryo_sim',
             'randomrot1D_nodisorder',
             'randomrot1D_multiPDB',
             'randomrot_nodisorder']:
@@ -72,6 +73,9 @@ def get_datasets(dataset_name, frac_val=FRAC_VAL, batch_size=8,
         train_dataset, val_dataset = split_dataset(dataset)
     elif dataset_name == 'cryo_exp':
         dataset = get_dataset_cryo_exp(img_shape_no_channel, kwargs)
+        train_dataset, val_dataset = split_dataset(dataset)
+    elif dataset_name == 'cryo_exp_3d':
+        dataset = get_dataset_cryo_exp_3d(img_shape_no_channel, kwargs)
         train_dataset, val_dataset = split_dataset(dataset)
     elif dataset_name == 'connectomes':
         train_dataset, val_dataset = get_dataset_connectomes(
@@ -216,8 +220,105 @@ def get_dataset_mnist(img_shape_no_channel=(28, 28)):
     return train_dataset, val_dataset
 
 
-def get_dataset_connectomes(img_shape_no_channel=(100, 100),
-                            partial_corr=True):
+def get_dataset_connectomes(img_shape_no_channel=(100, 100)):
+    """
+    Connectomes from HCP 1200:
+    https://www.humanconnectome.org/storage/app/media/
+    documentation/s1200/HCP_S1200_Release_Reference_Manual.pdf
+    """
+    shape_str = get_shape_string(img_shape_no_channel)
+    train_path = os.path.join(
+        NEURO_TRAIN_VAL_DIR, 'train_conn_%s.npy' % shape_str)
+    val_path = os.path.join(
+        NEURO_TRAIN_VAL_DIR, 'val_conn_%s.npy' % shape_str)
+
+    hcp_labels_path = os.path.join(
+        NEURO_TRAIN_VAL_DIR,
+        'hcp_labels.csv')
+
+    train_exists = os.path.isfile(train_path)
+    val_exists = os.path.isfile(val_path)
+    if train_exists and val_exists:
+        print('Loading %s...' % train_path)
+        print('Loading %s...' % val_path)
+        train_dataset = np.load(train_path)
+        val_dataset = np.load(val_path)
+
+    else:
+        hcp_meta = pd.read_csv(
+            '/neuro/HCP_PTN1200_recon2/hcp_metadata.csv')
+
+        n_nodes = img_shape_no_channel[0]
+        hcp_dir = os.path.join(
+            NEURO_DIR, 'HCP_PTN1200_recon2')
+        ts_dir = os.path.join(
+                hcp_dir, 'node_timeseries/3T_HCP1200_MSMAll_d%d_ts2' % n_nodes)
+        string_base = '%s/*.txt' % ts_dir
+
+        all_paths = glob.glob(string_base)
+        print('Found %d paths.' % len(all_paths))
+
+        all_ts = []
+        all_subject_ids = []
+        all_genders = []
+        all_ages = []
+        for i, path in enumerate(all_paths):
+            print('Extracting time series %s...' % path)
+            ts = np.loadtxt(path)
+            all_ts.append(ts)
+            basename = os.path.basename(path)
+            subject_id = basename.split('.')[0]
+            print('subject id: %s' % subject_id)
+            subject_id = int(subject_id)
+            all_subject_ids.append(subject_id)
+
+            hcp_meta_row = hcp_meta[hcp_meta['Subject'] == subject_id]
+
+            gender = hcp_meta_row['Gender'].values[0]
+            print(gender)
+            age = hcp_meta_row['Age'].values[0]
+            print(age)
+            all_genders.append(gender)
+            all_ages.append(age)
+        all_ts = np.array(all_ts)
+
+        n_data = all_ts.shape[0]
+        print('Found %d data.' % n_data)
+        all_connectomes = np.zeros((n_data, n_nodes, n_nodes))
+
+        for i_ts in range(n_data):
+            for i_node in range(n_nodes):
+                for j_node in np.arange(i_node,  n_nodes, 1):
+                    ts_of_node_i = all_ts[i_ts, :, i_node]
+                    ts_of_node_j = all_ts[i_ts, :, j_node]
+                    x = np.vstack([ts_of_node_i, ts_of_node_j])
+                    corr = np.corrcoef(x)[0, 1]
+                    all_connectomes[i_ts, i_node, j_node] = corr
+                    all_connectomes[i_ts, j_node, i_node] = corr
+
+        dataset = all_connectomes
+        dataset = add_channels(dataset, img_dim=2)
+        assert len(dataset.shape) == 4
+        print('Dataset of shape:')
+        print(dataset.shape)
+        train_dataset, val_dataset = split_dataset(dataset)
+        print('Saving %s...' % train_path)
+        print('Saving %s...' % val_path)
+        np.save(train_path, train_dataset)
+        np.save(val_path, val_dataset)
+
+        with open(hcp_labels_path, 'w') as csv_file:
+            writer = csv.writer(csv_file)
+            writer.writerow(['Subject', 'Gender', 'Age'])
+            for subject_id, gender, age in zip(
+                    all_subject_ids, all_genders, all_ages):
+                writer.writerow([subject_id, gender, age])
+
+    return train_dataset, val_dataset
+
+
+def get_dataset_connectomes_from_netmats(img_shape_no_channel=(100, 100),
+                                         partial_corr=True):
     """
     Connectomes from HCP 1200:
     https://www.humanconnectome.org/storage/app/media/
@@ -307,7 +408,7 @@ def get_dataset_connectomes_simu(img_shape_no_channel=(15, 15)):
         vec_a[0] = cos_angle
         vec_a[1] = sin_angle
         vec_b[0] = -cos_angle
-        vec_c[1] = sin_angle
+        vec_b[1] = sin_angle
         vec_c[0] = 0.
         vec_c[1] = -1.
 
@@ -462,10 +563,10 @@ def get_dataset_cryo(
     shape_str = get_shape_string(img_shape_no_channel)
     cryo_img_path = os.path.join(
         CRYO_TRAIN_VAL_DIR,
-        'cryo_%s_%s.npy' % (dataset_name, shape_str))
+        '%s_%s.npy' % (dataset_name, shape_str))
     cryo_labels_path = os.path.join(
         CRYO_TRAIN_VAL_DIR,
-        'cryo_labels_%s_%s.csv' % (dataset_name, shape_str))
+        '%s_labels_%s.csv' % (dataset_name, shape_str))
 
     if os.path.isfile(cryo_img_path) and os.path.isfile(cryo_labels_path):
         all_datasets = np.load(cryo_img_path)
@@ -520,25 +621,74 @@ def get_dataset_cryo(
 
 
 def get_dataset_cryo_exp(img_shape_no_channel=None, kwargs=KWARGS):
-    NEURO_TRAIN_VAL_DIR = os.path.join(CRYO_DIR, 'train_val_datasets')
+    CRYO_TRAIN_VAL_DIR = os.path.join(CRYO_DIR, 'train_val_datasets')
     shape_str = get_shape_string(img_shape_no_channel)
     cryo_img_path = os.path.join(
-        NEURO_TRAIN_VAL_DIR, 'cryo_exp_%s.npy' % shape_str)
+        CRYO_TRAIN_VAL_DIR,
+        'cryo_exp_%s.npy' % shape_str)
+    cryo_labels_path = os.path.join(
+        CRYO_TRAIN_VAL_DIR,
+        'cryo_exp_labels_%s.csv' % shape_str)
+
+    if os.path.isfile(cryo_img_path) and os.path.isfile(cryo_labels_path):
+        dataset = np.load(cryo_img_path)
+
+    else:
+        if not os.path.isfile('/cryo/one2dclass.h5'):
+            logging.info('Downloading file one2dclass.h5...')
+            os.system("cd /cryo/")
+            os.system('gdrive download 1YDgyaOYkfeupj75xFD2AHHUZIIYrUsDx')
+        path = '/cryo/one2dclass.h5'
+        logging.info('Loading file %s...' % path)
+        data_dict = load_dict_from_hdf5(path)
+        dataset = data_dict['particles']
+        n_data = len(dataset)
+
+        focus = data_dict['_rlndefocusu']
+        # focus = np.repeat(focus, n_data)
+        theta = data_dict['_rlnanglepsi']
+
+        if img_shape_no_channel is not None:
+            img_h, img_w = img_shape_no_channel
+            dataset = skimage.transform.resize(
+                dataset, (n_data, img_h, img_w))
+        dataset = normalization_linear(dataset)
+        dataset = np.expand_dims(dataset, axis=1)
+
+        assert focus.shape == (n_data,), focus.shape
+        assert theta.shape == (n_data,), theta.shape
+        assert len(dataset) == len(focus)
+        assert len(dataset) == len(theta)
+
+        np.save(cryo_img_path, dataset)
+
+        with open(cryo_labels_path, 'w') as csv_file:
+            writer = csv.writer(csv_file)
+            writer.writerow(['focus', 'theta'])
+            for one_focus, one_theta in zip(focus, theta):
+                writer.writerow([one_focus, one_theta])
+        #os.system('rm /cryo/one2dclass.h5')
+
+    dataset = torch.Tensor(dataset)
+    return dataset
+
+
+def get_dataset_cryo_exp_3d(img_shape_no_channel=None, kwargs=KWARGS):
+    CRYO_TRAIN_VAL_DIR = os.path.join(CRYO_DIR, 'train_val_datasets')
+    shape_str = get_shape_string(img_shape_no_channel)
+    cryo_img_path = os.path.join(
+        CRYO_TRAIN_VAL_DIR, 'cryo_exp_3d_%s.npy' % shape_str)
     if os.path.isfile(cryo_img_path):
         dataset = np.load(cryo_img_path)
 
     else:
-        path = os.path.join(CRYO_DIR, 'particles.h5')
+        path = os.path.join(CRYO_DIR, 'data.hdf5')
 
         logging.info('Loading file %s...' % path)
         data_dict = load_dict_from_hdf5(path)
         dataset = data_dict['particles']
 
-        if img_shape_no_channel is not None:
-            n_data = len(dataset)
-            img_h, img_w = img_shape_no_channel
-            dataset = skimage.transform.resize(
-                dataset, (n_data, img_h, img_w))
+        assert img_shape_no_channel == (90, 90)
 
         dataset = normalization_linear(dataset)
         dataset = np.expand_dims(dataset, axis=1)

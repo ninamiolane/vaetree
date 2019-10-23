@@ -8,8 +8,8 @@ from torch.nn import functional as F
 
 import toynn
 
-from geomstats.spd_matrices_space import SPDMatricesSpace
-from geomstats.general_linear_group import GeneralLinearGroup
+from geomstats.geometry.spd_matrices_space import SPDMatricesSpace
+from geomstats.geometry.general_linear_group import GeneralLinearGroup
 
 
 CUDA = torch.cuda.is_available()
@@ -18,7 +18,7 @@ DEVICE = torch.device('cuda' if CUDA else 'cpu')
 
 def is_pos_def(x):
     eig, _ = torch.symeig(x, eigenvectors=True)
-    return (eig > 0).all()
+    return (eig > 0.).all()
 
 
 def is_spd(x):
@@ -31,18 +31,58 @@ def is_spd(x):
         assert gln_group.belongs(one_mat)
 
 
-def riem_square_distance(batch_data, batch_recon):
-    n_batch_data, dim = batch_data.shape
-    n = int(np.sqrt(dim))
-    spd_space = SPDMatricesSpace(n=n)
-    batch_data_mat = batch_data.resize(n_batch_data, n, n)
-    batch_recon_mat = batch_recon.resize(n_batch_data, n, n)
+def riem_square_distance(
+        batch_data, batch_recon,
+        manifold_name='spd'):
+    """
+    For SPD:
 
-    is_spd(batch_data_mat)
-    # is_spd(batch_recon_mat)
+    Riemannian squared distance of the affine invariance
+    metric on SPD matrices, parameterized as the
+    vector representing their logarithm (symmetric matrix)
+    at the identity.
 
-    sq_dist = spd_space.metric.squared_dist(
-        batch_data_mat, batch_recon_mat)
+    For s2 and h2:
+    Riemannian squared distance, with parameterizations
+    as the vectors representing their logarithm
+    at the chosen base point.
+    """
+    if manifold_name == 'spd':
+        _, vec_dim = batch_data.shape
+        n = int((np.sqrt(8 * vec_dim + 1) - 1) / 2)
+        spd_space = SPDMatricesSpace(n=n)
+        mat_identity = torch.eye(n).to(DEVICE)
+
+        batch_data_sym_mat = spd_space.symmetric_matrix_from_vector(
+            batch_data)
+        batch_recon_sym_mat = spd_space.symmetric_matrix_from_vector(
+            batch_recon)
+
+        batch_data_mat = spd_space.metric.exp(
+            tangent_vec=batch_data_sym_mat,
+            base_point=mat_identity)
+        batch_recon_mat = spd_space.metric.exp(
+            tangent_vec=batch_recon_sym_mat,
+            base_point=mat_identity)
+
+        sq_dist = spd_space.metric.squared_dist(
+            batch_data_mat, batch_recon_mat)
+    elif manifold_name == 's2' or manifold_name == 'h2':
+        manifold, base_point = toynn.manifold_and_base_point(
+            manifold_name)
+        batch_data_on_tgt = toynn.convert_to_tangent_space(
+            batch_data, manifold_name=manifold_name)
+        batch_recon_on_tgt = toynn.convert_to_tangent_space(
+            batch_recon, manifold_name=manifold_name)
+
+        batch_data_on_manifold = manifold.metric.exp(
+            tangent_vec=batch_data_on_tgt,
+            base_point=base_point)
+        batch_recon_on_manifold = manifold.metric.exp(
+            tangent_vec=batch_recon_on_tgt,
+            base_point=base_point)
+        sq_dist = manifold.metric.squared_dist(
+            batch_data_on_manifold, batch_recon_on_manifold)
     return sq_dist
 
 
@@ -89,7 +129,7 @@ def fa_neg_loglikelihood(weight, data):
 
 
 def reconstruction_loss(batch_data, batch_recon, batch_logvarx,
-                        reconstruction_type='l2'):
+                        reconstruction_type='l2', manifold_name='spd'):
     """
     First compute the expected l_uvae data per data (line by line).
     Then take the average.
@@ -99,7 +139,6 @@ def reconstruction_loss(batch_data, batch_recon, batch_logvarx,
     n_batch_data, data_dim = batch_data.shape
     assert batch_data.shape == batch_recon.shape, [
         batch_data.shape, batch_recon.shape]
-    n_batch_data, dim = batch_data.shape
 
     if reconstruction_type == 'bce':
         bce_image = F.binary_cross_entropy(batch_data, batch_recon)
@@ -109,18 +148,13 @@ def reconstruction_loss(batch_data, batch_recon, batch_logvarx,
         return bce_average
 
     elif reconstruction_type == 'riem':
-        n = int(np.sqrt(dim))
-        batch_data_mat = batch_data.resize(n_batch_data, n, n)
-        batch_recon_mat = batch_recon.resize(n_batch_data, n, n)
-
-        assert is_spd(batch_data_mat)
-        assert is_spd(batch_recon_mat)
-
-        batch_logvarx = batch_logvarx.squeeze(dim=1)
-        assert batch_logvarx.shape == (n_batch_data,)
+        if len(batch_logvarx.shape) > 1:
+            batch_logvarx = batch_logvarx.squeeze(dim=1)
+        assert batch_logvarx.shape == (n_batch_data,), batch_logvarx.shape
         # Isotropic Gaussian
         scale_term = - data_dim / 2. * batch_logvarx
-        sq_dist = riem_square_distance(batch_data, batch_recon)[:, 0]
+        sq_dist = riem_square_distance(
+            batch_data, batch_recon, manifold_name=manifold_name)[:, 0]
         sq_dist_term = - sq_dist / (2. * batch_logvarx.exp())
 
     elif reconstruction_type == 'l2':
@@ -131,6 +165,7 @@ def reconstruction_loss(batch_data, batch_recon, batch_logvarx,
             scale_term = - data_dim / 2. * batch_logvarx
             sq_dist = torch.sum((batch_data - batch_recon) ** 2, dim=1)
             sq_dist_term = - sq_dist / (2. * batch_logvarx.exp())
+            assert sq_dist_term.shape == (n_batch_data,)
         else:
             # Diagonal Gaussian
             assert batch_logvarx.shape == (

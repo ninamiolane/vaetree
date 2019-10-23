@@ -2,14 +2,17 @@
 
 import datetime as dt
 import functools
+import importlib
 import logging
 import luigi
 import numpy as np
 import os
 import pickle
 import random
+import sys
 import time
 
+import geomstats
 import torch
 import torch.autograd
 from torch.nn import functional as F
@@ -24,10 +27,10 @@ import train_utils
 import warnings
 warnings.filterwarnings("ignore")
 
-DATASET_NAME = 'connectomes_simu'
+DATASET_NAME = 'connectomes'
 
 HOME_DIR = '/scratch/users/nmiolane'
-OUTPUT_DIR = os.path.join(HOME_DIR, 'imoutput_%s' % DATASET_NAME)
+OUTPUT_DIR = sys.argv[1]
 TRAIN_VAE_DIR = os.path.join(OUTPUT_DIR, 'train_vae')
 TRAIN_IWAE_DIR = os.path.join(OUTPUT_DIR, 'train_iwae')
 TRAIN_VEM_DIR = os.path.join(OUTPUT_DIR, 'train_vem')
@@ -35,7 +38,6 @@ TRAIN_VEGAN_DIR = os.path.join(OUTPUT_DIR, 'train_vegan')
 REPORT_DIR = os.path.join(OUTPUT_DIR, 'report')
 
 DEBUG = False
-CATASTROPHE = False
 
 CUDA = torch.cuda.is_available()
 DEVICE = torch.device('cuda' if CUDA else 'cpu')
@@ -67,7 +69,7 @@ assert SPD_FEATURE in [
     'point']
 # Note: if point, then use RECONSTRUCTION riem
 
-LATENT_DIM = 10
+LATENT_DIM = int(sys.argv[2])
 DATA_DIM = functools.reduce((lambda x, y: x * y), IMG_SHAPE)
 if SPD_FEATURE in ['vector', 'log_vector', 'log_frechet_vector']:
     N = IMG_SHAPE[1]
@@ -77,6 +79,7 @@ NN_ARCHITECTURE = {
     'img_shape': IMG_SHAPE,
     'data_dim': DATA_DIM,
     'latent_dim': LATENT_DIM,
+    'inner_dim': 4096,
     'nn_type': NN_TYPE,
     'with_sigmoid': False,
     'spd_feature': SPD_FEATURE}
@@ -103,7 +106,7 @@ PRINT_INTERVAL = 64
 torch.backends.cudnn.benchmark = True
 
 N_EPOCHS = 160
-CKPT_PERIOD = 1
+CKPT_PERIOD = 40
 LR = {
     'mnist': 1e-3,
     'connectomes': 1e-5,
@@ -208,19 +211,6 @@ class TrainVAE(luigi.Task):
             for i in range(len(recon_np)-1):
                 assert not np.all(
                     recon_np[i] == recon_np[i+1]), recon_np[i] == recon_np[i+1]
-
-            if CATASTROPHE:
-                print(
-                    'norm(mu) = {:.4f}'
-                    '\t norm(logvar) = {:.4f}'
-                    '\t norm(z) = {:.4f}'
-                    '\t norm(batch_recon) = {:.4f}'
-                    '\t norm(batch_data) = {:.4f}'.format(
-                        torch.norm(mu),
-                        torch.norm(logvar),
-                        torch.norm(z),
-                        torch.norm(batch_recon),
-                        torch.norm(batch_data)))
 
             # --- VAE: Train wrt Neg ELBO --- #
             batch_data = batch_data.view(-1, DATA_DIM)
@@ -409,11 +399,9 @@ class TrainVAE(luigi.Task):
         logging.info(
             'Val tensor: %s' % train_utils.get_logging_shape(val_dataset))
 
-        print(type(train_dataset))
         train_dataset = train_utils.spd_feature_from_matrix(
             train_dataset,
             spd_feature=NN_ARCHITECTURE['spd_feature'])
-        print(type(train_dataset))
         val_dataset = train_utils.spd_feature_from_matrix(
             val_dataset,
             spd_feature=NN_ARCHITECTURE['spd_feature'])
@@ -429,6 +417,9 @@ class TrainVAE(luigi.Task):
         val_loader = torch.utils.data.DataLoader(
             val_dataset,
             batch_size=TRAIN_PARAMS['batch_size'], shuffle=True, **KWARGS)
+
+        os.environ['GEOMSTATS_BACKEND'] = 'pytorch'
+        importlib.reload(geomstats.backend)
 
         m, o, s, t, v = train_utils.init_training(
             train_dir=self.train_dir,
