@@ -4,10 +4,14 @@ import glob
 import logging
 import os
 
+import numpy as np
 import torch
 import torch.nn as tnn
 
+from geomstats.geometry.spd_matrices_space import SPDMatricesSpace
+
 import nn
+import toynn
 
 CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if CUDA else "cpu")
@@ -55,7 +59,6 @@ def init_modules_and_optimizers(nn_architecture, train_params):
     optimizers = {}
 
     nn_type = nn_architecture['nn_type']
-    img_shape = nn_architecture['img_shape']
     latent_dim = nn_architecture['latent_dim']
     data_dim = nn_architecture['data_dim']
 
@@ -63,23 +66,56 @@ def init_modules_and_optimizers(nn_architecture, train_params):
     beta1 = train_params['beta1']
     beta2 = train_params['beta2']
 
-    assert nn_type in ['linear', 'conv', 'gan']
+    assert nn_type in ['toy', 'fc', 'conv', 'conv_plus']
 
     # Modules
-    if nn_type == 'linear':
+    if nn_type == 'toy':
+        vae = toynn.VAE(
+            latent_dim=latent_dim,
+            data_dim=data_dim,
+            n_layers=nn_architecture['n_decoder_layers'],
+            nonlinearity=nn_architecture['nonlinearity'],
+            with_biasx=nn_architecture['with_biasx'],
+            with_logvarx=nn_architecture['with_logvarx'],
+            with_biasz=nn_architecture['with_biasz'],
+            with_logvarz=nn_architecture['with_logvarz'])
+        vae.to(DEVICE)
+
+        logging.info('Values of VAE\'s decoder parameters before training:')
+        decoder = vae.decoder
+        for name, param in decoder.named_parameters():
+            logging.info(name)
+            logging.info(param.data)
+
+    elif nn_type == 'fc':
+        with_sigmoid = nn_architecture['with_sigmoid']
+        n_layers = nn_architecture['n_layers']
+        inner_dim = nn_architecture['inner_dim']
+        with_skip = nn_architecture['with_skip']
+        logvar = nn_architecture['logvar']
         vae = nn.Vae(
             latent_dim=latent_dim,
-            data_dim=data_dim).to(DEVICE)
+            data_dim=data_dim,
+            with_sigmoid=with_sigmoid,
+            n_layers=n_layers,
+            inner_dim=inner_dim,
+            with_skip=with_skip,
+            logvar=logvar).to(DEVICE)
     elif nn_type == 'conv':
+        img_shape = nn_architecture['img_shape']
+        with_sigmoid = nn_architecture['with_sigmoid']
         vae = nn.VaeConv(
-                latent_dim=latent_dim,
-                img_shape=img_shape,
-                spd=nn_architecture['spd']).to(DEVICE)
-    else:
-        vae = nn.VaeGan(
             latent_dim=latent_dim,
-            img_shape=img_shape).to(DEVICE)
-        discriminator = nn.DiscriminatorGan(
+            img_shape=img_shape,
+            with_sigmoid=with_sigmoid).to(DEVICE)
+    else:
+        img_shape = nn_architecture['img_shape']
+        with_sigmoid = nn_architecture['with_sigmoid']
+        vae = nn.VaeConvPlus(
+            latent_dim=latent_dim,
+            img_shape=img_shape,
+            with_sigmoid=with_sigmoid).to(DEVICE)
+        discriminator = nn.Discriminator(
             latent_dim=latent_dim,
             img_shape=img_shape).to(DEVICE)
         modules['discriminator_reconstruction'] = discriminator
@@ -89,11 +125,11 @@ def init_modules_and_optimizers(nn_architecture, train_params):
 
     # Optimizers
     optimizers['encoder'] = torch.optim.Adam(
-        modules['encoder'].parameters(), lr=lr)
+        modules['encoder'].parameters(), lr=lr, betas=(beta1, beta2))
     optimizers['decoder'] = torch.optim.Adam(
         modules['decoder'].parameters(), lr=lr, betas=(beta1, beta2))
 
-    if nn_type == 'gan':
+    if nn_type == 'conv_plus':
         optimizers['discriminator_reconstruction'] = torch.optim.Adam(
             modules['discriminator_reconstruction'].parameters(),
             lr=lr,
@@ -126,7 +162,12 @@ def init_training(train_dir, nn_architecture, train_params):
         ckpt_id, ckpt_path = max(
             ckpts_ids_and_paths, key=lambda item: item[0])
         logging.info('Found checkpoints. Initializing with %s.' % ckpt_path)
-        ckpt = torch.load(ckpt_path, map_location=DEVICE)
+        if torch.cuda.is_available():
+            map_location = lambda storage, loc: storage.cuda()
+        else:
+            map_location = 'cpu'
+        ckpt = torch.load(ckpt_path, map_location=map_location)
+        # ckpt = torch.load(ckpt_path, map_location=DEVICE)
         for module_name in modules.keys():
             module = modules[module_name]
             optimizer = optimizers[module_name]
@@ -144,7 +185,7 @@ def init_training(train_dir, nn_architecture, train_params):
 
 def save_checkpoint(epoch, modules, optimizers, dir_path,
                     train_losses_all_epochs, val_losses_all_epochs,
-                    nn_architecture):
+                    nn_architecture, train_params):
     checkpoint = {}
     for module_name in modules.keys():
         module = modules[module_name]
@@ -156,6 +197,7 @@ def save_checkpoint(epoch, modules, optimizers, dir_path,
         checkpoint['train_losses'] = train_losses_all_epochs
         checkpoint['val_losses'] = val_losses_all_epochs
         checkpoint['nn_architecture'] = nn_architecture
+        checkpoint['train_params'] = train_params
 
     checkpoint_path = os.path.join(
         dir_path, 'epoch_%d_checkpoint.pth' % epoch)
@@ -193,21 +235,39 @@ def load_module(output, algo_name='vae', module_name='encoder', epoch_id=None):
     nn_type = nn_architecture['nn_type']
     print('Loading %s from network of architecture: %s...' % (
         module_name, nn_type))
-    assert nn_type in ['linear', 'conv', 'gan']
+    assert nn_type in ['toy', 'fc', 'conv', 'conv_plus']
 
-    if nn_type == 'linear':
+    if nn_type == 'toy':
+        vae = toynn.VAE(
+            latent_dim=nn_architecture['latent_dim'],
+            data_dim=nn_architecture['data_dim'],
+            n_layers=nn_architecture['n_decoder_layers'],
+            nonlinearity=nn_architecture['nonlinearity'],
+            with_biasx=nn_architecture['with_biasx'],
+            with_logvarx=nn_architecture['with_logvarx'],
+            with_biasz=nn_architecture['with_biasz'],
+            with_logvarz=nn_architecture['with_logvarz'])
+        vae.to(DEVICE)
+
+    elif nn_type == 'fc':
         vae = nn.Vae(
             latent_dim=nn_architecture['latent_dim'],
-            data_dim=nn_architecture['data_dim'])
+            data_dim=nn_architecture['data_dim'],
+            with_sigmoid=nn_architecture['with_sigmoid'],
+            n_layers=nn_architecture['n_layers'],
+            inner_dim=nn_architecture['inner_dim'],
+            with_skip=nn_architecture['with_skip'],
+            logvar=nn_architecture['logvar'])
     elif nn_type == 'conv':
         vae = nn.VaeConv(
-                latent_dim=nn_architecture['latent_dim'],
-                img_shape=nn_architecture['img_shape'],
-                spd=nn_architecture['spd'])
-    else:
-        vae = nn.VaeGan(
             latent_dim=nn_architecture['latent_dim'],
-            img_shape=nn_architecture['img_shape'])
+            img_shape=nn_architecture['img_shape'],
+            with_sigmoid=nn_architecture['with_sigmoid'])
+    else:
+        vae = nn.VaeConvPlus(
+            latent_dim=nn_architecture['latent_dim'],
+            img_shape=nn_architecture['img_shape'],
+            with_sigmoid=nn_architecture['with_sigmoid'])
     vae.to(DEVICE)
 
     modules = {}
@@ -218,3 +278,54 @@ def load_module(output, algo_name='vae', module_name='encoder', epoch_id=None):
     module.load_state_dict(module_ckpt['module_state_dict'])
 
     return module
+
+
+def get_logging_shape(tensor):
+    shape = tensor.shape
+    logging_shape = '(' + ('%s, ' * len(shape) % tuple(shape))[:-2] + ')'
+    return logging_shape
+
+
+def spd_feature_from_matrix(dataset, spd_feature='matrix'):
+    """Transform everything in the np dataset"""
+    assert type(dataset) == np.ndarray
+    if spd_feature == 'matrix' or spd_feature == 'point':
+        dataset = dataset
+        assert dataset.ndim == 4
+    else:
+        _, _, n, _ = dataset.shape
+        mat_identity = np.eye(n)
+        spd_space = SPDMatricesSpace(n=n)
+        dataset = dataset[:, 0, :, :]  # channels
+
+        if spd_feature == 'vector':
+            dataset = spd_space.vector_from_symmetric_matrix(dataset)
+            dataset = np.expand_dims(dataset, axis=1)
+        if spd_feature == 'log_matrix':
+            dataset = spd_space.metric.log(
+                base_point=mat_identity, point=dataset)
+            dataset = np.expand_dims(dataset, axis=1)
+        if spd_feature == 'log_vector':
+            dataset = spd_space.metric.log(
+                base_point=mat_identity, point=dataset)
+            dataset = spd_space.vector_from_symmetric_matrix(dataset)
+            dataset = np.expand_dims(dataset, axis=1)
+    return dataset
+
+
+def matrix_from_spd_feature(dataset, spd_feature='matrix'):
+    if spd_feature == 'matrix' or spd_feature == 'point':
+        return dataset
+    _, vec_dim = dataset.shape
+    n = int((np.sqrt(8 * vec_dim + 1) - 1) / 2)
+    spd_space = SPDMatricesSpace(n=n)
+
+    if spd_feature == 'vector':
+        dataset = spd_space.symmetric_matrix_from_vector(dataset)
+        return dataset
+    if spd_feature == 'log_vector':
+        dataset = spd_space.symmetric_matrix_from_vector(dataset)
+        mat_identity = np.eye(n)
+        dataset = spd_space.metric.exp(
+            base_point=mat_identity, tangent_vec=dataset)
+        return dataset

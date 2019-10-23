@@ -34,7 +34,7 @@ OUT_CHANNELS2 = 64
 OUT_FC_FEATURES = 256
 
 
-# For VaeGan modules
+# For VaeConvPlus modules
 
 ENC_KS = 4
 ENC_STR = 2
@@ -68,6 +68,7 @@ NN_CONV_TRANSPOSE = {
 # TODO(nina): Use for loops to create layers in modules
 # for a more compact code, use log2(image_size) for #layers.
 # TODO(nina): Use nn.parallel to speed up?
+# TODO(nina): Uniformize flattened/unflattened inputs/outputs
 
 
 def conv_parameters(conv_dim,
@@ -249,60 +250,105 @@ def kernel_aggregation(x):
 
 
 class Encoder(nn.Module):
-    def __init__(self, latent_dim, data_dim):
+    def __init__(self, latent_dim, data_dim, inner_dim=4096):
         super(Encoder, self).__init__()
 
         self.latent_dim = latent_dim
         self.data_dim = data_dim
 
-        self.fc1 = nn.Linear(data_dim, latent_dim ** 2)
+        self.fc10 = nn.Linear(data_dim, inner_dim)
+        self.fc11 = nn.Linear(inner_dim, inner_dim)
+        self.fc12 = nn.Linear(inner_dim, inner_dim)
 
         # Decrease amortization error with fc1a, fc1b, etc if needed.
 
-        self.fc21 = nn.Linear(latent_dim ** 2, latent_dim)
-        self.fc22 = nn.Linear(latent_dim ** 2, latent_dim)
+        self.fc21 = nn.Linear(inner_dim, latent_dim)
+        self.fc22 = nn.Linear(inner_dim, latent_dim)
 
     def forward(self, x):
         # Note: no channels
+        """Encoder flattens the data, as its first step."""
         x = x.view(-1, self.data_dim).float()
-        h1 = F.relu(self.fc1(x))
+        h1 = F.relu(self.fc10(x))
+        h1 = F.relu(self.fc11(h1))
+        h1 = F.relu(self.fc12(h1))
         return self.fc21(h1), self.fc22(h1)
 
 
 class Decoder(nn.Module):
-    def __init__(self, latent_dim, data_dim):
+    def __init__(self, latent_dim, data_dim, with_sigmoid,
+                 n_layers=4, inner_dim=128, with_skip=False, logvar=0.):
         super(Decoder, self).__init__()
 
         self.latent_dim = latent_dim
         self.data_dim = data_dim
+        self.with_sigmoid = with_sigmoid
+        self.n_layers = n_layers
+        self.inner_dim = inner_dim
+        self.with_skip = with_skip
+        self.logvar = logvar
+        add_dim = 0
+        if with_skip:
+            add_dim = latent_dim
 
-        # TODO(nina): Find a better dim for intermediate activations
-        self.fc3 = nn.Linear(
-            in_features=latent_dim, out_features=latent_dim ** 2)
-        self.fc4 = nn.Linear(
-            in_features=latent_dim ** 2, out_features=data_dim)
+        self.layers = torch.nn.ModuleList()
+
+        fc_in = nn.Linear(
+            in_features=latent_dim, out_features=inner_dim)
+        self.layers.append(fc_in)
+
+        for i in range(self.n_layers - 2):
+            fc = nn.Linear(
+                in_features=inner_dim+add_dim, out_features=inner_dim)
+            self.layers.append(fc)
+
+        fc_out = nn.Linear(
+            in_features=inner_dim+add_dim, out_features=data_dim)
+        self.layers.append(fc_out)
 
     def forward(self, z):
-        h3 = F.relu(self.fc3(z))
-        recon_x = torch.sigmoid(self.fc4(h3))
+        h = z
+
+        for i in range(self.n_layers - 1):
+            h = torch.sigmoid(self.layers[i](h))
+            if self.with_skip:
+                h = torch.cat([h, z], dim=1)
+
+        recon_x = self.layers[self.n_layers-1](h)
+        if self.with_sigmoid:
+            recon_x = torch.sigmoid(recon_x)
+
         n_batch_data = recon_x.shape[0]
-        return recon_x, torch.zeros((n_batch_data, 1)).to(DEVICE)  # HACK
+        logvar_x = self.logvar * torch.ones((n_batch_data, 1)).to(DEVICE)
+        return recon_x, logvar_x
 
 
 class Vae(nn.Module):
     """ Inspired by pytorch/examples Vae."""
-    def __init__(self, latent_dim, data_dim):
+    def __init__(self, latent_dim, data_dim, with_sigmoid,
+                 n_layers=4, inner_dim=128, with_skip=False, logvar=0.):
         super(Vae, self).__init__()
         self.latent_dim = latent_dim
         self.data_dim = data_dim
+        self.with_sigmoid = with_sigmoid
+        self.n_layers = n_layers
+        self.inner_dim = inner_dim
+        self.with_skip = with_skip
+        self.logvar = logvar
 
         self.encoder = Encoder(
             latent_dim=latent_dim,
-            data_dim=data_dim)
+            data_dim=data_dim,
+            inner_dim=inner_dim)
 
         self.decoder = Decoder(
             latent_dim=latent_dim,
-            data_dim=data_dim)
+            data_dim=data_dim,
+            with_sigmoid=with_sigmoid,
+            n_layers=n_layers,
+            inner_dim=inner_dim,
+            with_skip=with_skip,
+            logvar=logvar)
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
@@ -364,7 +410,7 @@ class EncoderConv(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        # Input flat x
+        """Unflattens to put in img shape"""
         x = x.view((-1,) + self.img_shape)
 
         x = self.leakyrelu(self.conv1(x))
@@ -384,22 +430,24 @@ class EncoderConv(nn.Module):
 
 
 class DecoderConv(nn.Module):
-    def __init__(self, latent_dim, img_shape, spd=False):
+    def __init__(self, latent_dim, img_shape, with_sigmoid,
+                 riem_log_exp=False):
 
         super(DecoderConv, self).__init__()
 
         self.latent_dim = latent_dim
         self.img_shape = img_shape
+        self.with_sigmoid = with_sigmoid
 
         self.conv_dim = len(img_shape[1:])
-        self.spd = spd
+        self.riem_log_exp = riem_log_exp
         self.nn_conv_transpose = NN_CONV_TRANSPOSE[self.conv_dim]
 
         # Layers given in reversed order
 
         # Conv transpose block (last)
         self.convt2_out_channels = self.img_shape[0]
-        if spd:
+        if self.riem_log_exp:
             self.convt2_out_channels = self.img_shape[1]
         self.convt2 = self.nn_conv_transpose(
             in_channels=OUT_CHANNELS1, out_channels=self.convt2_out_channels,
@@ -436,6 +484,10 @@ class DecoderConv(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, z):
+        """
+        Outputs flattened image.
+        As the image is seen flattened when considering the variance.
+        """
         assert z.shape[1:] == (self.latent_dim,)
         x = F.elu(self.fc1(z))
         assert x.shape[1:] == (self.fc2.in_features,)
@@ -447,11 +499,13 @@ class DecoderConv(nn.Module):
         x = self.leakyrelu(self.convt1(x, output_size=self.in_shape2[1:]))
 
         assert x.shape[1:] == self.in_shape2
-        if self.spd:
+        if self.riem_log_exp:
             x = self.convt2(x, output_size=self.img_shape[1:])
             x = kernel_aggregation(x)
         else:
-            x = self.sigmoid(self.convt2(x, output_size=self.img_shape[1:]))
+            x = self.convt2(x, output_size=self.img_shape[1:])
+            if self.with_sigmoid:
+                x = self.sigmoid(x)
 
         # Output flat recon_x
         # Note: this also multiplies the channels, assuming that img_c=1.
@@ -468,13 +522,15 @@ class VaeConv(nn.Module):
     Inspired by
     github.com/atinghosh/Vae-pytorch/blob/master/Vae_Conv_BCEloss.py.
     """
-    def __init__(self, latent_dim, img_shape, spd=False):
+    def __init__(self, latent_dim, img_shape, with_sigmoid,
+                 riem_log_exp=False):
 
         super(VaeConv, self).__init__()
 
         self.latent_dim = latent_dim
         self.img_shape = img_shape
-        self.spd = spd
+        self.with_sigmoid = with_sigmoid
+        self.riem_log_exp = riem_log_exp
 
         self.encoder = EncoderConv(
             latent_dim=self.latent_dim,
@@ -483,7 +539,8 @@ class VaeConv(nn.Module):
         self.decoder = DecoderConv(
             latent_dim=self.latent_dim,
             img_shape=self.img_shape,
-            spd=self.spd)
+            with_sigmoid=with_sigmoid,
+            riem_log_exp=self.riem_log_exp)
 
     def forward(self, x):
         muz, logvarz = self.encoder(x)
@@ -492,7 +549,7 @@ class VaeConv(nn.Module):
         return recon_x, muz, logvarz
 
 
-class EncoderGan(nn.Module):
+class EncoderConvPlus(nn.Module):
 
     def enc_conv_output_size(self, in_shape, out_channels):
         return conv_output_size(
@@ -503,7 +560,7 @@ class EncoderGan(nn.Module):
                 dilation=ENC_DIL)
 
     def __init__(self, latent_dim, img_shape):
-        super(EncoderGan, self).__init__()
+        super(EncoderConvPlus, self).__init__()
 
         self.latent_dim = latent_dim
         self.img_shape = img_shape
@@ -596,7 +653,7 @@ class EncoderGan(nn.Module):
         return mu, logvar
 
 
-class DecoderGan(nn.Module):
+class DecoderConvPlus(nn.Module):
     def conv_output_size(self, in_shape, out_channels):
         return conv_output_size(
                 in_shape, out_channels,
@@ -639,11 +696,12 @@ class DecoderGan(nn.Module):
         end_up = nn.UpsamplingNearest2d(size=self.img_shape[1:])
         return up, pd, conv, end_up
 
-    def __init__(self, latent_dim, img_shape, in_shape=None):
-        super(DecoderGan, self).__init__()
+    def __init__(self, latent_dim, img_shape, with_sigmoid, in_shape=None):
+        super(DecoderConvPlus, self).__init__()
 
         self.latent_dim = latent_dim
         self.img_shape = img_shape
+        self.with_sigmoid = with_sigmoid
         # TODO(nina): Remove in_shape by propagating img dimensions
         self.in_shape = in_shape
 
@@ -689,25 +747,29 @@ class DecoderGan(nn.Module):
         h6_r = self.conv5_r(self.pd5_r(self.up5_r(h5)))
         h6_s = self.conv5_s(self.pd5_s(self.up5_s(h5)))
 
-        recon = self.sigmoid(self.end_up_r(h6_r))
-        scale_b = self.sigmoid(self.end_up_s(h6_s))
+        recon = self.end_up_r(h6_r)
+        if self.with_sigmoid:
+            recon = self.sigmoid(recon)
+        scale_b = self.end_up_s(h6_s)
         return recon, scale_b
 
 
-class VaeGan(nn.Module):
-    def __init__(self, latent_dim, img_shape):
-        super(VaeGan, self).__init__()
+class VaeConvPlus(nn.Module):
+    def __init__(self, latent_dim, img_shape, with_sigmoid):
+        super(VaeConvPlus, self).__init__()
 
         self.latent_dim = latent_dim
         self.img_shape = img_shape
+        self.with_sigmoid = with_sigmoid
 
-        self.encoder = EncoderGan(
+        self.encoder = EncoderConvPlus(
             latent_dim=self.latent_dim,
             img_shape=self.img_shape)
 
-        self.decoder = DecoderGan(
+        self.decoder = DecoderConvPlus(
             latent_dim=self.latent_dim,
             img_shape=self.img_shape,
+            with_sigmoid=self.with_sigmoid,
             in_shape=self.encoder.enc5_out_shape)
 
     def forward(self, x):
@@ -717,7 +779,7 @@ class VaeGan(nn.Module):
         return res, scale_b, mu, logvar
 
 
-class DiscriminatorGan(nn.Module):
+class Discriminator(nn.Module):
     def dis_conv_output_size(self, in_shape, out_channels):
         return conv_output_size(
                 in_shape, out_channels,
@@ -727,7 +789,7 @@ class DiscriminatorGan(nn.Module):
                 dilation=DIS_DIL)
 
     def __init__(self, latent_dim, img_shape):
-        super(DiscriminatorGan, self).__init__()
+        super(Discriminator, self).__init__()
 
         self.latent_dim = latent_dim
         self.img_shape = img_shape

@@ -50,26 +50,27 @@ random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.benchmark = True
 
 IMG_SHAPE = (1, 128, 128)
 DATA_DIM = functools.reduce((lambda x, y: x * y), IMG_SHAPE)
 IMG_DIM = len(IMG_SHAPE)
 LATENT_DIM = 3
-NN_TYPE = 'gan'
+NN_TYPE = 'conv_plus'
 SPD = False
 if SPD:
-    NN_TYPE = 'conv'
-assert NN_TYPE in ['linear', 'conv', 'gan']
+    NN_TYPE = 'conv_plus'
+assert NN_TYPE in ['toy', 'fc', 'conv', 'conv_plus']
 
 NN_ARCHITECTURE = {
     'img_shape': IMG_SHAPE,
     'data_dim': DATA_DIM,
     'latent_dim': LATENT_DIM,
     'nn_type': NN_TYPE,
+    'with_sigmoid': True,
     'spd': SPD}
 
-BATCH_SIZES = {15: 128, 25: 64, 64: 32, 96: 32, 100: 8, 128: 8}
+BATCH_SIZES = {15: 128, 25: 64, 64: 32, 90: 32, 96: 32, 100: 8, 128: 8}
 BATCH_SIZE = BATCH_SIZES[IMG_SHAPE[1]]
 FRAC_TEST = 0.1
 FRAC_VAL = 0.2
@@ -81,24 +82,29 @@ CKPT_PERIOD = 5
 AXIS = {'fmri': 3, 'mri': 1, 'seg': 1}
 
 PRINT_INTERVAL = 10
-torch.backends.cudnn.benchmark = True
-
 RECONSTRUCTIONS = ('bce_on_intensities', 'adversarial')
-REGULARIZATIONS = ('kullbackleibler',)
-WEIGHTS_INIT = 'custom'
+REGULARIZATIONS = ('kullbackleibler')
+WEIGHTS_INIT = 'xavier'  #'custom'
 REGU_FACTOR = 0.003
 
-N_EPOCHS = 60
+N_EPOCHS = 300
 if DEBUG:
     N_EPOCHS = 2
     N_FILEPATHS = 10
 
 LR = 15e-6
 if 'adversarial' in RECONSTRUCTIONS:
-    LR = 0.0002
-BETA1 = 0.5
-BETA2 = 0.999
+    LR = 0.001  # 0.002 # 0.0002
 
+TRAIN_PARAMS = {
+    'lr': LR,
+    'batch_size': BATCH_SIZE,
+    'beta1': 0.5,
+    'beta2': 0.999,
+    'weights_init': WEIGHTS_INIT,
+    'reconstructions': RECONSTRUCTIONS,
+    'regularizations': REGULARIZATIONS
+    }
 
 NEURO_DIR = '/neuro'
 
@@ -187,8 +193,7 @@ class Train(luigi.Task):
             if DEBUG:
                 if batch_idx < n_batches - 3:
                     continue
-            if DATASET_NAME not in ['cryo', 'cryo_sim',
-                                    'cryo_exp', 'connectomes']:
+            if DATASET_NAME not in ['cryo']:
                 batch_data = batch_data[0].to(DEVICE)
             else:
                 batch_data = batch_data.to(DEVICE).float()
@@ -298,6 +303,18 @@ class Train(luigi.Task):
 
             if 'kullbackleibler' in regularizations:
                 loss_regularization = losses.kullback_leibler(mu, logvar)
+                # Fill gradients on encoder only
+                loss_regularization.backward()
+
+            if 'kullbackleibler_circle' in regularizations:
+                loss_regularization = losses.kullback_leibler_circle(
+                        mu, logvar)
+                # Fill gradients on encoder only
+                loss_regularization.backward()
+
+            if 'on_circle' in regularizations:
+                loss_regularization = losses.on_circle(
+                        mu, logvar)
                 # Fill gradients on encoder only
                 loss_regularization.backward()
 
@@ -413,8 +430,7 @@ class Train(luigi.Task):
                 if DEBUG:
                     if batch_idx < n_batches - 3:
                         continue
-                if DATASET_NAME not in ['cryo', 'cryo_sim',
-                                        'cryo_exp', 'connectomes']:
+                if DATASET_NAME not in ['cryo', 'connectomes']:
                     batch_data = batch_data[0].to(DEVICE)
                 else:
                     batch_data = batch_data.to(DEVICE).float()
@@ -501,6 +517,14 @@ class Train(luigi.Task):
                     loss_regularization = losses.kullback_leibler(
                         mu, logvar)
 
+                if 'kullbackleibler_circle' in regularizations:
+                    loss_regularization = losses.kullback_leibler_circle(
+                            mu, logvar)
+
+                if 'on_circle' in regularizations:
+                    loss_regularization = losses.on_circle(
+                            mu, logvar)
+
                 if 'adversarial' in regularizations:
                     # From: Adversarial autoencoders
                     # https://arxiv.org/pdf/1511.05644.pdf
@@ -575,28 +599,42 @@ class Train(luigi.Task):
                 os.mkdir(directory)
                 os.chmod(directory, 0o777)
 
-        train_loader, val_loader = datasets.get_loaders(
+        train_dataset, val_dataset = datasets.get_datasets(
                 dataset_name=DATASET_NAME,
                 frac_val=FRAC_VAL,
                 batch_size=BATCH_SIZE,
                 img_shape=IMG_SHAPE)
 
-        vae = nn.VaeGan(
+        train = torch.Tensor(train_dataset)
+        val = torch.Tensor(val_dataset)
+
+        logging.info('-- Train tensor: (%d, %d, %d, %d)' % train.shape)
+        logging.info('-- Val tensor: (%d, %d, %d, %d)' % val.shape)
+
+        train_dataset = torch.utils.data.TensorDataset(train)
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
+        val_dataset = torch.utils.data.TensorDataset(val)
+        val_loader = torch.utils.data.DataLoader(
+            val_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
+
+        vae = nn.VaeConvPlus(
             latent_dim=LATENT_DIM,
-            img_shape=IMG_SHAPE).to(DEVICE)
+            img_shape=IMG_SHAPE,
+            with_sigmoid=True).to(DEVICE)
 
         modules = {}
         modules['encoder'] = vae.encoder
         modules['decoder'] = vae.decoder
 
         if 'adversarial' in RECONSTRUCTIONS:
-            discriminator = nn.DiscriminatorGan(
+            discriminator = nn.Discriminator(
                 latent_dim=LATENT_DIM,
                 img_shape=IMG_SHAPE).to(DEVICE)
             modules['discriminator_reconstruction'] = discriminator
 
         if 'adversarial' in REGULARIZATIONS:
-            discriminator = nn.DiscriminatorGan(
+            discriminator = nn.Discriminator(
                 latent_dim=LATENT_DIM,
                 img_shape=IMG_SHAPE).to(DEVICE)
             modules['discriminator_regularization'] = discriminator
@@ -605,19 +643,21 @@ class Train(luigi.Task):
         optimizers['encoder'] = torch.optim.Adam(
             modules['encoder'].parameters(), lr=LR)
         optimizers['decoder'] = torch.optim.Adam(
-            modules['decoder'].parameters(), lr=LR, betas=(BETA1, BETA2))
+            modules['decoder'].parameters(),
+            lr=LR,
+            betas=(TRAIN_PARAMS['beta1'], TRAIN_PARAMS['beta2']))
 
         if 'adversarial' in RECONSTRUCTIONS:
             optimizers['discriminator_reconstruction'] = torch.optim.Adam(
                 modules['discriminator_reconstruction'].parameters(),
                 lr=LR,
-                betas=(BETA1, BETA2))
+                betas=(TRAIN_PARAMS['beta1'], TRAIN_PARAMS['beta2']))
 
         if 'adversarial' in REGULARIZATIONS:
             optimizers['discriminator_regularization'] = torch.optim.Adam(
                 modules['discriminator_regularization'].parameters(),
                 lr=LR,
-                betas=(BETA1, BETA2))
+                betas=(TRAIN_PARAMS['beta1'], TRAIN_PARAMS['beta2']))
 
         for module in modules.values():
             if WEIGHTS_INIT == 'xavier':
@@ -648,7 +688,7 @@ class Train(luigi.Task):
                       legend=['loss']))
 
         m, o, s, t, v = train_utils.init_training(
-            self.train_dir, modules, optimizers)
+            self.train_dir, NN_ARCHITECTURE, TRAIN_PARAMS)
         modules, optimizers, start_epoch = m, o, s
         train_losses_all_epochs, val_losses_all_epochs = t, v
         for epoch in range(start_epoch, N_EPOCHS):
@@ -682,7 +722,8 @@ class Train(luigi.Task):
                     dir_path=self.train_dir,
                     train_losses_all_epochs=train_losses_all_epochs,
                     val_losses_all_epochs=val_losses_all_epochs,
-                    nn_architecture=NN_ARCHITECTURE)
+                    nn_architecture=NN_ARCHITECTURE,
+                    train_params=TRAIN_PARAMS)
 
         for module_name, module in modules.items():
             module_path = os.path.join(
