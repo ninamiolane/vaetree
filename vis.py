@@ -854,6 +854,153 @@ def generate_submanifolds(output, algo_name, epoch,
     else:
         raise ValueError('Manifold not supported.')
 
+
+def get_ax_id(ncols, row_id, col_id):
+    ax_id = row_id * ncols + col_id + 1
+    return ax_id
+
+
+def get_ax(fig, nrows, ncols, row_id, col_id,
+           manifold_name='r2'):
+    if manifold_name == 's2':
+        ax = fig.add_subplot(
+            nrows, ncols,
+            get_ax_id(ncols, row_id=row_id, col_id=col_id),
+            projection='3d')
+    else:
+        ax = fig.add_subplot(
+            nrows, ncols,
+            get_ax_id(ncols, row_id=row_id, col_id=col_id))
+    return ax
+
+
+def plot_true_submanifold(fig, nrows, ncols, row_id, col_id,
+                          output, n_samples,
+                          algo_name='vae', manifold_name='r2',
+                          epoch_id=None, with_noise=False, ax=None,
+                          label=''):
+    t = np.random.normal(size=(n_samples,))
+
+    true_x_novarx, true_x = analyze.true_submanifold_from_t_and_output(
+        t=t, output=output,
+        algo_name=algo_name, manifold_name=manifold_name,
+        epoch_id=epoch_id, with_noise=with_noise)
+
+    if ax is None:
+        ax = get_ax(
+                fig, nrows, ncols, row_id, col_id,
+                manifold_name)
+
+    if manifold_name == 'r2':
+        _ = ax.scatter(
+                true_x_novarx[:, 0], true_x_novarx[:, 1],
+                color='lime', alpha=1, s=30,
+                label=label)
+        if with_noise:
+            _ = ax.scatter(
+                    true_x[:, 0], true_x[:, 1],
+                    color='green', alpha=1, s=30,
+                    label='Data')
+
+    elif manifold_name in ['s2', 'h2']:
+        ax = visualization.plot(
+                true_x_novarx, ax=ax,
+                space=MANIFOLD_VIS_DICT[manifold_name],
+                color='lime', alpha=1, s=20,
+                label=label)
+        if with_noise:
+            ax = visualization.plot(
+                    true_x, ax=ax,
+                    space=MANIFOLD_VIS_DICT[manifold_name],
+                    color='green', alpha=1, s=20,
+                    label='Data')
+
+    if manifold_name != 'r2':
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+
+    if manifold_name == 's2':
+        ax.set_zticks([])
+
+    if manifold_name == 'h2':
+        ax.set_xlabel('')
+        ax.set_ylabel('')
+    return ax
+
+
+def plot_learned_submanifold(fig, nrows, ncols, row_id, col_id,
+                             logvarx_true, n, n_samples, algo_name='vae',
+                             manifold_name='r2', vae_type='gvae_tgt',
+                             epoch_id=None, with_noise=False,
+                             ax=None,
+                             color='black', s=20, label=''):
+    t = np.random.normal(size=(n_samples,))
+    x_novarx, x = analyze.learned_submanifold_from_t_and_vae_type(
+        t, vae_type, logvarx_true, n,
+        algo_name=algo_name, manifold_name=manifold_name,
+        epoch_id=epoch_id, with_noise=with_noise)
+
+    if ax is None:
+        ax = get_ax(
+                fig, nrows, ncols, row_id, col_id,
+                manifold_name)
+
+    if manifold_name == 'r2':
+        _ = ax.scatter(
+                x_novarx[:, 0], x_novarx[:, 1],
+                color=color, alpha=1, s=s,
+                label='Learned weighted submanifold')
+        if with_noise:
+            _ = ax.scatter(
+                    x[:, 0], x[:, 1],
+                    color=color, alpha=1, s=s,
+                    label='Data')
+
+    elif manifold_name in ['s2', 'h2'] and vae_type != 'vae':
+        ax = visualization.plot(
+                x_novarx, ax=ax,
+                space=MANIFOLD_VIS_DICT[manifold_name],
+                color=color, alpha=1, s=s,
+                label='Learned weighted submanifold')
+        if with_noise:
+            ax = visualization.plot(
+                    x, ax=ax,
+                    space=MANIFOLD_VIS_DICT[manifold_name],
+                    color=color, alpha=1, s=s,
+                    label='Data')
+
+    elif manifold_name == 'r3' or vae_type == 'vae':
+        _ = ax.scatter(
+            x_novarx[:, 0], x_novarx[:, 1], x_novarx[:, 2],
+            color=color, alpha=1, s=s,
+            label=label)
+
+        if with_noise:
+            _ = ax.scatter(
+                x[:, 0], x[:, 1], x[:, 2],
+                color=color, alpha=1, s=s,
+                label=label)
+
+    else:
+        ValueError('Manifold not supported.')
+
+    if manifold_name != 'r2':
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+
+    if manifold_name == 's2':
+        ax.set_zticks([])
+
+    if manifold_name == 'h2':
+        ax.set_xlabel('')
+        ax.set_ylabel('')
+
     return true_x, true_x_novarx, x, x_novarx
 
 
