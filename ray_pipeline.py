@@ -721,6 +721,7 @@ if __name__ == "__main__":
                 'batch_size': BATCH_SIZE,
                 'lr': LR,
                 'latent_dim': LATENT_DIM,  #, 5, 10, 20, 40, 80]),
-                'beta1': TRAIN_PARAMS['beta1']  # tune.uniform(0.1, 0.9),
+                'beta1': TRAIN_PARAMS['beta1'],
+                'beta2': TRAIN_PARAMS['beta2']  # tune.uniform(0.1, 0.9),
             }
         })
