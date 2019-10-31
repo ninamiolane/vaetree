@@ -1,0 +1,4 @@
+defined(@array) is deprecated at /afs/slac/package/lsf/etc.slac/knacker line 281.
+	(Maybe you should just omit the defined()?)
+Unable to open log file. Permission denied
+[31mFATAL:  [0m container creation failed: mount /proc/self/fd/10->/var/singularity/mnt/session/rootfs error: can't mount image /proc/self/fd/10: kernel reported a bad superblock for squashfs image partition, possible causes are that your kernel doesn't support the compression algorithm or the image is corrupted

@@ -35,14 +35,6 @@ KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 REDIS_ADDRESS = '127.0.0.1:6379'
 N_EXPERIMENTS = 2
 
-# Seed
-SEED = 12345
-random.seed(SEED)
-np.random.seed(SEED)
-torch.manual_seed(SEED)
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
-
 DATASET_NAME = 'connectomes'
 
 HOME_DIR = '/scratch/users/nmiolane'

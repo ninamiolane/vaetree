@@ -1,0 +1,69 @@
+
+------------------------------------------------------------
+Sender: LSF System <lsf@cryoem-gpu05>
+Subject: Job 976697: <vaegan-pipeline> in cluster <slac> Exited
+
+Job <vaegan-pipeline> was submitted from host <ocio-gpu01> by user <nmiolane> in cluster <slac> at Mon Oct 28 15:17:35 2019
+Job was executed on host(s) <2*cryoem-gpu05>, in queue <slacgpu>, as user <nmiolane> in cluster <slac> at Mon Oct 28 15:17:37 2019
+</u/bd/nmiolane> was used as the home directory.
+</u/bd/nmiolane/code/vaetree> was used as the working directory.
+Started at Mon Oct 28 15:17:37 2019
+Terminated at Mon Oct 28 15:17:39 2019
+Results reported at Mon Oct 28 15:17:39 2019
+
+Your job looked like:
+
+------------------------------------------------------------
+# LSBATCH: User input
+#!/bin/bash -l
+
+
+
+
+#BSUB -P cryoem
+#BSUB -J vaegan-pipeline
+#BSUB -q slacgpu
+#BSUB -n 2
+#BSUB -R "span[hosts=1]"
+#BSUB -W 72:00
+#BSUB -e run.err
+#BSUB -o run.out
+#BSUB -B
+
+# set up env
+source /etc/profile.d/modules.sh
+export MODULEPATH=/usr/share/Modules/modulefiles:/opt/modulefiles:/afs/slac/package/singularity/modulefiles
+module purge
+module load PrgEnv-gcc/4.8.5
+
+# change working directory
+cd ~/code/vaetree/
+
+# run the command
+singularity run -B /gpfs,/scratch ../simgs/pipeline.simg
+
+------------------------------------------------------------
+
+Exited with exit code 255.
+
+Resource usage summary:
+
+    CPU time :                                   0.87 sec.
+    Max Memory :                                 -
+    Average Memory :                             -
+    Total Requested Memory :                     -
+    Delta Memory :                               -
+    Max Swap :                                   -
+    Max Processes :                              -
+    Max Threads :                                -
+    Run time :                                   10 sec.
+    Turnaround time :                            4 sec.
+
+The output (if any) is above this job summary.
+
+
+
+PS:
+
+Read file <run.err> for stderr output of this job.
+

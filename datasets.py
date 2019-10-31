@@ -21,7 +21,7 @@ from urllib import request
 CUDA = torch.cuda.is_available()
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 
-CRYO_DIR = '/cryo'
+CRYO_DIR = '/gpfs/slac/cryo/fs1/u/nmiolane/cryo'
 NEURO_DIR = '/neuro'
 
 NEURO_TRAIN_VAL_DIR = os.path.join(NEURO_DIR, 'train_val_datasets')
@@ -634,13 +634,15 @@ def get_dataset_cryo_exp(img_shape_no_channel=None, kwargs=KWARGS):
         dataset = np.load(cryo_img_path)
 
     else:
-        if not os.path.isfile('/cryo/one2dclass.h5'):
-            logging.info('Downloading file one2dclass.h5...')
-            os.system("cd /cryo/")
-            os.system('gdrive download 1YDgyaOYkfeupj75xFD2AHHUZIIYrUsDx')
-        path = '/cryo/one2dclass.h5'
-        logging.info('Loading file %s...' % path)
-        data_dict = load_dict_from_hdf5(path)
+        h5_path = os.path.join(CRYO_DIR, 'rib80s_sideview.h5')
+        if not os.path.isfile(h5_path):
+            logging.info('Downloading %s from gdrive...' % h5_path)
+            os.system('cd ~')
+            os.system(
+                './gdrive-linux-x64 download --path %s'
+                ' 11vaKEt7CIp5CdiVD3G7K4_xIeQkmZMDA' % CRYO_DIR)
+        logging.info('Loading dict from %s...' % h5_path)
+        data_dict = load_dict_from_hdf5(h5_path)
         dataset = data_dict['particles']
         n_data = len(dataset)
 

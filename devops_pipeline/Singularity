@@ -37,5 +37,4 @@ From: ../../simgs/base.simg
 
 
 %runscript
-    exec /usr/bin/python3 -u ray_impipeline.py
-#exec ./run_simulations.sh
+    exec /usr/bin/python3 -u pipeline.py
