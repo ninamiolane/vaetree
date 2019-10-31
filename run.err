@@ -1,4 +1,66 @@
 defined(@array) is deprecated at /afs/slac/package/lsf/etc.slac/knacker line 281.
 	(Maybe you should just omit the defined()?)
 Unable to open log file. Permission denied
-[31mFATAL:  [0m container creation failed: mount /proc/self/fd/10->/var/singularity/mnt/session/rootfs error: can't mount image /proc/self/fd/10: kernel reported a bad superblock for squashfs image partition, possible causes are that your kernel doesn't support the compression algorithm or the image is corrupted
+/usr/lib/python3.5/importlib/_bootstrap.py:222: RuntimeWarning: numpy.dtype size changed, may indicate binary incompatibility. Expected 96, got 88
+  return f(*args, **kwds)
+Using numpy backend
+INFO:root:start
+2019-10-31 13:51:15,751	INFO resource_spec.py:205 -- Starting Ray with 153.27 GiB memory available for workers and up to 18.63 GiB for objects. You can adjust these settings with ray.init(memory=<bytes>, object_store_memory=<bytes>).
+2019-10-31 13:51:18,139	WARNING logger.py:343 -- Could not instantiate tf2_compat_logger: No module named 'tensorflow'.
+defined(@array) is deprecated at /afs/slac/package/lsf/etc.slac/knacker line 281.
+	(Maybe you should just omit the defined()?)
+Unable to open log file. Permission denied
+/usr/lib/python3.5/importlib/_bootstrap.py:222: RuntimeWarning: numpy.dtype size changed, may indicate binary incompatibility. Expected 96, got 88
+  return f(*args, **kwds)
+Using numpy backend
+INFO:root:start
+2019-10-31 13:53:53,561	INFO resource_spec.py:205 -- Starting Ray with 153.27 GiB memory available for workers and up to 18.63 GiB for objects. You can adjust these settings with ray.init(memory=<bytes>, object_store_memory=<bytes>).
+2019-10-31 13:53:55,200	WARNING logger.py:343 -- Could not instantiate tf2_compat_logger: No module named 'tensorflow'.
+2019-10-31 14:34:49,149	ERROR trial_runner.py:569 -- Error processing event.
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.5/dist-packages/ray/tune/trial_runner.py", line 515, in _process_trial
+    result = self.trial_executor.fetch_result(trial)
+  File "/usr/local/lib/python3.5/dist-packages/ray/tune/ray_trial_executor.py", line 351, in fetch_result
+    result = ray.get(trial_future[0])
+  File "/usr/local/lib/python3.5/dist-packages/ray/worker.py", line 2121, in get
+    raise value.as_instanceof_cause()
+ray.exceptions.RayTaskError(RuntimeError): [36mray_Train:train()[39m (pid=8861, host=cryoem-gpu50)
+  File "/usr/local/lib/python3.5/dist-packages/ray/tune/trainable.py", line 176, in train
+    result = self._train()
+  File "ray_pipeline.py", line 409, in _train
+    return self._test()
+  File "ray_pipeline.py", line 445, in _test
+    mu, logvar = encoder(batch_data)
+  File "/usr/local/lib/python3.5/dist-packages/torch/nn/modules/module.py", line 489, in __call__
+    result = self.forward(*input, **kwargs)
+  File "/gpfs/slac/cryo/fs1/u/nmiolane/code/vaetree/nn.py", line 644, in forward
+    h1 = self.leakyrelu(self.bn1(self.enc1(x)))
+  File "/usr/local/lib/python3.5/dist-packages/torch/nn/modules/module.py", line 489, in __call__
+    result = self.forward(*input, **kwargs)
+  File "/usr/local/lib/python3.5/dist-packages/torch/nn/modules/conv.py", line 320, in forward
+    self.padding, self.dilation, self.groups)
+RuntimeError: Expected 4-dimensional input for 4-dimensional weight [64, 1, 4, 4], but got 3-dimensional input of size [1, 128, 128] instead
+Traceback (most recent call last):
+  File "ray_pipeline.py", line 685, in <module>
+    'beta2': TRAIN_PARAMS['beta2']  # tune.uniform(0.1, 0.9),
+  File "/usr/local/lib/python3.5/dist-packages/ray/tune/tune.py", line 269, in run
+    raise TuneError("Trials did not complete", errored_trials)
+ray.tune.error.TuneError: ('Trials did not complete', [Train_0])
+defined(@array) is deprecated at /afs/slac/package/lsf/etc.slac/knacker line 281.
+	(Maybe you should just omit the defined()?)
+Unable to open log file. Permission denied
+/usr/lib/python3.5/importlib/_bootstrap.py:222: RuntimeWarning: numpy.dtype size changed, may indicate binary incompatibility. Expected 96, got 88
+  return f(*args, **kwds)
+Using numpy backend
+INFO:root:start
+2019-10-31 14:51:37,394	INFO resource_spec.py:205 -- Starting Ray with 149.71 GiB memory available for workers and up to 18.63 GiB for objects. You can adjust these settings with ray.init(memory=<bytes>, object_store_memory=<bytes>).
+2019-10-31 14:51:38,890	WARNING logger.py:343 -- Could not instantiate tf2_compat_logger: No module named 'tensorflow'.
+defined(@array) is deprecated at /afs/slac/package/lsf/etc.slac/knacker line 281.
+	(Maybe you should just omit the defined()?)
+Unable to open log file. Permission denied
+/usr/lib/python3.5/importlib/_bootstrap.py:222: RuntimeWarning: numpy.dtype size changed, may indicate binary incompatibility. Expected 96, got 88
+  return f(*args, **kwds)
+Using numpy backend
+INFO:root:start
+2019-10-31 14:56:23,947	INFO resource_spec.py:205 -- Starting Ray with 149.9 GiB memory available for workers and up to 18.63 GiB for objects. You can adjust these settings with ray.init(memory=<bytes>, object_store_memory=<bytes>).
+2019-10-31 14:56:25,452	WARNING logger.py:343 -- Could not instantiate tf2_compat_logger: No module named 'tensorflow'.
