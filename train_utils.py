@@ -115,13 +115,21 @@ def init_modules_and_optimizers(nn_architecture, train_params):
             latent_dim=latent_dim,
             img_shape=img_shape,
             with_sigmoid=with_sigmoid).to(DEVICE)
-        discriminator = nn.Discriminator(
-            latent_dim=latent_dim,
-            img_shape=img_shape).to(DEVICE)
-        modules['discriminator_reconstruction'] = discriminator
 
     modules['encoder'] = vae.encoder
     modules['decoder'] = vae.decoder
+
+    if 'adversarial' in train_params['reconstructions']:
+        discriminator = nn.Discriminator(
+            latent_dim=nn_architecture['latent_dim'],
+            img_shape=nn_architecture['img_shape']).to(DEVICE)
+        modules['discriminator_reconstruction'] = discriminator
+
+    if 'adversarial' in train_params['regularizations']:
+        discriminator = nn.Discriminator(
+            latent_dim=nn_architecture['latent_dim'],
+            img_shape=nn_architecture['img_shape']).to(DEVICE)
+        modules['discriminator_regularization'] = discriminator
 
     # Optimizers
     optimizers['encoder'] = torch.optim.Adam(
@@ -129,11 +137,17 @@ def init_modules_and_optimizers(nn_architecture, train_params):
     optimizers['decoder'] = torch.optim.Adam(
         modules['decoder'].parameters(), lr=lr, betas=(beta1, beta2))
 
-    if nn_type == 'conv_plus':
+    if 'adversarial' in train_params['reconstructions']:
         optimizers['discriminator_reconstruction'] = torch.optim.Adam(
             modules['discriminator_reconstruction'].parameters(),
-            lr=lr,
-            betas=(beta1, beta2))
+            lr=train_params['lr'],
+            betas=(train_params['beta1'], train_params['beta2']))
+
+    if 'adversarial' in train_params['regularizations']:
+        optimizers['discriminator_regularization'] = torch.optim.Adam(
+            modules['discriminator_regularization'].parameters(),
+            lr=train_params['lr'],
+            betas=(train_params['beta1'], train_params['beta2']))
 
     return modules, optimizers
 

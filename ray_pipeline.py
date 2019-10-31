@@ -47,7 +47,6 @@ torch.backends.cudnn.benchmark = True
 
 # NN architecture
 IMG_SHAPE = (1, 128, 128)
-IMG_DIM = len(IMG_SHAPE)
 DATA_DIM = functools.reduce((lambda x, y: x * y), IMG_SHAPE)
 LATENT_DIM = 3
 NN_TYPE = 'conv_plus'
@@ -85,6 +84,8 @@ if 'adversarial' in RECONSTRUCTIONS:
     LR = 0.001  # 0.002 # 0.0002
 
 TRAIN_PARAMS = {
+    'dataset_name': DATASET_NAME,
+    'frac_val': FRAC_VAL,
     'lr': LR,
     'batch_size': BATCH_SIZE,
     'beta1': 0.5,
@@ -114,81 +115,31 @@ class Train(Trainable):
         nn_architecture['latent_dim'] = config.get('latent_dim')
 
         train_dataset, val_dataset = datasets.get_datasets(
-                dataset_name=DATASET_NAME,
-                frac_val=FRAC_VAL,
+                dataset_name=train_params['dataset_name'],
+                frac_val=train_params['frac_val'],
                 batch_size=train_params['batch_size'],
                 img_shape=nn_architecture['img_shape'])
 
-        train = torch.Tensor(train_dataset)
-        val = torch.Tensor(val_dataset)
-
         logging.info(
-            '-- Train tensor: (%d, %d, %d, %d)' % train.shape)
+            'Train: %s' % train_utils.get_logging_shape(
+                train_dataset))
         logging.info(
-            '-- Val tensor: (%d, %d, %d, %d)' % val.shape)
+            'Val: %s' % train_utils.get_logging_shape(
+                val_dataset))
 
-        train_dataset = torch.utils.data.TensorDataset(train)
+        logging.info('NN architecture: ')
+        logging.info(nn_architecture)
+        logging.info('Training parameters:')
+        logging.info(train_params)
+
         train_loader = torch.utils.data.DataLoader(
             train_dataset,
             batch_size=train_params['batch_size'],
             shuffle=True, **KWARGS)
-        val_dataset = torch.utils.data.TensorDataset(val)
         val_loader = torch.utils.data.DataLoader(
             val_dataset,
             batch_size=train_params['batch_size'],
             shuffle=True, **KWARGS)
-
-        vae = nn.VaeConvPlus(
-            latent_dim=nn_architecture['latent_dim'],
-            img_shape=nn_architecture['img_shape'],
-            with_sigmoid=True).to(DEVICE)
-
-        modules = {}
-        modules['encoder'] = vae.encoder
-        modules['decoder'] = vae.decoder
-
-        if 'adversarial' in train_params['reconstructions']:
-            discriminator = nn.Discriminator(
-                latent_dim=nn_architecture['latent_dim'],
-                img_shape=nn_architecture['img_shape']).to(DEVICE)
-            modules['discriminator_reconstruction'] = discriminator
-
-        if 'adversarial' in train_params['regularizations']:
-            discriminator = nn.Discriminator(
-                latent_dim=nn_architecture['latent_dim'],
-                img_shape=nn_architecture['img_shape']).to(DEVICE)
-            modules['discriminator_regularization'] = discriminator
-
-        optimizers = {}
-        optimizers['encoder'] = torch.optim.Adam(
-            modules['encoder'].parameters(), lr=LR)
-        optimizers['decoder'] = torch.optim.Adam(
-            modules['decoder'].parameters(),
-            lr=train_params['lr'],
-            betas=(train_params['beta1'], train_params['beta2']))
-
-        if 'adversarial' in train_params['reconstructions']:
-            optimizers['discriminator_reconstruction'] = torch.optim.Adam(
-                modules['discriminator_reconstruction'].parameters(),
-                lr=train_params['lr'],
-                betas=(train_params['beta1'], train_params['beta2']))
-
-        if 'adversarial' in train_params['regularizations']:
-            optimizers['discriminator_regularization'] = torch.optim.Adam(
-                modules['discriminator_regularization'].parameters(),
-                lr=train_params['lr'],
-                betas=(train_params['beta1'], train_params['beta2']))
-
-        for module in modules.values():
-            if WEIGHTS_INIT == 'xavier':
-                module.apply(train_utils.init_xavier_normal)
-            elif WEIGHTS_INIT == 'kaiming':
-                module.apply(train_utils.init_kaiming_normal)
-            elif WEIGHTS_INIT == 'custom':
-                module.apply(train_utils.init_custom)
-            else:
-                raise NotImplementedError(
-                    'This weight initialization is not implemented.')
 
         m, o, s, t, v = train_utils.init_training(
             self.logdir, nn_architecture, train_params)
@@ -243,7 +194,7 @@ class Train(Trainable):
             if DEBUG and batch_idx < n_batches - 3:
                 continue
 
-            batch_data = batch_data[0].to(DEVICE)
+            batch_data = batch_data.to(DEVICE)
             n_batch_data = len(batch_data)
 
             for optimizer in self.optimizers.values():
@@ -718,9 +669,9 @@ if __name__ == "__main__":
             'num_samples': 1,
             'checkpoint_at_end': True,
             'config': {
-                'batch_size': BATCH_SIZE,
-                'lr': LR,
-                'latent_dim': LATENT_DIM,  #, 5, 10, 20, 40, 80]),
+                'batch_size': TRAIN_PARAMS['batch_size'],
+                'lr': TRAIN_PARAMS['lr'],
+                'latent_dim': NN_ARCHITECTURE['latent_dim'],
                 'beta1': TRAIN_PARAMS['beta1'],
                 'beta2': TRAIN_PARAMS['beta2']  # tune.uniform(0.1, 0.9),
             }
