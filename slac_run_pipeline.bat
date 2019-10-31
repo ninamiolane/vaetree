@@ -12,6 +12,7 @@
 #BSUB -e run.err
 #BSUB -o run.out
 #BSUB -B
+#BSUB -gpu "num=1:mode=exclusive_process:j_exclusive=no:mps=no"
 
 # set up env
 source /etc/profile.d/modules.sh
@@ -20,7 +21,10 @@ module purge
 module load PrgEnv-gcc/4.8.5
 
 # change working directory
-cd ~/code/vaetree/
+cd ~/gpfs_home/code/vaetree/
 
 # run the command
-singularity run -B /gpfs,/scratch ../simgs/pipeline.simg
+singularity run --bind /gpfs,/scratch \
+                --bind /gpfs/slac/cryo/fs1/u/nmiolane/data:/data \
+                --bind ~/gpfs/slac/cryo/fs1/u/nmiolane:/home \
+                ../simgs/pipeline.simg

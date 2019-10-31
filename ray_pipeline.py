@@ -27,7 +27,10 @@ import train_utils
 import warnings
 warnings.filterwarnings("ignore")
 
-REDIS_ADDRESS = '127.0.0.1:6379'
+SERVER_NAME = 'slacgpu'
+
+VISDOM = True if SERVER_NAME == 'gne' else False
+
 DEBUG = False
 
 DATASET_NAME = 'cryo_exp'
@@ -36,6 +39,10 @@ DATASET_NAME = 'cryo_exp'
 CUDA = torch.cuda.is_available()
 DEVICE = torch.device('cuda' if CUDA else 'cpu')
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
+print('DEVICE:')
+print(DEVICE)
+print('enabled')
+print(torch.backends.cudnn.enabled)
 
 # Seed
 SEED = 12345
@@ -173,11 +180,12 @@ class Train(Trainable):
         for module in self.modules.values():
             module.train()
 
-        train_vis = visdom.Visdom()
-        train_vis.env = 'train_images'
-        data_win = None
-        recon_win = None
-        from_prior_win = None
+        if VISDOM:
+            train_vis = visdom.Visdom()
+            train_vis.env = 'train_images'
+            data_win = None
+            recon_win = None
+            from_prior_win = None
 
         total_loss_reconstruction = 0
         total_loss_regularization = 0
@@ -195,6 +203,8 @@ class Train(Trainable):
                 continue
 
             batch_data = batch_data.to(DEVICE)
+            print('DEVICE:')
+            print(DEVICE)
             n_batch_data = len(batch_data)
 
             for optimizer in self.optimizers.values():
@@ -340,26 +350,27 @@ class Train(Trainable):
                 # Visdom first images of batch
                 # TODO(nina): Why does it print black images for batch_data??
                 # print(torch.sum(batch_data[0]))
-                height = 150 * nn_architecture['img_shape'][1] / 64
-                width = 150 * nn_architecture['img_shape'][2] / 64
-                data_win = train_vis.image(
-                    batch_data[0],
-                    win=data_win,
-                    opts=dict(
-                        title='Train Epoch {}: Data'.format(epoch),
-                        height=height, width=width))
-                recon_win = train_vis.image(
-                    batch_recon[0],
-                    win=recon_win,
-                    opts=dict(
-                        title='Train Epoch {}: Reconstruction'.format(epoch),
-                        height=height, width=width))
-                from_prior_win = train_vis.image(
-                    batch_from_prior[0],
-                    win=from_prior_win,
-                    opts=dict(
-                        title='Train Epoch {}: From prior'.format(epoch),
-                        height=height, width=width))
+                if VISDOM:
+                    height = 150 * nn_architecture['img_shape'][1] / 64
+                    width = 150 * nn_architecture['img_shape'][2] / 64
+                    data_win = train_vis.image(
+                        batch_data[0],
+                        win=data_win,
+                        opts=dict(
+                            title='Train Epoch {}: Data'.format(epoch),
+                            height=height, width=width))
+                    recon_win = train_vis.image(
+                        batch_recon[0],
+                        win=recon_win,
+                        opts=dict(
+                            title='Train Epoch {}: Reconstruction'.format(epoch),
+                            height=height, width=width))
+                    from_prior_win = train_vis.image(
+                        batch_from_prior[0],
+                        win=from_prior_win,
+                        opts=dict(
+                            title='Train Epoch {}: From prior'.format(epoch),
+                            height=height, width=width))
 
             total_loss_reconstruction += loss_reconstruction.item()
             total_loss_regularization += loss_regularization.item()
@@ -411,11 +422,12 @@ class Train(Trainable):
         for module in self.modules.values():
             module.eval()
 
-        vis = visdom.Visdom()
-        vis.env = 'val_images'
-        data_win = None
-        recon_win = None
-        from_prior_win = None
+        if VISDOM:
+            vis = visdom.Visdom()
+            vis.env = 'val_images'
+            data_win = None
+            recon_win = None
+            from_prior_win = None
 
         total_loss_reconstruction = 0
         total_loss_regularization = 0
@@ -536,28 +548,29 @@ class Train(Trainable):
                     batch_recon = batch_recon.cpu().numpy()
                     batch_from_prior = batch_from_prior.cpu().numpy()
 
-                    # Visdom first images of last batch
-                    height = 150 * nn_architecture['img_shape'][1] / 64
-                    width = 150 * nn_architecture['img_shape'][2] / 64
-                    data_win = vis.image(
-                        batch_data[0][0]+0.5,
-                        win=data_win,
-                        opts=dict(
-                            title='Val Epoch {}: Data'.format(epoch),
-                            height=height, width=width))
-                    recon_win = vis.image(
-                        batch_recon[0][0],
-                        win=recon_win,
-                        opts=dict(
-                            title='Val Epoch {}: Reconstruction'.format(
-                                epoch),
-                            height=height, width=width))
-                    from_prior_win = vis.image(
-                        batch_from_prior[0][0],
-                        win=from_prior_win,
-                        opts=dict(
-                            title='Val Epoch {}: From prior'.format(epoch),
-                            height=height, width=width))
+                    if VISDOM:
+                        # Visdom first images of last batch
+                        height = 150 * nn_architecture['img_shape'][1] / 64
+                        width = 150 * nn_architecture['img_shape'][2] / 64
+                        data_win = vis.image(
+                            batch_data[0][0]+0.5,
+                            win=data_win,
+                            opts=dict(
+                                title='Val Epoch {}: Data'.format(epoch),
+                                height=height, width=width))
+                        recon_win = vis.image(
+                            batch_recon[0][0],
+                            win=recon_win,
+                            opts=dict(
+                                title='Val Epoch {}: Reconstruction'.format(
+                                    epoch),
+                                height=height, width=width))
+                        from_prior_win = vis.image(
+                            batch_from_prior[0][0],
+                            win=from_prior_win,
+                            opts=dict(
+                                title='Val Epoch {}: From prior'.format(epoch),
+                                height=height, width=width))
 
         average_loss_reconstruction = total_loss_reconstruction / n_data
         average_loss_regularization = total_loss_regularization / n_data
@@ -579,6 +592,8 @@ class Train(Trainable):
         return {'average_loss': average_loss}
 
     def _save(self, checkpoint_dir=None):
+        if checkpoint_dir is None:
+            checkpoint_dir = self.logdir
         epoch = self._iteration
         train_utils.save_checkpoint(
             dir_path=checkpoint_dir,
@@ -664,7 +679,7 @@ if __name__ == "__main__":
             },
             'resources_per_trial': {
                 'cpu': 4,
-                'gpu': int(CUDA)
+                'gpu': 2  # int(CUDA)
             },
             'num_samples': 1,
             'checkpoint_at_end': True,

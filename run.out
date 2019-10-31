@@ -1,15 +1,40 @@
+== Status ==
+Using AsyncHyperBand: num_stopped=0
+Bracket: Iter 64.000: None | Iter 16.000: None | Iter 4.000: None | Iter 1.000: None
+Resources requested: 0/32 CPUs, 0/2 GPUs, 0.0/153.27 GiB heap, 0.0/12.84 GiB objects
+Memory usage on this node: 6.5/187.1 GiB
+
+== Status ==
+Using AsyncHyperBand: num_stopped=0
+Bracket: Iter 64.000: None | Iter 16.000: None | Iter 4.000: None | Iter 1.000: None
+Resources requested: 4/32 CPUs, 2/2 GPUs, 0.0/153.27 GiB heap, 0.0/12.84 GiB objects
+Memory usage on this node: 6.8/187.1 GiB
+Result logdir: /u/bd/nmiolane/ray_results/Train
+Number of trials: 1 ({'RUNNING': 1})
+RUNNING trials:
+ - Train_0:	RUNNING
+
+[2m[36m(pid=206294)[0m Using numpy backend
+[2m[36m(pid=206294)[0m /usr/lib/python3.5/importlib/_bootstrap.py:222: RuntimeWarning: numpy.dtype size changed, may indicate binary incompatibility. Expected 96, got 88
+[2m[36m(pid=206294)[0m   return f(*args, **kwds)
+[2m[36m(pid=206294)[0m /usr/local/lib/python3.5/dist-packages/torch/tensor.py:287: UserWarning: non-inplace resize is deprecated
+[2m[36m(pid=206294)[0m   warnings.warn("non-inplace resize is deprecated")
+[2m[36m(pid=206294)[0m /usr/local/lib/python3.5/dist-packages/torch/nn/modules/upsampling.py:129: UserWarning: nn.UpsamplingNearest2d is deprecated. Use nn.functional.interpolate instead.
+[2m[36m(pid=206294)[0m   warnings.warn("nn.{} is deprecated. Use nn.functional.interpolate instead.".format(self.name))
+[2m[36m(pid=206294)[0m /usr/local/lib/python3.5/dist-packages/torch/nn/functional.py:2016: UserWarning: Using a target size (torch.Size([8])) that is different to the input size (torch.Size([8, 1])) is deprecated. Please ensure they have the same size.
+[2m[36m(pid=206294)[0m   "Please ensure they have the same size.".format(target.size(), input.size()))
 
 ------------------------------------------------------------
-Sender: LSF System <lsf@cryoem-gpu05>
-Subject: Job 976697: <vaegan-pipeline> in cluster <slac> Exited
+Sender: LSF System <lsf@cryoem-gpu50>
+Subject: Job 487706: <vaegan-pipeline> in cluster <slac> Exited
 
-Job <vaegan-pipeline> was submitted from host <ocio-gpu01> by user <nmiolane> in cluster <slac> at Mon Oct 28 15:17:35 2019
-Job was executed on host(s) <2*cryoem-gpu05>, in queue <slacgpu>, as user <nmiolane> in cluster <slac> at Mon Oct 28 15:17:37 2019
-</u/bd/nmiolane> was used as the home directory.
-</u/bd/nmiolane/code/vaetree> was used as the working directory.
-Started at Mon Oct 28 15:17:37 2019
-Terminated at Mon Oct 28 15:17:39 2019
-Results reported at Mon Oct 28 15:17:39 2019
+Job <vaegan-pipeline> was submitted from host <ocio-gpu01> by user <nmiolane> in cluster <slac> at Thu Oct 31 13:50:25 2019
+Job was executed on host(s) <2*cryoem-gpu50>, in queue <slacgpu>, as user <nmiolane> in cluster <slac> at Thu Oct 31 13:50:46 2019
+</tmp/.lsbtmp16758> was used as the home directory.
+</u/bd/nmiolane/gpfs_home/code/vaetree> was used as the working directory.
+Started at Thu Oct 31 13:50:46 2019
+Terminated at Thu Oct 31 13:52:31 2019
+Results reported at Thu Oct 31 13:52:31 2019
 
 Your job looked like:
 
@@ -29,6 +54,7 @@ Your job looked like:
 #BSUB -e run.err
 #BSUB -o run.out
 #BSUB -B
+#BSUB -gpu "num=1:mode=exclusive_process:j_exclusive=no:mps=no"
 
 # set up env
 source /etc/profile.d/modules.sh
@@ -37,27 +63,589 @@ module purge
 module load PrgEnv-gcc/4.8.5
 
 # change working directory
-cd ~/code/vaetree/
+cd ~/gpfs_home/code/vaetree/
 
 # run the command
-singularity run -B /gpfs,/scratch ../simgs/pipeline.simg
+singularity run --bind /gpfs,/scratch \
+                --bind /gpfs/slac/cryo/fs1/u/nmiolane/data:/data \
+                --bind ~/gpfs/slac/cryo/fs1/u/nmiolane:/home \
+                ../simgs/pipeline.simg
 
 ------------------------------------------------------------
 
-Exited with exit code 255.
+TERM_OWNER: job killed by owner.
+Exited with exit code 130.
 
 Resource usage summary:
 
-    CPU time :                                   0.87 sec.
-    Max Memory :                                 -
-    Average Memory :                             -
+    CPU time :                                   878.00 sec.
+    Max Memory :                                 4994 MB
+    Average Memory :                             2112.00 MB
     Total Requested Memory :                     -
     Delta Memory :                               -
     Max Swap :                                   -
-    Max Processes :                              -
-    Max Threads :                                -
-    Run time :                                   10 sec.
-    Turnaround time :                            4 sec.
+    Max Processes :                              46
+    Max Threads :                                380
+    Run time :                                   106 sec.
+    Turnaround time :                            126 sec.
+
+The output (if any) is above this job summary.
+
+
+
+PS:
+
+Read file <run.err> for stderr output of this job.
+
+== Status ==
+Using AsyncHyperBand: num_stopped=0
+Bracket: Iter 64.000: None | Iter 16.000: None | Iter 4.000: None | Iter 1.000: None
+Resources requested: 0/32 CPUs, 0/2 GPUs, 0.0/153.27 GiB heap, 0.0/12.84 GiB objects
+Memory usage on this node: 6.4/187.1 GiB
+
+== Status ==
+Using AsyncHyperBand: num_stopped=0
+Bracket: Iter 64.000: None | Iter 16.000: None | Iter 4.000: None | Iter 1.000: None
+Resources requested: 4/32 CPUs, 2/2 GPUs, 0.0/153.27 GiB heap, 0.0/12.84 GiB objects
+Memory usage on this node: 6.6/187.1 GiB
+Result logdir: /u/bd/nmiolane/ray_results/Train
+Number of trials: 1 ({'RUNNING': 1})
+RUNNING trials:
+ - Train_0:	RUNNING
+
+[2m[36m(pid=8861)[0m Using numpy backend
+[2m[36m(pid=8861)[0m /usr/lib/python3.5/importlib/_bootstrap.py:222: RuntimeWarning: numpy.dtype size changed, may indicate binary incompatibility. Expected 96, got 88
+[2m[36m(pid=8861)[0m   return f(*args, **kwds)
+[2m[36m(pid=8861)[0m /usr/local/lib/python3.5/dist-packages/torch/tensor.py:287: UserWarning: non-inplace resize is deprecated
+[2m[36m(pid=8861)[0m   warnings.warn("non-inplace resize is deprecated")
+[2m[36m(pid=8861)[0m /usr/local/lib/python3.5/dist-packages/torch/nn/modules/upsampling.py:129: UserWarning: nn.UpsamplingNearest2d is deprecated. Use nn.functional.interpolate instead.
+[2m[36m(pid=8861)[0m   warnings.warn("nn.{} is deprecated. Use nn.functional.interpolate instead.".format(self.name))
+[2m[36m(pid=8861)[0m /usr/local/lib/python3.5/dist-packages/torch/nn/functional.py:2016: UserWarning: Using a target size (torch.Size([8])) that is different to the input size (torch.Size([8, 1])) is deprecated. Please ensure they have the same size.
+[2m[36m(pid=8861)[0m   "Please ensure they have the same size.".format(target.size(), input.size()))
+[2m[36m(pid=8861)[0m /usr/local/lib/python3.5/dist-packages/torch/nn/functional.py:2016: UserWarning: Using a target size (torch.Size([7])) that is different to the input size (torch.Size([7, 1])) is deprecated. Please ensure they have the same size.
+[2m[36m(pid=8861)[0m   "Please ensure they have the same size.".format(target.size(), input.size()))
+== Status ==
+Using AsyncHyperBand: num_stopped=0
+Bracket: Iter 64.000: None | Iter 16.000: None | Iter 4.000: None | Iter 1.000: None
+Resources requested: 0/32 CPUs, 0/2 GPUs, 0.0/153.27 GiB heap, 0.0/12.84 GiB objects
+Memory usage on this node: 12.5/187.1 GiB
+Result logdir: /u/bd/nmiolane/ray_results/Train
+Number of trials: 1 ({'ERROR': 1})
+ERROR trials:
+ - Train_0:	ERROR, 1 failures: /u/bd/nmiolane/ray_results/Train/Train_0_2019-10-31_13-53-55tboj_311/error_2019-10-31_14-34-49.txt
+
+== Status ==
+Using AsyncHyperBand: num_stopped=0
+Bracket: Iter 64.000: None | Iter 16.000: None | Iter 4.000: None | Iter 1.000: None
+Resources requested: 0/32 CPUs, 0/2 GPUs, 0.0/153.27 GiB heap, 0.0/12.84 GiB objects
+Memory usage on this node: 12.5/187.1 GiB
+Result logdir: /u/bd/nmiolane/ray_results/Train
+Number of trials: 1 ({'ERROR': 1})
+ERROR trials:
+ - Train_0:	ERROR, 1 failures: /u/bd/nmiolane/ray_results/Train/Train_0_2019-10-31_13-53-55tboj_311/error_2019-10-31_14-34-49.txt
+
+
+------------------------------------------------------------
+Sender: LSF System <lsf@cryoem-gpu50>
+Subject: Job 488574: <vaegan-pipeline> in cluster <slac> Exited
+
+Job <vaegan-pipeline> was submitted from host <ocio-gpu01> by user <nmiolane> in cluster <slac> at Thu Oct 31 13:53:40 2019
+Job was executed on host(s) <2*cryoem-gpu50>, in queue <slacgpu>, as user <nmiolane> in cluster <slac> at Thu Oct 31 13:53:47 2019
+</u/bd/nmiolane> was used as the home directory.
+</u/bd/nmiolane/gpfs_home/code/vaetree> was used as the working directory.
+Started at Thu Oct 31 13:53:47 2019
+Terminated at Thu Oct 31 14:34:51 2019
+Results reported at Thu Oct 31 14:34:51 2019
+
+Your job looked like:
+
+------------------------------------------------------------
+# LSBATCH: User input
+#!/bin/bash -l
+
+
+
+
+#BSUB -P cryoem
+#BSUB -J vaegan-pipeline
+#BSUB -q slacgpu
+#BSUB -n 2
+#BSUB -R "span[hosts=1]"
+#BSUB -W 72:00
+#BSUB -e run.err
+#BSUB -o run.out
+#BSUB -B
+#BSUB -gpu "num=1:mode=exclusive_process:j_exclusive=no:mps=no"
+
+# set up env
+source /etc/profile.d/modules.sh
+export MODULEPATH=/usr/share/Modules/modulefiles:/opt/modulefiles:/afs/slac/package/singularity/modulefiles
+module purge
+module load PrgEnv-gcc/4.8.5
+
+# change working directory
+cd ~/gpfs_home/code/vaetree/
+
+# run the command
+singularity run --bind /gpfs,/scratch \
+                --bind /gpfs/slac/cryo/fs1/u/nmiolane/data:/data \
+                --bind ~/gpfs/slac/cryo/fs1/u/nmiolane:/home \
+                ../simgs/pipeline.simg
+
+------------------------------------------------------------
+
+Exited with exit code 1.
+
+Resource usage summary:
+
+    CPU time :                                   30523.00 sec.
+    Max Memory :                                 5225 MB
+    Average Memory :                             4921.18 MB
+    Total Requested Memory :                     -
+    Delta Memory :                               -
+    Max Swap :                                   14 MB
+    Max Processes :                              47
+    Max Threads :                                390
+    Run time :                                   2466 sec.
+    Turnaround time :                            2471 sec.
+
+The output (if any) is above this job summary.
+
+
+
+PS:
+
+Read file <run.err> for stderr output of this job.
+
+DEVICE:
+cpu
+== Status ==
+Using AsyncHyperBand: num_stopped=0
+Bracket: Iter 64.000: None | Iter 16.000: None | Iter 4.000: None | Iter 1.000: None
+Resources requested: 0/32 CPUs, 0/2 GPUs, 0.0/149.71 GiB heap, 0.0/12.84 GiB objects
+Memory usage on this node: 10.0/187.1 GiB
+
+== Status ==
+Using AsyncHyperBand: num_stopped=0
+Bracket: Iter 64.000: None | Iter 16.000: None | Iter 4.000: None | Iter 1.000: None
+Resources requested: 4/32 CPUs, 2/2 GPUs, 0.0/149.71 GiB heap, 0.0/12.84 GiB objects
+Memory usage on this node: 10.1/187.1 GiB
+Result logdir: /u/bd/nmiolane/ray_results/Train
+Number of trials: 1 ({'RUNNING': 1})
+RUNNING trials:
+ - Train_0:	RUNNING
+
+[2m[36m(pid=103306)[0m /usr/lib/python3.5/importlib/_bootstrap.py:222: RuntimeWarning: numpy.dtype size changed, may indicate binary incompatibility. Expected 96, got 88
+[2m[36m(pid=103306)[0m   return f(*args, **kwds)
+[2m[36m(pid=103306)[0m Using numpy backend
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m /usr/local/lib/python3.5/dist-packages/torch/tensor.py:287: UserWarning: non-inplace resize is deprecated
+[2m[36m(pid=103306)[0m   warnings.warn("non-inplace resize is deprecated")
+[2m[36m(pid=103306)[0m /usr/local/lib/python3.5/dist-packages/torch/nn/modules/upsampling.py:129: UserWarning: nn.UpsamplingNearest2d is deprecated. Use nn.functional.interpolate instead.
+[2m[36m(pid=103306)[0m   warnings.warn("nn.{} is deprecated. Use nn.functional.interpolate instead.".format(self.name))
+[2m[36m(pid=103306)[0m /usr/local/lib/python3.5/dist-packages/torch/nn/functional.py:2016: UserWarning: Using a target size (torch.Size([8])) that is different to the input size (torch.Size([8, 1])) is deprecated. Please ensure they have the same size.
+[2m[36m(pid=103306)[0m   "Please ensure they have the same size.".format(target.size(), input.size()))
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+[2m[36m(pid=103306)[0m DEVICE:
+[2m[36m(pid=103306)[0m cpu
+
+------------------------------------------------------------
+Sender: LSF System <lsf@cryoem-gpu50>
+Subject: Job 512610: <vaegan-pipeline> in cluster <slac> Exited
+
+Job <vaegan-pipeline> was submitted from host <ocio-gpu01> by user <nmiolane> in cluster <slac> at Thu Oct 31 14:51:27 2019
+Job was executed on host(s) <2*cryoem-gpu50>, in queue <slacgpu>, as user <nmiolane> in cluster <slac> at Thu Oct 31 14:51:30 2019
+</u/bd/nmiolane> was used as the home directory.
+</u/bd/nmiolane/gpfs_home/code/vaetree> was used as the working directory.
+Started at Thu Oct 31 14:51:30 2019
+Terminated at Thu Oct 31 14:55:15 2019
+Results reported at Thu Oct 31 14:55:15 2019
+
+Your job looked like:
+
+------------------------------------------------------------
+# LSBATCH: User input
+#!/bin/bash -l
+
+
+
+
+#BSUB -P cryoem
+#BSUB -J vaegan-pipeline
+#BSUB -q slacgpu
+#BSUB -n 2
+#BSUB -R "span[hosts=1]"
+#BSUB -W 72:00
+#BSUB -e run.err
+#BSUB -o run.out
+#BSUB -B
+#BSUB -gpu "num=1:mode=exclusive_process:j_exclusive=no:mps=no"
+
+# set up env
+source /etc/profile.d/modules.sh
+export MODULEPATH=/usr/share/Modules/modulefiles:/opt/modulefiles:/afs/slac/package/singularity/modulefiles
+module purge
+module load PrgEnv-gcc/4.8.5
+
+# change working directory
+cd ~/gpfs_home/code/vaetree/
+
+# run the command
+singularity run --bind /gpfs,/scratch \
+                --bind /gpfs/slac/cryo/fs1/u/nmiolane/data:/data \
+                --bind ~/gpfs/slac/cryo/fs1/u/nmiolane:/home \
+                ../simgs/pipeline.simg
+
+------------------------------------------------------------
+
+TERM_OWNER: job killed by owner.
+Exited with exit code 130.
+
+Resource usage summary:
+
+    CPU time :                                   2787.00 sec.
+    Max Memory :                                 4948 MB
+    Average Memory :                             3504.00 MB
+    Total Requested Memory :                     -
+    Delta Memory :                               -
+    Max Swap :                                   -
+    Max Processes :                              45
+    Max Threads :                                380
+    Run time :                                   229 sec.
+    Turnaround time :                            228 sec.
+
+The output (if any) is above this job summary.
+
+
+
+PS:
+
+Read file <run.err> for stderr output of this job.
+
+DEVICE:
+cpu
+enabled
+True
+== Status ==
+Using AsyncHyperBand: num_stopped=0
+Bracket: Iter 64.000: None | Iter 16.000: None | Iter 4.000: None | Iter 1.000: None
+Resources requested: 0/32 CPUs, 0/2 GPUs, 0.0/149.9 GiB heap, 0.0/12.84 GiB objects
+Memory usage on this node: 9.7/187.1 GiB
+
+== Status ==
+Using AsyncHyperBand: num_stopped=0
+Bracket: Iter 64.000: None | Iter 16.000: None | Iter 4.000: None | Iter 1.000: None
+Resources requested: 4/32 CPUs, 2/2 GPUs, 0.0/149.9 GiB heap, 0.0/12.84 GiB objects
+Memory usage on this node: 9.9/187.1 GiB
+Result logdir: /u/bd/nmiolane/ray_results/Train
+Number of trials: 1 ({'RUNNING': 1})
+RUNNING trials:
+ - Train_0:	RUNNING
+
+[2m[36m(pid=148923)[0m /usr/lib/python3.5/importlib/_bootstrap.py:222: RuntimeWarning: numpy.dtype size changed, may indicate binary incompatibility. Expected 96, got 88
+[2m[36m(pid=148923)[0m   return f(*args, **kwds)
+[2m[36m(pid=148923)[0m Using numpy backend
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m /usr/local/lib/python3.5/dist-packages/torch/tensor.py:287: UserWarning: non-inplace resize is deprecated
+[2m[36m(pid=148923)[0m   warnings.warn("non-inplace resize is deprecated")
+[2m[36m(pid=148923)[0m /usr/local/lib/python3.5/dist-packages/torch/nn/modules/upsampling.py:129: UserWarning: nn.UpsamplingNearest2d is deprecated. Use nn.functional.interpolate instead.
+[2m[36m(pid=148923)[0m   warnings.warn("nn.{} is deprecated. Use nn.functional.interpolate instead.".format(self.name))
+[2m[36m(pid=148923)[0m /usr/local/lib/python3.5/dist-packages/torch/nn/functional.py:2016: UserWarning: Using a target size (torch.Size([8])) that is different to the input size (torch.Size([8, 1])) is deprecated. Please ensure they have the same size.
+[2m[36m(pid=148923)[0m   "Please ensure they have the same size.".format(target.size(), input.size()))
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+[2m[36m(pid=148923)[0m DEVICE:
+[2m[36m(pid=148923)[0m cpu
+
+------------------------------------------------------------
+Sender: LSF System <lsf@cryoem-gpu50>
+Subject: Job 516076: <vaegan-pipeline> in cluster <slac> Exited
+
+Job <vaegan-pipeline> was submitted from host <ocio-gpu01> by user <nmiolane> in cluster <slac> at Thu Oct 31 14:55:45 2019
+Job was executed on host(s) <2*cryoem-gpu50>, in queue <slacgpu>, as user <nmiolane> in cluster <slac> at Thu Oct 31 14:56:18 2019
+</u/bd/nmiolane> was used as the home directory.
+</u/bd/nmiolane/gpfs_home/code/vaetree> was used as the working directory.
+Started at Thu Oct 31 14:56:18 2019
+Terminated at Thu Oct 31 15:01:42 2019
+Results reported at Thu Oct 31 15:01:42 2019
+
+Your job looked like:
+
+------------------------------------------------------------
+# LSBATCH: User input
+#!/bin/bash -l
+
+
+
+
+#BSUB -P cryoem
+#BSUB -J vaegan-pipeline
+#BSUB -q slacgpu
+#BSUB -n 2
+#BSUB -R "span[hosts=1]"
+#BSUB -W 72:00
+#BSUB -e run.err
+#BSUB -o run.out
+#BSUB -B
+#BSUB -gpu "num=1:mode=exclusive_process:j_exclusive=no:mps=no"
+
+# set up env
+source /etc/profile.d/modules.sh
+export MODULEPATH=/usr/share/Modules/modulefiles:/opt/modulefiles:/afs/slac/package/singularity/modulefiles
+module purge
+module load PrgEnv-gcc/4.8.5
+
+# change working directory
+cd ~/gpfs_home/code/vaetree/
+
+# run the command
+singularity run --bind /gpfs,/scratch \
+                --bind /gpfs/slac/cryo/fs1/u/nmiolane/data:/data \
+                --bind ~/gpfs/slac/cryo/fs1/u/nmiolane:/home \
+                ../simgs/pipeline.simg
+
+------------------------------------------------------------
+
+TERM_OWNER: job killed by owner.
+Exited with exit code 130.
+
+Resource usage summary:
+
+    CPU time :                                   4142.00 sec.
+    Max Memory :                                 5151 MB
+    Average Memory :                             3987.67 MB
+    Total Requested Memory :                     -
+    Delta Memory :                               -
+    Max Swap :                                   4 MB
+    Max Processes :                              45
+    Max Threads :                                380
+    Run time :                                   325 sec.
+    Turnaround time :                            357 sec.
 
 The output (if any) is above this job summary.
 
