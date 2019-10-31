@@ -25,9 +25,17 @@ CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if CUDA else "cpu")
 
 
-def make_decoder_true(w_true, b_true,
-                      latent_dim, data_dim, n_layers,
-                      nonlinearity=False, with_biasx=True, with_logvarx=True):
+def make_decoder_true(synthetic_params, nn_architecture):
+    w_true = synthetic_params['w_true']
+    b_true = synthetic_params['b_true']
+
+    latent_dim = nn_architecture['latent_dim']
+    data_dim = nn_architecture['data_dim']
+    n_layers = nn_architecture['n_decoder_layers']
+    nonlinearity = nn_architecture['nonlinearity']
+    with_biasx = nn_architecture['with_biasx']
+    with_logvarx = nn_architecture['with_logvarx']
+
     decoder_true = Decoder(
         latent_dim=latent_dim, data_dim=data_dim,
         n_layers=n_layers,

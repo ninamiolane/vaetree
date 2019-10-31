@@ -1,17 +1,9 @@
 """Ray data processing pipeline."""
 
 import functools
-import jinja2
 import logging
-import luigi
-import math
-import matplotlib
-matplotlib.use('Agg')  # NOQA
-import matplotlib.pyplot as plt
-import matplotlib.pylab as pylab
 import numpy as np
 import os
-import pickle
 import random
 
 import ray
@@ -29,7 +21,6 @@ import visdom
 
 import datasets
 import losses
-import metrics
 import nn
 import train_utils
 
@@ -56,7 +47,6 @@ torch.backends.cudnn.benchmark = True
 
 # NN architecture
 IMG_SHAPE = (1, 128, 128)
-IMG_DIM = len(IMG_SHAPE)
 DATA_DIM = functools.reduce((lambda x, y: x * y), IMG_SHAPE)
 LATENT_DIM = 3
 NN_TYPE = 'conv_plus'
@@ -94,6 +84,8 @@ if 'adversarial' in RECONSTRUCTIONS:
     LR = 0.001  # 0.002 # 0.0002
 
 TRAIN_PARAMS = {
+    'dataset_name': DATASET_NAME,
+    'frac_val': FRAC_VAL,
     'lr': LR,
     'batch_size': BATCH_SIZE,
     'beta1': 0.5,
@@ -111,6 +103,7 @@ if DEBUG:
 PRINT_INTERVAL = 10
 CKPT_PERIOD = 5
 
+
 class Train(Trainable):
 
     def _setup(self, config):
@@ -122,94 +115,31 @@ class Train(Trainable):
         nn_architecture['latent_dim'] = config.get('latent_dim')
 
         train_dataset, val_dataset = datasets.get_datasets(
-                dataset_name=DATASET_NAME,
-                frac_val=FRAC_VAL,
+                dataset_name=train_params['dataset_name'],
+                frac_val=train_params['frac_val'],
                 batch_size=train_params['batch_size'],
                 img_shape=nn_architecture['img_shape'])
 
-        train = torch.Tensor(train_dataset)
-        val = torch.Tensor(val_dataset)
-
         logging.info(
-            '-- Train tensor: (%d, %d, %d, %d)' % train.shape)
+            'Train: %s' % train_utils.get_logging_shape(
+                train_dataset))
         logging.info(
-            '-- Val tensor: (%d, %d, %d, %d)' % val.shape)
+            'Val: %s' % train_utils.get_logging_shape(
+                val_dataset))
 
-        train_dataset = torch.utils.data.TensorDataset(train)
+        logging.info('NN architecture: ')
+        logging.info(nn_architecture)
+        logging.info('Training parameters:')
+        logging.info(train_params)
+
         train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=train_params['batch_size'], shuffle=True, **KWARGS)
-        val_dataset = torch.utils.data.TensorDataset(val)
+            train_dataset,
+            batch_size=train_params['batch_size'],
+            shuffle=True, **KWARGS)
         val_loader = torch.utils.data.DataLoader(
-            val_dataset, batch_size=train_params['batch_size'], shuffle=True, **KWARGS)
-
-        vae = nn.VaeConvPlus(
-            latent_dim=nn_architecture['latent_dim'],
-            img_shape=nn_architecture['img_shape'],
-            with_sigmoid=True).to(DEVICE)
-
-        modules = {}
-        modules['encoder'] = vae.encoder
-        modules['decoder'] = vae.decoder
-
-        if 'adversarial' in train_params['reconstructions']:
-            discriminator = nn.Discriminator(
-                latent_dim=nn_architecture['latent_dim'],
-                img_shape=nn_architecture['img_shape']).to(DEVICE)
-            modules['discriminator_reconstruction'] = discriminator
-
-        if 'adversarial' in train_params['regularizations']:
-            discriminator = nn.Discriminator(
-                latent_dim=nn_architecture['latent_dim'],
-                img_shape=nn_architecture['img_shape']).to(DEVICE)
-            modules['discriminator_regularization'] = discriminator
-
-        optimizers = {}
-        optimizers['encoder'] = torch.optim.Adam(
-            modules['encoder'].parameters(), lr=LR)
-        optimizers['decoder'] = torch.optim.Adam(
-            modules['decoder'].parameters(),
-            lr=train_params['lr'],
-            betas=(train_params['beta1'], train_params['beta2']))
-
-        if 'adversarial' in train_params['reconstructions']:
-            optimizers['discriminator_reconstruction'] = torch.optim.Adam(
-                modules['discriminator_reconstruction'].parameters(),
-                lr=train_params['lr'],
-                betas=(train_params['beta1'], train_params['beta2']))
-
-        if 'adversarial' in train_params['regularizations']:
-            optimizers['discriminator_regularization'] = torch.optim.Adam(
-                modules['discriminator_regularization'].parameters(),
-                lr=train_params['lr'],
-                betas=(train_params['beta1'], train_params['beta2']))
-
-        for module in modules.values():
-            if WEIGHTS_INIT == 'xavier':
-                module.apply(train_utils.init_xavier_normal)
-            elif WEIGHTS_INIT == 'kaiming':
-                module.apply(train_utils.init_kaiming_normal)
-            elif WEIGHTS_INIT == 'custom':
-                module.apply(train_utils.init_custom)
-            else:
-                raise NotImplementedError(
-                    'This weight initialization is not implemented.')
-
-        vis2 = visdom.Visdom()
-        vis2.env = 'losses'
-        train_loss_window = vis2.line(
-            X=torch.zeros((1,)).cpu(),
-            Y=torch.zeros((1)).cpu(),
-            opts=dict(xlabel='Epochs',
-                      ylabel='Train loss',
-                      title='Train loss',
-                      legend=['loss']))
-        val_loss_window = vis2.line(
-            X=torch.zeros((1,)).cpu(),
-            Y=torch.zeros((1)).cpu(),
-            opts=dict(xlabel='Epochs',
-                      ylabel='Val loss',
-                      title='Val loss',
-                      legend=['loss']))
+            val_dataset,
+            batch_size=train_params['batch_size'],
+            shuffle=True, **KWARGS)
 
         m, o, s, t, v = train_utils.init_training(
             self.logdir, nn_architecture, train_params)
@@ -237,6 +167,9 @@ class Train(Trainable):
         - optimizers: a dict with optimizers corresponding to each module.
         """
         epoch = self._iteration
+        nn_architecture = self.nn_architecture
+        train_params = self.train_params
+
         for module in self.modules.values():
             module.train()
 
@@ -248,7 +181,7 @@ class Train(Trainable):
 
         total_loss_reconstruction = 0
         total_loss_regularization = 0
-        if 'adversarial' in self.train_params['reconstructions']:
+        if 'adversarial' in train_params['reconstructions']:
             total_loss_discriminator = 0
             total_loss_generator = 0
         total_loss = 0
@@ -259,9 +192,9 @@ class Train(Trainable):
         for batch_idx, batch_data in enumerate(
                 self.train_loader):
             if DEBUG and batch_idx < n_batches - 3:
-               continue
+                continue
 
-            batch_data = batch_data[0].to(DEVICE)
+            batch_data = batch_data.to(DEVICE)
             n_batch_data = len(batch_data)
 
             for optimizer in self.optimizers.values():
@@ -281,7 +214,7 @@ class Train(Trainable):
             batch_from_prior, scale_b_from_prior = decoder(
                 z_from_prior)
 
-            if 'adversarial' in self.train_params['reconstructions']:
+            if 'adversarial' in train_params['reconstructions']:
                 # From:
                 # Autoencoding beyond pixels using a learned similarity metric
                 # arXiv:1512.09300v2
@@ -340,21 +273,21 @@ class Train(Trainable):
                 # Fill gradients on generator only
                 loss_generator.backward()
 
-            if 'mse_on_intensities' in self.train_params['reconstructions']:
+            if 'mse_on_intensities' in train_params['reconstructions']:
                 loss_reconstruction = losses.mse_on_intensities(
                     batch_data, batch_recon, scale_b)
 
                 # Fill gradients on encoder and generator
                 loss_reconstruction.backward(retain_graph=True)
 
-            if 'bce_on_intensities' in self.train_params['reconstructions']:
+            if 'bce_on_intensities' in train_params['reconstructions']:
                 loss_reconstruction = losses.bce_on_intensities(
                     batch_data, batch_recon, scale_b)
 
                 # Fill gradients on encoder and generator
                 loss_reconstruction.backward(retain_graph=True)
 
-            if 'mse_on_features' in self.train_params['reconstructions']:
+            if 'mse_on_features' in train_params['reconstructions']:
                 # TODO(nina): Investigate stat interpretation
                 # of using the logvar from the recon
                 loss_reconstruction = losses.mse_on_features(
@@ -363,35 +296,33 @@ class Train(Trainable):
                 # but not on discriminator
                 loss_reconstruction.backward(retain_graph=True)
 
-            if 'kullbackleibler' in self.train_params['regularizations']:
+            if 'kullbackleibler' in train_params['regularizations']:
                 loss_regularization = losses.kullback_leibler(mu, logvar)
                 # Fill gradients on encoder only
                 loss_regularization.backward()
 
-
-            if 'kullbackleibler_circle' in self.train_params['regularizations']:
+            if 'kullbackleibler_circle' in train_params['regularizations']:
                 loss_regularization = losses.kullback_leibler_circle(
                         mu, logvar)
                 # Fill gradients on encoder only
                 loss_regularization.backward()
 
-            if 'on_circle' in self.train_params['regularizations']:
+            if 'on_circle' in train_params['regularizations']:
                 loss_regularization = losses.on_circle(
                         mu, logvar)
                 # Fill gradients on encoder only
                 loss_regularization.backward()
 
-
             self.optimizers['encoder'].step()
             self.optimizers['decoder'].step()
 
             loss = loss_reconstruction + loss_regularization
-            if 'adversarial' in self.train_params['reconstructions']:
+            if 'adversarial' in train_params['reconstructions']:
                 loss += loss_discriminator + loss_generator
 
             if batch_idx % PRINT_INTERVAL == 0:
                 # TODO(nina): Why didn't we need .mean() on 64x64?
-                if 'adversarial' in self.train_params['reconstructions']:
+                if 'adversarial' in train_params['reconstructions']:
                     self.print_train_logs(
                         epoch,
                         batch_idx, n_batches, n_data, n_batch_data,
@@ -409,8 +340,8 @@ class Train(Trainable):
                 # Visdom first images of batch
                 # TODO(nina): Why does it print black images for batch_data??
                 # print(torch.sum(batch_data[0]))
-                height = 150 * self.nn_architecture['img_shape'][1] / 64
-                width = 150 * self.nn_architecture['img_shape'][2] / 64
+                height = 150 * nn_architecture['img_shape'][1] / 64
+                width = 150 * nn_architecture['img_shape'][2] / 64
                 data_win = train_vis.image(
                     batch_data[0],
                     win=data_win,
@@ -432,14 +363,14 @@ class Train(Trainable):
 
             total_loss_reconstruction += loss_reconstruction.item()
             total_loss_regularization += loss_regularization.item()
-            if 'adversarial' in self.train_params['reconstructions']:
+            if 'adversarial' in train_params['reconstructions']:
                 total_loss_discriminator += loss_discriminator.item()
                 total_loss_generator += loss_generator.item()
             total_loss += loss.item()
 
         average_loss_reconstruction = total_loss_reconstruction / n_data
         average_loss_regularization = total_loss_regularization / n_data
-        if 'adversarial' in self.train_params['reconstructions']:
+        if 'adversarial' in train_params['reconstructions']:
             average_loss_discriminator = total_loss_discriminator / n_data
             average_loss_generator = total_loss_generator / n_data
         average_loss = total_loss / n_data
@@ -450,7 +381,7 @@ class Train(Trainable):
         train_losses = {}
         train_losses['reconstruction'] = average_loss_reconstruction
         train_losses['regularization'] = average_loss_regularization
-        if 'adversarial' in self.train_params['reconstructions']:
+        if 'adversarial' in train_params['reconstructions']:
             train_losses['discriminator'] = average_loss_discriminator
             train_losses['generator'] = average_loss_generator
         train_losses['total'] = average_loss
@@ -459,13 +390,14 @@ class Train(Trainable):
 
         if epoch % CKPT_PERIOD == 0:
             train_utils.save_checkpoint(
-                dir_path=self.logdir,
-                nn_architecture=self.nn_architecture,
                 epoch=epoch,
                 modules=self.modules,
                 optimizers=self.optimizers,
+                dir_path=self.logdir,
                 train_losses_all_epochs=self.train_losses_all_epochs,
-                val_losses_all_epochs=self.val_losses_all_epochs)
+                val_losses_all_epochs=self.val_losses_all_epochs,
+                nn_architecture=nn_architecture,
+                train_params=train_params)
 
     def _train(self):
         self._train_iteration()
@@ -473,6 +405,9 @@ class Train(Trainable):
 
     def _test(self):
         epoch = self._iteration
+        nn_architecture = self.nn_architecture
+        train_params = self.train_params
+
         for module in self.modules.values():
             module.eval()
 
@@ -484,7 +419,7 @@ class Train(Trainable):
 
         total_loss_reconstruction = 0
         total_loss_regularization = 0
-        if 'adversarial' in self.train_params['reconstructions']:
+        if 'adversarial' in train_params['reconstructions']:
             total_loss_discriminator = 0
             total_loss_generator = 0
         total_loss = 0
@@ -506,11 +441,12 @@ class Train(Trainable):
                 batch_recon, scale_b = decoder(z)
 
                 z_from_prior = nn.sample_from_prior(
-                    nn_architecture['latent_dim'], n_samples=n_batch_data).to(DEVICE)
+                    nn_architecture['latent_dim'],
+                    n_samples=n_batch_data).to(DEVICE)
                 batch_from_prior, scale_b_from_prior = decoder(
                     z_from_prior)
 
-                if 'adversarial' in self.train_params['reconstructions']:
+                if 'adversarial' in train_params['reconstructions']:
                     discriminator = self.modules[
                         'discriminator_reconstruction']
                     real_labels = torch.full((n_batch_data,), 1, device=DEVICE)
@@ -558,38 +494,38 @@ class Train(Trainable):
                     # TODO(nina): add loss_generator_from_prior
                     loss_generator = loss_generator_recon
 
-                if 'mse_on_intensities' in self.train_params['reconstructions']:
+                if 'mse_on_intensities' in train_params['reconstructions']:
                     loss_reconstruction = losses.mse_on_intensities(
                         batch_data, batch_recon, scale_b)
 
-                if 'bce_on_intensities' in self.train_params['reconstructions']:
+                if 'bce_on_intensities' in train_params['reconstructions']:
                     loss_reconstruction = losses.bce_on_intensities(
                         batch_data, batch_recon, scale_b)
 
-                if 'mse_on_features' in self.train_params['reconstructions']:
+                if 'mse_on_features' in train_params['reconstructions']:
                     # TODO(nina): Investigate stat interpretation
                     # of using the logvar from the recon
                     loss_reconstruction = losses.mse_on_features(
                         h_recon, h_data, h_logvar_recon)
 
-                if 'kullbackleibler' in self.train_params['regularizations']:
+                if 'kullbackleibler' in train_params['regularizations']:
                     loss_regularization = losses.kullback_leibler(
                         mu, logvar)
-                if 'kullbackleibler_circle' in self.train_params['regularizations']:
+                if 'kullbackleibler_circle' in train_params['regularizations']:
                     loss_regularization = losses.kullback_leibler_circle(
                             mu, logvar)
 
-                if 'on_circle' in self.train_params['regularizations']:
+                if 'on_circle' in train_params['regularizations']:
                     loss_regularization = losses.on_circle(
                             mu, logvar)
 
                 loss = loss_reconstruction + loss_regularization
-                if 'adversarial' in self.train_params['reconstructions']:
+                if 'adversarial' in train_params['reconstructions']:
                     loss += loss_discriminator + loss_generator
 
                 total_loss_reconstruction += loss_reconstruction.item()
                 total_loss_regularization += loss_regularization.item()
-                if 'adversarial' in self.train_params['reconstructions']:
+                if 'adversarial' in train_params['reconstructions']:
                     total_loss_discriminator += loss_discriminator.item()
                     total_loss_generator += loss_generator.item()
                 total_loss += loss.item()
@@ -625,7 +561,7 @@ class Train(Trainable):
 
         average_loss_reconstruction = total_loss_reconstruction / n_data
         average_loss_regularization = total_loss_regularization / n_data
-        if 'adversarial' in self.train_params['reconstructions']:
+        if 'adversarial' in train_params['reconstructions']:
             average_loss_discriminator = total_loss_discriminator / n_data
             average_loss_generator = total_loss_generator / n_data
         average_loss = total_loss / n_data
@@ -634,7 +570,7 @@ class Train(Trainable):
         val_losses = {}
         val_losses['reconstruction'] = average_loss_reconstruction
         val_losses['regularization'] = average_loss_regularization
-        if 'adversarial' in self.train_params['reconstructions']:
+        if 'adversarial' in train_params['reconstructions']:
             val_losses['discriminator'] = average_loss_discriminator
             val_losses['generator'] = average_loss_generator
         val_losses['total'] = average_loss
@@ -733,9 +669,10 @@ if __name__ == "__main__":
             'num_samples': 1,
             'checkpoint_at_end': True,
             'config': {
-                'batch_size': BATCH_SIZE,
-                'lr': LR,
-                'latent_dim': LATENT_DIM,  #, 5, 10, 20, 40, 80]),
-                'beta1': TRAIN_PARAMS['beta1']  # tune.uniform(0.1, 0.9),
+                'batch_size': TRAIN_PARAMS['batch_size'],
+                'lr': TRAIN_PARAMS['lr'],
+                'latent_dim': NN_ARCHITECTURE['latent_dim'],
+                'beta1': TRAIN_PARAMS['beta1'],
+                'beta2': TRAIN_PARAMS['beta2']  # tune.uniform(0.1, 0.9),
             }
         })

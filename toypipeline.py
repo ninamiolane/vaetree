@@ -2,7 +2,6 @@
 
 import datetime as dt
 import importlib
-import jinja2
 import logging
 import luigi
 import numpy as np
@@ -12,6 +11,12 @@ import random
 import time
 import sys
 
+import ray
+from ray import tune
+
+from ray.tune import Trainable, grid_search
+from ray.tune.schedulers import AsyncHyperBandScheduler
+
 import geomstats
 import torch
 import torch.autograd
@@ -19,12 +24,15 @@ from torch.nn import functional as F
 import torch.optim
 import torch.utils.data
 
+import datasets
 import toylosses
 import toynn
 import train_utils
 
 import warnings
 warnings.filterwarnings("ignore")
+
+DATASET_NAME = 'synthetic'
 
 HOME_DIR = '/scratch/users/nmiolane'
 OUTPUT_DIR = sys.argv[1]
@@ -113,77 +121,8 @@ PRINT_PERIOD = 16
 CKPT_PERIOD = 1
 N_EPOCHS = 101
 
-# Report
-LOADER = jinja2.FileSystemLoader('./templates/')
-TEMPLATE_ENVIRONMENT = jinja2.Environment(
-    autoescape=False,
-    loader=LOADER)
-TEMPLATE_NAME = 'report.jinja2'
 
-
-class MakeDataSet(luigi.Task):
-    """
-    Generate synthetic dataset from a "true" decoder.
-    """
-    output_path = os.path.join(SYNTHETIC_DIR, 'dataset.npy')
-    decoder_true_path = os.path.join(SYNTHETIC_DIR, 'decoder_true.pth')
-
-    def requires(self):
-        pass
-
-    def run(self):
-        os.environ['GEOMSTATS_BACKEND'] = 'numpy'
-        importlib.reload(geomstats.backend)
-        logging.info('Configuration:')
-
-        logging.info('NN_ARCHITECTURE = ')
-        logging.info(NN_ARCHITECTURE)
-
-        logging.info('N_SAMPLES=%d' % N_SAMPLES)
-
-        logging.info('W_TRUE:')
-        logging.info(W_TRUE)
-        logging.info('B_TRUE:')
-        logging.info(B_TRUE)
-
-        decoder_true = toynn.make_decoder_true(
-            w_true=W_TRUE, b_true=B_TRUE,
-            latent_dim=LATENT_DIM, data_dim=DATA_DIM,
-            n_layers=NN_ARCHITECTURE['n_decoder_layers'],
-            nonlinearity=NONLINEARITY,
-            with_biasx=NN_ARCHITECTURE['with_biasx'],
-            with_logvarx=NN_ARCHITECTURE['with_logvarx'])
-
-        if MANIFOLD_NAME == 'r2':
-            synthetic_data = toynn.generate_from_decoder_fixed_var(
-                decoder=decoder_true,
-                logvarx=LOGVARX_TRUE, n_samples=N_SAMPLES)
-
-        elif MANIFOLD_NAME == 's2' or MANIFOLD_NAME == 'h2':
-            if VAE_TYPE == 'gvae':
-                synthetic_data = toynn.generate_from_decoder_fixed_var_tgt(
-                    decoder_true,
-                    logvarx=LOGVARX_TRUE, n_samples=N_SAMPLES,
-                    manifold_name=MANIFOLD_NAME)
-            elif VAE_TYPE == 'vae':
-                synthetic_data = toynn.generate_from_decoder_fixed_var_riem(
-                    decoder_true,
-                    logvarx=LOGVARX_TRUE, n_samples=N_SAMPLES,
-                    manifold_name=MANIFOLD_NAME)
-            else:
-                raise ValueError(VAE_TYPE)
-
-        else:
-            raise ValueError(MANIFOLD_NAME)
-
-        np.save(self.output().path, synthetic_data)
-        torch.save(decoder_true, self.decoder_true_path)
-
-    def output(self):
-        return luigi.LocalTarget(self.output_path)
-
-
-class TrainVAE(luigi.Task):
+class Train(Trainable):
     train_dir = TRAIN_VAE_DIR
     models_path = os.path.join(TRAIN_VAE_DIR, 'models')
     train_losses_path = os.path.join(
@@ -191,10 +130,61 @@ class TrainVAE(luigi.Task):
     val_losses_path = os.path.join(
         TRAIN_VAE_DIR, 'val_losses.pkl')
 
-    def requires(self):
-        return MakeDataSet()
+    def _setup(self, config):
 
-    def train_vae(self, epoch, train_loader, modules, optimizers):
+        train_params = TRAIN_PARAMS
+        train_params['lr'] = config.get('lr')
+        train_params['batch_size'] = config.get('batch_size')
+
+        nn_architecture = NN_ARCHITECTURE
+        nn_architecture['latent_dim'] = config.get('latent_dim')
+
+        train_dataset, val_dataset = datasets.get_datasets(
+            dataset_name=DATASET_NAME,
+            nn_architecture=nn_architecture)
+
+        logging.info(
+            'Train tensor: %s' % train_utils.get_logging_shape(train_dataset))
+        logging.info(
+            'Val tensor: %s' % train_utils.get_logging_shape(val_dataset))
+
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset,
+            batch_size=train_params['batch_size'], shuffle=True, **KWARGS)
+        val_loader = torch.utils.data.DataLoader(
+            val_dataset,
+            batch_size=train_params['batch_size'], shuffle=True, **KWARGS)
+
+        os.environ['GEOMSTATS_BACKEND'] = 'pytorch'
+        importlib.reload(geomstats.backend)
+
+        m, o, s, t, v = train_utils.init_training(
+            train_dir=self.logdir,
+            nn_architecture=nn_architecture,
+            train_params=train_params)
+        modules, optimizers, start_epoch = m, o, s
+        train_losses_all_epochs, val_losses_all_epochs = t, v
+
+        self.train_loader = train_loader
+        self.val_loader = val_loader
+
+        self.modules = modules
+        self.optimizers = optimizers
+        self.start_epoch = start_epoch
+
+        self.train_losses_all_epochs = train_losses_all_epochs
+        self.val_losses_all_epochs = val_losses_all_epochs
+
+        self.train_params = train_params
+        self.nn_architecture = nn_architecture
+
+    def _train_iteration(self, epoch, train_loader, modules, optimizers):
+        """
+        A train iteration for algo_name == 'vae' here.
+        """
+        epoch = self._iteration
+        algo_name = self.train_params['algo_name']
+
         for module in modules.values():
             module.train()
         total_loss_reconstruction = 0
@@ -206,9 +196,8 @@ class TrainVAE(luigi.Task):
         n_data = len(train_loader.dataset)
         n_batches = len(train_loader)
         for batch_idx, batch_data in enumerate(train_loader):
-            if DEBUG:
-                if batch_idx > 3:
-                    continue
+            if DEBUG and batch_idx > 3:
+                continue
             start = time.time()
 
             batch_data = batch_data[0].to(DEVICE)
@@ -300,15 +289,21 @@ class TrainVAE(luigi.Task):
         train_losses = {}
         train_losses['reconstruction'] = average_loss_reconstruction
         train_losses['regularization'] = average_loss_regularization
-        train_losses['neg_loglikelihood'] = 0 # neg_loglikelihood
+        train_losses['neg_loglikelihood'] = 0  # neg_loglikelihood
         train_losses['neg_elbo'] = average_neg_elbo
         train_losses['neg_iwelbo'] = average_neg_iwelbo
         train_losses['weight_w'] = weight_w
         train_losses['weight_phi'] = weight_phi
         train_losses['total_time'] = total_time
-        return train_losses
 
-    def val_vae(self, epoch, val_loader, modules):
+        self.train_losses_all_epochs.append(train_losses)
+
+    def _train(self):
+        self._train_iteration()
+        return self._test()
+
+    def _test(self, epoch, val_loader, modules, algo_name='vae'):
+        epoch = self._iteration
         for module in modules.values():
             module.eval()
         total_loss_reconstruction = 0
@@ -389,8 +384,8 @@ class TrainVAE(luigi.Task):
         total_time += end - start
 
         weight = decoder.layers[0].weight[[0]]
-        #val_data = torch.Tensor(val_loader.dataset)
-        #neg_loglikelihood = toylosses.fa_neg_loglikelihood(weight, val_data)
+        # val_data = torch.Tensor(val_loader.dataset)
+        # neg_loglikelihood = toylosses.fa_neg_loglikelihood(weight, val_data)
 
         logging.info('====> Val Epoch: {} Average Neg ELBO: {:.4f}'.format(
                 epoch, average_neg_elbo))
@@ -398,80 +393,42 @@ class TrainVAE(luigi.Task):
         val_losses = {}
         val_losses['reconstruction'] = average_loss_reconstruction
         val_losses['regularization'] = average_loss_regularization
-        val_losses['neg_loglikelihood'] = 0 #neg_loglikelihood
+        val_losses['neg_loglikelihood'] = 0  # neg_loglikelihood
         val_losses['neg_elbo'] = average_neg_elbo
         val_losses['neg_iwelbo'] = average_neg_iwelbo
         val_losses['weight'] = weight
         val_losses['total_time'] = total_time
+
+        self.val_losses_all_epochs.append(val_losses)
         return val_losses
 
-    def run(self):
-        if not os.path.isdir(self.models_path):
-            os.mkdir(self.models_path)
-            os.chmod(self.models_path, 0o777)
+    def _save(self, checkpoint_dir=None):
+        epoch = self._iteration
 
-        dataset_path = self.input().path
-        dataset = torch.Tensor(np.load(dataset_path))
+        train_utils.save_checkpoint(
+            epoch=epoch,
+            modules=self.modules,
+            optimizers=self.optimizers,
+            dir_path=self.train_dir,
+            train_losses_all_epochs=self.train_losses_all_epochs,
+            val_losses_all_epochs=self.val_losses_all_epochs,
+            nn_architecture=self.nn_architecture,
+            train_params=self.train_params)
 
-        logging.info('--Dataset tensor: (%d, %d)' % dataset.shape)
+        checkpoint_path = os.path.join(
+            checkpoint_dir, 'epoch_%d_checkpoint.pth' % epoch)
+        return checkpoint_path
 
-        n_train = int((1 - FRAC_VAL) * N_SAMPLES)
-        train = torch.Tensor(dataset[:n_train, :])
-        val = torch.Tensor(dataset[n_train:, :])
-
-        logging.info('-- Train tensor: (%d, %d)' % train.shape)
-        logging.info('-- Validation tensor: (%d, %d)' % val.shape)
-
-        train_dataset = torch.utils.data.TensorDataset(train)
-        train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
-        val_dataset = torch.utils.data.TensorDataset(val)
-        val_loader = torch.utils.data.DataLoader(
-            val_dataset, batch_size=BATCH_SIZE, shuffle=True, **KWARGS)
-
-        os.environ['GEOMSTATS_BACKEND'] = 'pytorch'
-        importlib.reload(geomstats.backend)
-
-        m, o, s, t, v = train_utils.init_training(
-            self.train_dir, NN_ARCHITECTURE, TRAIN_PARAMS)
-        modules, optimizers, start_epoch = m, o, s
-        train_losses_all_epochs, val_losses_all_epochs = t, v
-        for epoch in range(start_epoch, N_EPOCHS):
-            if DEBUG:
-                if epoch > 2:
-                    break
-            train_losses = self.train_vae(
-                epoch, train_loader, modules, optimizers)
-            val_losses = self.val_vae(
-                epoch, val_loader, modules)
-
-            train_losses_all_epochs.append(train_losses)
-            val_losses_all_epochs.append(val_losses)
-
-            if epoch % CKPT_PERIOD == 0:
-                train_utils.save_checkpoint(
-                    epoch=epoch, modules=modules, optimizers=optimizers,
-                    dir_path=self.train_dir,
-                    train_losses_all_epochs=train_losses_all_epochs,
-                    val_losses_all_epochs=val_losses_all_epochs,
-                    nn_architecture=NN_ARCHITECTURE,
-                    train_params=TRAIN_PARAMS)
-
-        for module_name, module in modules.items():
-            module_path = os.path.join(
-                self.models_path,
-                '{}.pth'.format(module_name))
-            torch.save(module, module_path)
-
-        with open(self.output()['train_losses'].path, 'wb') as pkl:
-            pickle.dump(train_losses_all_epochs, pkl)
-        with open(self.output()['val_losses'].path, 'wb') as pkl:
-            pickle.dump(val_losses_all_epochs, pkl)
-
-    def output(self):
-        return {
-            'train_losses': luigi.LocalTarget(self.train_losses_path),
-            'val_losses': luigi.LocalTarget(self.val_losses_path)}
+    def _restore(self, checkpoint_path):
+        epoch_id = None  # HACK: restore last one
+        train_dir = os.path.dirname(checkpoint_path)
+        output = os.path.dirname(train_dir)
+        for module_name in self.modules.keys():
+            self.modules[module_name] = train_utils.load_module(
+                output=output,
+                algo_name=self.algo_name,
+                module_name=module_name,
+                epoch_id=epoch_id)
 
 
 class TrainIWAE(luigi.Task):
@@ -1411,81 +1368,6 @@ class TrainVEGAN(luigi.Task):
                     nn_architecture=NN_ARCHITECTURE,
                     train_params=TRAIN_PARAMS)
 
-        for module_name, module in modules.items():
-            module_path = os.path.join(
-                self.models_path,
-                '{}.pth'.format(module_name))
-            torch.save(module, module_path)
-
-        with open(self.output()['train_losses'].path, 'wb') as pkl:
-            pickle.dump(train_losses_all_epochs, pkl)
-        with open(self.output()['val_losses'].path, 'wb') as pkl:
-            pickle.dump(val_losses_all_epochs, pkl)
-
-    def output(self):
-        return {
-            'train_losses': luigi.LocalTarget(self.train_losses_path),
-            'val_losses': luigi.LocalTarget(self.val_losses_path)}
-
-
-class Report(luigi.Task):
-    report_path = os.path.join(REPORT_DIR, 'report.html')
-
-    def requires(self):
-        return TrainVAE()  #, TrainVAE(), TrainIWAE()
-
-    def get_last_epoch(self):
-        # Placeholder
-        epoch_id = N_EPOCHS - 1
-        return epoch_id
-
-    def get_loss_history(self):
-        last_epoch = self.get_last_epoch()
-        loss_history = []
-        for epoch_id in range(last_epoch):
-            path = os.path.join(
-                TRAIN_VAE_DIR, 'losses', 'epoch_%d' % epoch_id)
-            loss = np.load(path)
-            loss_history.append(loss)
-        return loss_history
-
-    def load_data(self, epoch_id):
-        data_path = os.path.join(
-            TRAIN_VAE_DIR, 'imgs', 'epoch_%d_data.npy' % epoch_id)
-        data = np.load(data_path)
-        return data
-
-    def load_recon(self, epoch_id):
-        recon_path = os.path.join(
-            TRAIN_VAE_DIR, 'imgs', 'epoch_%d_recon.npy' % epoch_id)
-        recon = np.load(recon_path)
-        return recon
-
-    def load_from_prior(self, epoch_id):
-        from_prior_path = os.path.join(
-            TRAIN_VAE_DIR, 'imgs', 'epoch_%d_from_prior.npy' % epoch_id)
-        from_prior = np.load(from_prior_path)
-        return from_prior
-
-    def run(self):
-        pass
-
-        with open(self.output().path, 'w') as f:
-            template = TEMPLATE_ENVIRONMENT.get_template(TEMPLATE_NAME)
-            html = template.render('')
-            f.write(html)
-
-    def output(self):
-        return luigi.LocalTarget(self.report_path)
-
-
-class RunAll(luigi.Task):
-    def requires(self):
-        return Report()
-
-    def output(self):
-        return luigi.LocalTarget('dummy')
-
 
 def init():
     directories = [
@@ -1512,13 +1394,32 @@ def init():
     # add the handler to the root logger
     logging.getLogger('').addHandler(console)
 
-    logging.info('start')
-    luigi.run(
-        main_task_cls=RunAll(),
-        cmdline_args=[
-            '--local-scheduler',
-        ])
-
 
 if __name__ == "__main__":
     init()
+
+    ray.init()  # redis_address=REDIS_ADDRESS, head=True)
+
+    sched = AsyncHyperBandScheduler(
+        time_attr='training_iteration',
+        metric='average_loss_reconstruction',
+        mode='min')
+    analysis = tune.run(
+        Train,
+        scheduler=sched,
+        **{
+            'stop': {
+                'training_iteration': N_EPOCHS,
+            },
+            'resources_per_trial': {
+                'cpu': 4,
+                'gpu': int(CUDA)
+            },
+            'num_samples': 2,
+            'checkpoint_at_end': True,
+            'config': {
+                'batch_size': grid_search([4]),
+                'lr': grid_search([0.00001]),
+                'latent_dim': grid_search([2, 5, 10, 20, 40, 80]),
+            }
+        })

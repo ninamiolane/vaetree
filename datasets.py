@@ -4,6 +4,7 @@ import csv
 import glob
 import gzip
 import h5py
+import importlib
 import logging
 import os
 import pandas as pd
@@ -14,14 +15,19 @@ import torch
 import torch.utils
 import skimage
 
+import geomstats
+
 from geomstats.geometry.spd_matrices_space import SPDMatricesSpace
 from torchvision import datasets, transforms
 from urllib import request
 
+import toynn
+
 CUDA = torch.cuda.is_available()
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 
-CRYO_DIR = '/gpfs/slac/cryo/fs1/u/nmiolane/cryo'
+# CRYO_DIR = '/gpfs/slac/cryo/fs1/u/nmiolane/cryo'
+CRYO_DIR = '/cryo'
 NEURO_DIR = '/neuro'
 
 NEURO_TRAIN_VAL_DIR = os.path.join(NEURO_DIR, 'train_val_datasets')
@@ -89,6 +95,9 @@ def get_datasets(dataset_name, frac_val=FRAC_VAL, batch_size=8,
         train_loader, val_loader = get_loaders_brain(
             dataset_name, frac_val, batch_size, img_shape_no_channel, kwargs)
         return train_loader, val_loader
+    elif dataset_name == 'synthetic':
+        dataset = make_synthetic_dataset_and_decoder(kwargs)
+        train_dataset, val_dataset = split_dataset(dataset)
     else:
         raise ValueError('Unknown dataset name: %s' % dataset_name)
 
@@ -724,3 +733,71 @@ def get_loaders_brain(dataset_name, frac_val, batch_size,
     val_loader = torch.utils.data.DataLoader(
         val_dataset, batch_size=batch_size, shuffle=True, **kwargs)
     return train_loader, val_loader
+
+
+def make_synthetic_dataset_and_decoder(synthetic_dir,
+                                       synthetic_params,
+                                       nn_architecture,
+                                       train_params):
+    """
+    Generate synthetic dataset from a "true" decoder.
+
+    The dataset is different depending on the
+    vae/other submanifold learning method
+    that will be used.
+    """
+    synthetic_data_path = os.path.join(synthetic_dir, 'dataset.npy')
+    decoder_true_path = os.path.join(synthetic_dir, 'decoder_true.pth')
+
+    synthetic_data_exists = os.path.isfile(synthetic_data_path)
+    decoder_exists = os.path.isfile(decoder_true_path)
+
+    if synthetic_data_exists and decoder_exists:
+        dataset = np.load(synthetic_data_path)
+    else:
+        n_samples = synthetic_params['n_samples']
+
+        manifold_name = synthetic_params['manifold_name']
+        vae_type = train_params['vae_type']
+        logvarx_true = synthetic_params['logvarx_true']
+
+        os.environ['GEOMSTATS_BACKEND'] = 'numpy'
+        importlib.reload(geomstats.backend)
+
+        logging.info('NN architecture:')
+        logging.info(nn_architecture)
+
+        logging.info('Synthetic params:')
+        logging.info(synthetic_params)
+
+        decoder_true = toynn.make_decoder_true(
+            synthetic_params, nn_architecture)
+
+        if manifold_name == 'r2':
+            dataset = toynn.generate_from_decoder_fixed_var(
+                decoder=decoder_true,
+                logvarx=logvarx_true,
+                n_samples=n_samples)
+
+        elif manifold_name == 's2' or manifold_name == 'h2':
+            if vae_type == 'gvae':
+                dataset = toynn.generate_from_decoder_fixed_var_tgt(
+                    decoder_true,
+                    logvarx=logvarx_true,
+                    n_samples=n_samples,
+                    manifold_name=manifold_name)
+            elif vae_type == 'vae':
+                dataset = toynn.generate_from_decoder_fixed_var_riem(
+                    decoder_true,
+                    logvarx=logvarx_true,
+                    n_samples=n_samples,
+                    manifold_name=manifold_name)
+            else:
+                raise ValueError(vae_type)
+
+        else:
+            raise ValueError(manifold_name)
+
+        np.save(synthetic_data_path, dataset)
+        torch.save(decoder_true, decoder_true_path)
+    return dataset
