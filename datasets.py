@@ -21,7 +21,8 @@ from urllib import request
 CUDA = torch.cuda.is_available()
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 
-CRYO_DIR = '/gpfs/slac/cryo/fs1/u/nmiolane/cryo'
+# CRYO_DIR = '/gpfs/slac/cryo/fs1/u/nmiolane/cryo'
+CRYO_DIR = '/cryo'
 NEURO_DIR = '/neuro'
 
 NEURO_TRAIN_VAL_DIR = os.path.join(NEURO_DIR, 'train_val_datasets')
