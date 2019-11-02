@@ -47,7 +47,11 @@ FRAC_VAL = 0.05
 
 
 def get_datasets(dataset_name, frac_val=FRAC_VAL, batch_size=8,
-                 img_shape=None, kwargs=KWARGS):
+                 img_shape=None,
+                 nn_architecture=None,
+                 train_params=None,
+                 synthetic_params=None,
+                 kwargs=KWARGS):
 
     img_shape_no_channel = None
     if img_shape is not None:
@@ -96,7 +100,10 @@ def get_datasets(dataset_name, frac_val=FRAC_VAL, batch_size=8,
             dataset_name, frac_val, batch_size, img_shape_no_channel, kwargs)
         return train_loader, val_loader
     elif dataset_name == 'synthetic':
-        dataset = make_synthetic_dataset_and_decoder(kwargs)
+        dataset = make_synthetic_dataset_and_decoder(
+            synthetic_params=synthetic_params,
+            nn_architecture=nn_architecture,
+            train_params=train_params)
         train_dataset, val_dataset = split_dataset(dataset)
     else:
         raise ValueError('Unknown dataset name: %s' % dataset_name)
@@ -735,8 +742,7 @@ def get_loaders_brain(dataset_name, frac_val, batch_size,
     return train_loader, val_loader
 
 
-def make_synthetic_dataset_and_decoder(synthetic_dir,
-                                       synthetic_params,
+def make_synthetic_dataset_and_decoder(synthetic_params,
                                        nn_architecture,
                                        train_params):
     """
@@ -746,6 +752,7 @@ def make_synthetic_dataset_and_decoder(synthetic_dir,
     vae/other submanifold learning method
     that will be used.
     """
+    synthetic_dir = synthetic_params['dir']
     synthetic_data_path = os.path.join(synthetic_dir, 'dataset.npy')
     decoder_true_path = os.path.join(synthetic_dir, 'decoder_true.pth')
 
@@ -755,7 +762,7 @@ def make_synthetic_dataset_and_decoder(synthetic_dir,
     if synthetic_data_exists and decoder_exists:
         dataset = np.load(synthetic_data_path)
     else:
-        n_samples = synthetic_params['n_samples']
+        n_samples = synthetic_params['n']
 
         manifold_name = synthetic_params['manifold_name']
         vae_type = train_params['vae_type']
@@ -780,7 +787,7 @@ def make_synthetic_dataset_and_decoder(synthetic_dir,
                 n_samples=n_samples)
 
         elif manifold_name == 's2' or manifold_name == 'h2':
-            if vae_type == 'gvae':
+            if vae_type == 'gvae_tgt':
                 dataset = toynn.generate_from_decoder_fixed_var_tgt(
                     decoder_true,
                     logvarx=logvarx_true,

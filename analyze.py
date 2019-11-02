@@ -1,29 +1,34 @@
 """Tools to analyze the latent space."""
 
 import csv
-<<<<<<< HEAD
-=======
-import functools
-import importlib
 import os
 
->>>>>>> More steps for cryo
 import numpy as np
+import ot
 import torch
 
 from scipy.stats import gaussian_kde
 from sklearn.decomposition import PCA
 
+from geomstats.geometry.discretized_curves_space import DiscretizedCurvesSpace
+
+
+import geom_utils
 import train_utils
 
-DEVICE = 'cuda'
+CUDA = torch.cuda.is_available()
+DEVICE = torch.device("cuda" if CUDA else "cpu")
 
 N_PCA_COMPONENTS = 5
+
+TOY_LOGVARX_TRUE = [-10, -5, -3.22, -2, -1.02, -0.45, 0]
+TOY_STD_TRUE = np.sqrt(np.exp(TOY_LOGVARX_TRUE))
+TOY_N = [10000, 100000]
 
 
 def latent_projection(output, dataset_path, algo_name='vae', epoch_id=None):
     ckpt = train_utils.load_checkpoint(
-        output=output, algo_name=algo_name, epoch_id=epoch_id)
+        output=output, epoch_id=epoch_id)
     dataset = np.load(dataset_path)
 
     if 'spd_feature' in ckpt['nn_architecture']:
@@ -121,60 +126,6 @@ def get_subset_fmri(output, metadata_csv, ses_ids=None, task_names=None,
         'task': tasks_subset, 'ses': ses_subset, 'time': times_subset}
 
     return projected_mus, labels_subset
-<<<<<<< HEAD
-=======
-
-
-def manifold_and_base_point(manifold_name):
-    manifold = MANIFOLD[manifold_name]
-    if os.environ['GEOMSTATS_BACKEND'] == 'numpy':
-        if manifold_name == 's2':
-            base_point = np.array([0, 0, 1])
-        elif manifold_name == 'h2':
-            base_point = np.array([1, 0, 0])
-        elif manifold_name == 'r2':
-            base_point = np.array([0, 0])
-        else:
-            raise ValueError('Manifold not supported.')
-    elif os.environ['GEOMSTATS_BACKEND'] == 'pytorch':
-        if manifold_name == 's2':
-            base_point = torch.Tensor([0., 0., 1.]).to(DEVICE)
-        elif manifold_name == 'h2':
-            base_point = torch.Tensor([1., 0., 0.]).to(DEVICE)
-        elif manifold_name == 'r2':
-            base_point = torch.Tensor([0., 0.]).to(DEVICE)
-        else:
-            raise ValueError('Manifold not supported.')
-    return manifold, base_point
-
-
-def convert_to_tangent_space(x, manifold_name='s2'):
-    n_samples, _ = x.shape
-    if type(x) == np.ndarray:
-        if manifold_name == 's2':
-            x_vector_extrinsic = np.hstack([x, np.zeros((n_samples, 1))])
-        elif manifold_name == 'h2':
-            x_vector_extrinsic = np.hstack([np.zeros((n_samples, 1)), x])
-        elif manifold_name == 'r2':
-            x_vector_extrinsic = x
-        else:
-            raise ValueError('Manifold not supported.')
-    elif type(x) == torch.Tensor:
-        if os.environ['GEOMSTATS_BACKEND'] == 'numpy':
-            os.environ['GEOMSTATS_BACKEND'] = 'pytorch'
-            importlib.reload(geomstats.backend)
-        if manifold_name == 's2':
-            x_vector_extrinsic = torch.cat(
-                [x, torch.zeros((n_samples, 1)).to(DEVICE)], dim=1)
-        elif manifold_name == 'h2':
-            x_vector_extrinsic = torch.cat(
-                [torch.zeros((n_samples, 1)).to(DEVICE), x], dim=1)
-        elif manifold_name == 'r2':
-            x_vector_extrinsic = x
-        else:
-            raise ValueError('Manifold not supported.')
-
-    return x_vector_extrinsic
 
 
 def submanifold_from_t_and_decoder_in_euclidean(
@@ -224,8 +175,8 @@ def submanifold_from_t_and_decoder_on_manifold(
     mux = mux.cpu().detach().numpy()
     n_samples, data_dim = mux.shape
 
-    mux = convert_to_tangent_space(mux, manifold_name=manifold_name)
-    manifold, base_point = manifold_and_base_point(manifold_name)
+    mux = geom_utils.convert_to_tangent_space(mux, manifold_name=manifold_name)
+    manifold, base_point = geom_utils.manifold_and_base_point(manifold_name)
 
     mux_riem = manifold.metric.exp(mux, base_point=base_point)
 
@@ -257,7 +208,7 @@ def submanifold_from_t_and_decoder_on_tangent_space(
     mux_riem, generated_x = submanifold_from_t_and_decoder_on_manifold(
         t, decoder, logvarx, manifold_name)
 
-    manifold, base_point = manifold_and_base_point(manifold_name)
+    manifold, base_point = geom_utils.manifold_and_base_point(manifold_name)
 
     mux_riem_on_tangent_space = manifold.metric.log(
         mux_riem, base_point=base_point)
@@ -330,13 +281,13 @@ def true_submanifold_from_t_and_output(
     - true_x_no_var: true submanifold used in the experiment output
     - true_x: data generated from true model
     """
-    decoder_true_path = '%s/synthetic/decoder_true.pth' % output
+    decoder_true_path = '%s/decoder_true.pth' % output
     decoder_true = torch.load(decoder_true_path, map_location=DEVICE)
 
     logvarx_true = None
     if with_noise:
         ckpt = train_utils.load_checkpoint(
-            output, algo_name=algo_name, epoch_id=0)
+            output, epoch_id=20)
         logvarx_true = ckpt['nn_architecture']['logvarx_true']
 
     true_x_novarx, true_x = true_submanifold_from_t_and_decoder(
@@ -354,7 +305,7 @@ def learned_submanifold_from_t_and_output(
     - true_x: data generated from true model
     """
     decoder = train_utils.load_module(
-        output, algo_name, module_name='decoder', epoch_id=epoch_id)
+        output, module_name='decoder', epoch_id=epoch_id)
 
     # logvarx_true = None
     # if with_noise:
@@ -378,28 +329,30 @@ def learned_submanifold_from_t_and_vae_type(
     - true_x_no_var: true submanifold used in the experiment output
     - true_x: data generated from true model
     """
+    train_dict = {}
+    train_dict['algo_name'] = algo_name
+    train_dict['manifold_name'] = manifold_name
+    train_dict['vae_type'] = vae_type
+    train_dict['logvarx_true'] = logvarx_true
+    train_dict['n'] = n
+
     if vae_type in ['gvae', 'gvae_tgt']:
-        output = toyoutput_dir(
-            manifold_name=manifold_name, vae_type=vae_type,
-            logvarx_true=logvarx_true, n=n)
+        output = ray_output_dir(train_dict)
 
         x_novarx, x = learned_submanifold_from_t_and_output(
             t, output=output,
             algo_name=algo_name, manifold_name=manifold_name,
             epoch_id=epoch_id, with_noise=with_noise)
     elif vae_type == 'vae':
-        output = toyoutput_dir(
-            manifold_name=manifold_name, vae_type=vae_type,
-            logvarx_true=logvarx_true, n=n)
+        output = ray_output_dir(train_dict)
 
         x_novarx, x = learned_submanifold_from_t_and_output(
             t, output=output,
             algo_name=algo_name, manifold_name='r3',
             epoch_id=epoch_id, with_noise=with_noise)
     elif vae_type == 'vae_proj':
-        output = toyoutput_dir(
-            manifold_name=manifold_name, vae_type='vae',
-            logvarx_true=logvarx_true, n=n)
+        train_dict['vae_type'] = 'vae'
+        output = ray_output_dir(train_dict)
 
         x_novarx, x = learned_submanifold_from_t_and_output(
             t, output=output,
@@ -414,17 +367,19 @@ def learned_submanifold_from_t_and_vae_type(
         norms = np.expand_dims(norms, axis=1)
         x = x / norms
     elif vae_type == 'pga':
-        output = toyoutput_dir(
-            manifold_name, logvarx_true, n, vae_type='gvae_tgt')
+        train_dict['vae_type'] = 'gvae_tgt'
+        output = ray_output_dir(train_dict)
+
         synthetic_dataset_in_tgt = np.load(os.path.join(
             output, 'synthetic/dataset.npy'))
         pca = PCA(n_components=1)
         pca.fit(synthetic_dataset_in_tgt)
 
-        component_extrinsic = convert_to_tangent_space(
+        component_extrinsic = geom_utils.convert_to_tangent_space(
                 pca.components_, manifold_name='s2')
-        manifold, base_point = manifold_and_base_point(manifold_name)
-        geodesic = S2.metric.geodesic(
+        manifold, base_point = geom_utils.manifold_and_base_point(
+                manifold_name)
+        geodesic = manifold.metric.geodesic(
             initial_point=base_point, initial_tangent_vec=component_extrinsic)
 
         x_novarx = geodesic(t)
@@ -438,6 +393,37 @@ def toyoutput_dir(manifold_name, logvarx_true, n, vae_type='gvae'):
     output = os.path.join(main_dir, 'logvarx_%s_n_%d_%s' % (
             logvarx_true, n, manifold_name))
     return output
+
+
+def parse_train_dir(train_dir):
+    train_dir = train_dir.replace('=', '_').replace(',', '_')
+    train_dict = {}
+    for param in ['_algo_name_', '_manifold_name_', '_vae_type_']:
+        substring = train_dir[train_dir.find(param)+len(param):]
+        param_value = substring.split('_')[0]
+        train_dict[param[1:-1]] = param_value
+    for param in ['_logvarx_true_', '_n_']:
+        substring = train_dir[train_dir.find(param)+len(param):]
+        param_value = substring.split('_')[0]
+    return train_dict
+
+
+def ray_output_dir(train_dict, main_dir='../../ray_results/Train'):
+    output_dirs = []
+    for _, train_dirs, _ in os.walk(main_dir):
+        for train_dir in train_dirs:
+            keep_dir = True
+            for param_name, param_value in train_dict.items():
+                pattern = param_name + '=' + str(param_value)
+                if pattern not in train_dir:
+                    keep_dir = False
+                    break
+            if not keep_dir:
+                continue
+            output_dirs.append(os.path.join(main_dir, train_dir))
+    if len(output_dirs) > 1:
+        print('Found more than 1 dir, returning last one.')
+    return output_dirs[-1]
 
 
 def squared_dist_between_submanifolds(manifold_name,
@@ -458,11 +444,15 @@ def squared_dist_between_submanifolds(manifold_name,
     dists = np.zeros((len(all_n), len(all_logvarx_true)))
 
     t = np.random.normal(size=(n_samples,))
-    submanifold_true, _ = true_submanifold_from_t_and_decoder(
-        t, DECODER_TRUE, manifold_name)
 
     for i_logvarx_true, logvarx_true in enumerate(all_logvarx_true):
         for i_n, n in enumerate(all_n):
+            output_decoder_true = toyoutput_dir(
+                vae_type='gvae_tgt', manifold_name=manifold_name,
+                logvarx_true=logvarx_true, n=n)
+            submanifold_true, _ = true_submanifold_from_t_and_output(
+                t, output=output_decoder_true, manifold_name=manifold_name)
+
             submanifold_learned, _ = learned_submanifold_from_t_and_vae_type(
                 t=t, vae_type=vae_type,
                 logvarx_true=logvarx_true, n=n,
@@ -470,7 +460,7 @@ def squared_dist_between_submanifolds(manifold_name,
 
             if extrinsic_or_intrinsic == 'intrinsic':
                 curves_space = DiscretizedCurvesSpace(
-                    ambient_manifold=MANIFOLD[manifold_name])
+                    ambient_manifold=geom_utils.MANIFOLD[manifold_name])
                 curves_space_metric = curves_space.l2_metric
 
                 dist = curves_space_metric.dist(
@@ -492,14 +482,14 @@ def make_gauss_hist(n_bins, m=0, s=1):
 
 
 def squared_w2_between_submanifolds(manifold_name,
-                                    vae_type='vae_tgt',
+                                    vae_type='gvae_tgt',
                                     epoch_id=100,
                                     all_logvarx_true=TOY_LOGVARX_TRUE,
                                     all_n=TOY_N,
                                     extrinsic_or_intrinsic='extrinsic',
-                                    n_bins=20,
+                                    n_bins=5,
                                     sinkhorn=False):
-    manifold, base_point = manifold_and_base_point(
+    manifold, base_point = geom_utils.manifold_and_base_point(
         manifold_name)
 
     w2_dists = np.zeros((len(all_n), len(all_logvarx_true)))
@@ -508,12 +498,17 @@ def squared_w2_between_submanifolds(manifold_name,
     x_bins_b, b = make_gauss_hist(n_bins, m=0, s=1)
     assert np.all(x_bins_a == x_bins_b)
     x = x_bins_a
+    train_dict = {}
+    train_dict['vae_type'] = vae_type
+    train_dict['manifold_name'] = manifold_name
 
     for i_logvarx_true, logvarx_true in enumerate(all_logvarx_true):
         for i_n, n in enumerate(all_n):
-            output_decoder_true = toyoutput_dir(
-                vae_type='gvae_tgt', manifold_name=manifold_name,
-                logvarx_true=logvarx_true, n=n)
+            train_dict['n'] = n
+            train_dict['logvarx_true'] = logvarx_true
+            train_dict['vae_type'] = 'gvae_tgt'
+
+            output_decoder_true = ray_output_dir(train_dict)
 
             M2 = np.zeros((n_bins, n_bins))
             for i in range(n_bins):
@@ -541,4 +536,3 @@ def squared_w2_between_submanifolds(manifold_name,
 
             w2_dists[i_n, i_logvarx_true] = d_emd2
     return w2_dists
->>>>>>> More steps for cryo

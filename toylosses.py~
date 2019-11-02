@@ -6,7 +6,6 @@ import torch
 import torch.nn
 from torch.nn import functional as F
 
-import geom_utils
 import toynn
 
 from geomstats.geometry.spd_matrices_space import SPDMatricesSpace
@@ -68,12 +67,12 @@ def riem_square_distance(
 
         sq_dist = spd_space.metric.squared_dist(
             batch_data_mat, batch_recon_mat)
-    elif manifold_name in ['r2', 's2', 'h2']:
-        manifold, base_point = geom_utils.manifold_and_base_point(
+    elif manifold_name == 's2' or manifold_name == 'h2':
+        manifold, base_point = toynn.manifold_and_base_point(
             manifold_name)
-        batch_data_on_tgt = geom_utils.convert_to_tangent_space(
+        batch_data_on_tgt = toynn.convert_to_tangent_space(
             batch_data, manifold_name=manifold_name)
-        batch_recon_on_tgt = geom_utils.convert_to_tangent_space(
+        batch_recon_on_tgt = toynn.convert_to_tangent_space(
             batch_recon, manifold_name=manifold_name)
 
         batch_data_on_manifold = manifold.metric.exp(
@@ -253,6 +252,10 @@ def neg_iwelbo_loss_base(
 
     # These 4 lines are the reconstruction term: change here.
     if reconstruction_type == 'bce':
+        #log_PxGz = torch.sum(
+        #    x_expanded * torch.log(recon_x_expanded)
+        #    + (1 - x_expanded) * torch.log(1 - recon_x_expanded),
+        #    dim=-1)
         log_PxGz = -F.binary_cross_entropy(
             recon_x_expanded, x_expanded, reduction='none')
         log_PxGz = torch.sum(log_PxGz, dim=-1)

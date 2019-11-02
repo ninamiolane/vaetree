@@ -35,13 +35,15 @@ def make_decoder_true(synthetic_params, nn_architecture):
     nonlinearity = nn_architecture['nonlinearity']
     with_biasx = nn_architecture['with_biasx']
     with_logvarx = nn_architecture['with_logvarx']
+    logvarx_true = nn_architecture['logvarx_true']
 
     decoder_true = Decoder(
         latent_dim=latent_dim, data_dim=data_dim,
         n_layers=n_layers,
         nonlinearity=nonlinearity,
         with_biasx=with_biasx,
-        with_logvarx=with_logvarx)
+        with_logvarx=with_logvarx,
+        logvarx_true=logvarx_true)
     decoder_true.to(DEVICE)
 
     for i in range(n_layers):
@@ -296,7 +298,13 @@ class Encoder(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, latent_dim, data_dim, n_layers=1,
                  nonlinearity=False,
-                 with_biasx=True, with_logvarx=True):
+                 with_biasx=True,
+                 with_logvarx=True,
+                 logvarx_true=None):
+        """
+        If with_logvarx is True, then the decoder predicts logvarx.
+        Else, the decoder uses the cte logvarx_true as logvarx.
+        """
         super(Decoder, self).__init__()
 
         self.latent_dim = latent_dim
@@ -304,6 +312,7 @@ class Decoder(nn.Module):
         self.n_layers = n_layers
         self.nonlinearity = nonlinearity
         self.with_logvarx = with_logvarx
+        self.logvarx_true = logvarx_true
 
         # activation functions
         self.relu = nn.ReLU()
@@ -370,9 +379,9 @@ class Decoder(nn.Module):
             if self.with_logvarx:
                 logvarx = self.layers[self.n_layers](h)
             else:
-                #HACK
                 n_data, _ = x.shape
-                logvarx = -5 * torch.ones((n_data, 1)).to(DEVICE)  # isotropic
+                logvarx = self.logvarx_true * torch.ones(
+                    (n_data, 1)).to(DEVICE)
         return x, logvarx
 
     def generate(self, n_samples=1):
@@ -393,6 +402,7 @@ class VAE(nn.Module):
     def __init__(self, latent_dim, data_dim, n_layers=1,
                  nonlinearity=False,
                  with_biasx=True, with_logvarx=True,
+                 logvarx_true=None,
                  with_biasz=True, with_logvarz=True):
         super(VAE, self).__init__()
 
@@ -411,7 +421,8 @@ class VAE(nn.Module):
             n_layers=n_layers,
             nonlinearity=nonlinearity,
             with_biasx=with_biasx,
-            with_logvarx=with_logvarx)
+            with_logvarx=with_logvarx,
+            logvarx_true=logvarx_true)
 
     def forward(self, x):
         muz, logvarz = self.encoder(x)
