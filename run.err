@@ -64,3 +64,239 @@ Using numpy backend
 INFO:root:start
 2019-10-31 14:56:23,947	INFO resource_spec.py:205 -- Starting Ray with 149.9 GiB memory available for workers and up to 18.63 GiB for objects. You can adjust these settings with ray.init(memory=<bytes>, object_store_memory=<bytes>).
 2019-10-31 14:56:25,452	WARNING logger.py:343 -- Could not instantiate tf2_compat_logger: No module named 'tensorflow'.
+defined(@array) is deprecated at /afs/slac/package/lsf/etc.slac/knacker line 281.
+	(Maybe you should just omit the defined()?)
+Unable to open log file. Permission denied
+Error for command "run": unknown shorthand flag: 'v' in -v
+
+Options for run command:
+
+      --add-caps string        a comma separated capability list to add
+      --allow-setuid           allow setuid binaries in container (root only)
+      --app string             set an application to run inside a container
+      --apply-cgroups string   apply cgroups from file for container
+                               processes (root only)
+  -B, --bind strings           a user-bind path specification.  spec has
+                               the format src[:dest[:opts]], where src and
+                               dest are outside and inside paths.  If dest
+                               is not given, it is set equal to src. 
+                               Mount options ('opts') may be specified as
+                               'ro' (read-only) or 'rw' (read/write, which
+                               is the default). Multiple bind paths can be
+                               given by a comma separated list.
+  -e, --cleanenv               clean environment before running container
+  -c, --contain                use minimal /dev and empty other
+                               directories (e.g. /tmp and $HOME) instead
+                               of sharing filesystems from your host
+  -C, --containall             contain not only file systems, but also
+                               PID, IPC, and environment
+      --disable-cache          dont use cache, and dont create cache
+      --dns string             list of DNS server separated by commas to
+                               add in resolv.conf
+      --docker-login           login to a Docker Repository interactively
+      --drop-caps string       a comma separated capability list to drop
+  -f, --fakeroot               run container in new user namespace as uid 0
+  -h, --help                   help for run
+  -H, --home string            a home directory specification.  spec can
+                               either be a src path or src:dest pair.  src
+                               is the source path of the home directory
+                               outside the container and dest overrides
+                               the home directory within the container.
+                               (default "/u/bd/nmiolane")
+      --hostname string        set container hostname
+  -i, --ipc                    run container in a new IPC namespace
+      --keep-privs             let root user keep privileges in container
+                               (root only)
+  -n, --net                    run container in a new network namespace
+                               (sets up a bridge network interface by default)
+      --network string         specify desired network type separated by
+                               commas, each network will bring up a
+                               dedicated interface inside container
+                               (default "bridge")
+      --network-args strings   specify network arguments to pass to CNI plugins
+      --no-home                do NOT mount users home directory if home
+                               is not the current working directory
+      --no-init                do NOT start shim process with --pid
+      --no-nv                  
+      --no-privs               drop all privileges from root user in container)
+      --nohttps                do NOT use HTTPS, for communicating with
+                               local docker registry
+      --nonet                  Disable VM network handling
+      --nv                     enable experimental Nvidia support
+  -o, --overlay strings        use an overlayFS image for persistent data
+                               storage or as read-only layer of container
+      --passphrase             Enter a passphrase for an encrypted contaner
+      --pem-path string        Enter an path to a PEM formated RSA key for
+                               an encrypted container
+  -p, --pid                    run container in a new PID namespace
+      --pwd string             initial working directory for payload
+                               process inside the container
+  -S, --scratch strings        include a scratch directory within the
+                               container that is linked to a temporary dir
+                               (use -W to force location)
+      --security strings       enable security features (SELinux,
+                               Apparmor, Seccomp)
+  -u, --userns                 run container in a new user namespace,
+                               allowing Singularity to run completely
+                               unprivileged on recent kernels. This
+                               disables some features of Singularity, for
+                               example it only works with sandbox images.
+      --uts                    run container in a new UTS namespace
+      --vm                     enable VM support
+      --vm-cpu string          Number of CPU cores to allocate to Virtual
+                               Machine (implies --vm) (default "1")
+      --vm-err                 enable attaching stderr from VM
+      --vm-ip string           IP Address to assign for container usage.
+                               Defaults to DHCP within bridge network.
+                               (default "dhcp")
+      --vm-ram string          Amount of RAM in MiB to allocate to Virtual
+                               Machine (implies --vm) (default "1024")
+  -W, --workdir string         working directory to be used for /tmp,
+                               /var/tmp and $HOME (if -c/--contain was
+                               also used)
+  -w, --writable               by default all Singularity containers are
+                               available as read only. This option makes
+                               the file system accessible as read/write.
+      --writable-tmpfs         makes the file system accessible as
+                               read-write with non persistent data (with
+                               overlay support only)
+
+Run 'singularity run --help' for more detailed usage information.
+defined(@array) is deprecated at /afs/slac/package/lsf/etc.slac/knacker line 281.
+	(Maybe you should just omit the defined()?)
+Unable to open log file. Permission denied
+/usr/lib/python3.5/importlib/_bootstrap.py:222: RuntimeWarning: numpy.dtype size changed, may indicate binary incompatibility. Expected 96, got 88
+  return f(*args, **kwds)
+Using numpy backend
+INFO:root:start
+2019-10-31 15:25:49,675	INFO resource_spec.py:205 -- Starting Ray with 203.76 GiB memory available for workers and up to 18.63 GiB for objects. You can adjust these settings with ray.init(memory=<bytes>, object_store_memory=<bytes>).
+2019-10-31 15:25:51,880	WARNING logger.py:343 -- Could not instantiate tf2_compat_logger: No module named 'tensorflow'.
+2019-10-31 15:27:32,976	ERROR trial_runner.py:569 -- Error processing event.
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.5/dist-packages/ray/tune/trial_runner.py", line 515, in _process_trial
+    result = self.trial_executor.fetch_result(trial)
+  File "/usr/local/lib/python3.5/dist-packages/ray/tune/ray_trial_executor.py", line 351, in fetch_result
+    result = ray.get(trial_future[0])
+  File "/usr/local/lib/python3.5/dist-packages/ray/worker.py", line 2121, in get
+    raise value.as_instanceof_cause()
+ray.exceptions.RayTaskError(RuntimeError): [36mray_Train:train()[39m (pid=40025, host=cryoem-gpu06.slac.stanford.edu)
+  File "/usr/local/lib/python3.5/dist-packages/ray/tune/trainable.py", line 176, in train
+    result = self._train()
+  File "ray_pipeline.py", line 415, in _train
+    return self._test()
+  File "ray_pipeline.py", line 451, in _test
+    mu, logvar = encoder(batch_data)
+  File "/usr/local/lib/python3.5/dist-packages/torch/nn/modules/module.py", line 489, in __call__
+    result = self.forward(*input, **kwargs)
+  File "/gpfs/slac/cryo/fs1/u/nmiolane/code/vaetree/nn.py", line 644, in forward
+    h1 = self.leakyrelu(self.bn1(self.enc1(x)))
+  File "/usr/local/lib/python3.5/dist-packages/torch/nn/modules/module.py", line 489, in __call__
+    result = self.forward(*input, **kwargs)
+  File "/usr/local/lib/python3.5/dist-packages/torch/nn/modules/conv.py", line 320, in forward
+    self.padding, self.dilation, self.groups)
+RuntimeError: Expected 4-dimensional input for 4-dimensional weight [64, 1, 4, 4], but got 3-dimensional input of size [1, 128, 128] instead
+Traceback (most recent call last):
+  File "ray_pipeline.py", line 691, in <module>
+    'beta2': TRAIN_PARAMS['beta2']  # tune.uniform(0.1, 0.9),
+  File "/usr/local/lib/python3.5/dist-packages/ray/tune/tune.py", line 269, in run
+    raise TuneError("Trials did not complete", errored_trials)
+ray.tune.error.TuneError: ('Trials did not complete', [Train_0])
+defined(@array) is deprecated at /afs/slac/package/lsf/etc.slac/knacker line 281.
+	(Maybe you should just omit the defined()?)
+Unable to open log file. Permission denied
+/usr/lib/python3.5/importlib/_bootstrap.py:222: RuntimeWarning: numpy.dtype size changed, may indicate binary incompatibility. Expected 96, got 88
+  return f(*args, **kwds)
+Using numpy backend
+INFO:root:start
+2019-10-31 15:31:14,346	INFO resource_spec.py:205 -- Starting Ray with 204.74 GiB memory available for workers and up to 18.63 GiB for objects. You can adjust these settings with ray.init(memory=<bytes>, object_store_memory=<bytes>).
+2019-10-31 15:31:15,886	WARNING logger.py:343 -- Could not instantiate tf2_compat_logger: No module named 'tensorflow'.
+2019-10-31 16:25:02,267	ERROR trial_runner.py:569 -- Error processing event.
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.5/dist-packages/ray/tune/trial_runner.py", line 515, in _process_trial
+    result = self.trial_executor.fetch_result(trial)
+  File "/usr/local/lib/python3.5/dist-packages/ray/tune/ray_trial_executor.py", line 351, in fetch_result
+    result = ray.get(trial_future[0])
+  File "/usr/local/lib/python3.5/dist-packages/ray/worker.py", line 2121, in get
+    raise value.as_instanceof_cause()
+ray.exceptions.RayTaskError(OSError): [36mray_Train:train()[39m (pid=45173, host=cryoem-gpu06.slac.stanford.edu)
+  File "/usr/local/lib/python3.5/dist-packages/ray/tune/trainable.py", line 176, in train
+    result = self._train()
+  File "ray_pipeline.py", line 414, in _train
+    train_params = self.train_params
+  File "ray_pipeline.py", line 411, in _train_iteration
+    def _test(self):
+  File "/gpfs/slac/cryo/fs1/u/nmiolane/code/vaetree/train_utils.py", line 218, in save_checkpoint
+    torch.save(checkpoint, checkpoint_path)
+  File "/usr/local/lib/python3.5/dist-packages/torch/serialization.py", line 219, in save
+    return _with_file_like(f, "wb", lambda f: _save(obj, f, pickle_module, pickle_protocol))
+  File "/usr/local/lib/python3.5/dist-packages/torch/serialization.py", line 147, in _with_file_like
+    f.close()
+OSError: [Errno 122] Disk quota exceeded
+Traceback (most recent call last):
+  File "ray_pipeline.py", line 691, in <module>
+  File "/usr/local/lib/python3.5/dist-packages/ray/tune/tune.py", line 269, in run
+    raise TuneError("Trials did not complete", errored_trials)
+ray.tune.error.TuneError: ('Trials did not complete', [Train_0])
+defined(@array) is deprecated at /afs/slac/package/lsf/etc.slac/knacker line 281.
+	(Maybe you should just omit the defined()?)
+Unable to open log file. Permission denied
+/usr/lib/python3.5/importlib/_bootstrap.py:222: RuntimeWarning: numpy.dtype size changed, may indicate binary incompatibility. Expected 96, got 88
+  return f(*args, **kwds)
+Using numpy backend
+INFO:root:start
+2019-10-31 16:39:17,538	INFO resource_spec.py:205 -- Starting Ray with 153.32 GiB memory available for workers and up to 18.63 GiB for objects. You can adjust these settings with ray.init(memory=<bytes>, object_store_memory=<bytes>).
+2019-10-31 16:39:20,233	WARNING logger.py:343 -- Could not instantiate tf2_compat_logger: No module named 'tensorflow'.
+2019-10-31 16:48:30,287	ERROR trial_runner.py:569 -- Error processing event.
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.5/dist-packages/ray/tune/trial_runner.py", line 556, in _process_trial
+    trial, force=result.get(SHOULD_CHECKPOINT, False))
+  File "/usr/local/lib/python3.5/dist-packages/ray/tune/trial_runner.py", line 595, in _checkpoint_trial_if_needed
+    self.trial_executor.save(trial, storage=Checkpoint.DISK)
+  File "/usr/local/lib/python3.5/dist-packages/ray/tune/ray_trial_executor.py", line 559, in save
+    trial.runner.save.remote())
+  File "/usr/local/lib/python3.5/dist-packages/ray/worker.py", line 2121, in get
+    raise value.as_instanceof_cause()
+ray.exceptions.RayTaskError(TypeError): [36mray_Train:save()[39m (pid=74082, host=cryoem-gpu50)
+  File "/usr/local/lib/python3.5/dist-packages/ray/tune/trainable.py", line 270, in save
+    checkpoint = self._save(checkpoint_dir)
+  File "ray_pipeline.py", line 599, in _save
+    val_losses_all_epochs=self.val_losses_all_epochs)
+TypeError: save_checkpoint() missing 1 required positional argument: 'train_params'
+2019-10-31 16:48:30,364	WARNING logger.py:343 -- Could not instantiate tf2_compat_logger: No module named 'tensorflow'.
+2019-10-31 16:51:58,705	ERROR trial_runner.py:569 -- Error processing event.
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.5/dist-packages/ray/tune/trial_runner.py", line 556, in _process_trial
+    trial, force=result.get(SHOULD_CHECKPOINT, False))
+  File "/usr/local/lib/python3.5/dist-packages/ray/tune/trial_runner.py", line 595, in _checkpoint_trial_if_needed
+    self.trial_executor.save(trial, storage=Checkpoint.DISK)
+  File "/usr/local/lib/python3.5/dist-packages/ray/tune/ray_trial_executor.py", line 559, in save
+    trial.runner.save.remote())
+  File "/usr/local/lib/python3.5/dist-packages/ray/worker.py", line 2121, in get
+    raise value.as_instanceof_cause()
+ray.exceptions.RayTaskError(TypeError): [36mray_Train:save()[39m (pid=74071, host=cryoem-gpu50)
+  File "/usr/local/lib/python3.5/dist-packages/ray/tune/trainable.py", line 270, in save
+    checkpoint = self._save(checkpoint_dir)
+  File "ray_pipeline.py", line 599, in _save
+    val_losses_all_epochs=self.val_losses_all_epochs)
+TypeError: save_checkpoint() missing 1 required positional argument: 'train_params'
+Traceback (most recent call last):
+  File "ray_pipeline.py", line 685, in <module>
+    'beta2': TRAIN_PARAMS['beta2']  # tune.uniform(0.1, 0.9),
+  File "/usr/local/lib/python3.5/dist-packages/ray/tune/tune.py", line 269, in run
+    raise TuneError("Trials did not complete", errored_trials)
+ray.tune.error.TuneError: ('Trials did not complete', [Train_0, Train_1])
+defined(@array) is deprecated at /afs/slac/package/lsf/etc.slac/knacker line 281.
+	(Maybe you should just omit the defined()?)
+Unable to open log file. Permission denied
+/usr/lib/python3.5/importlib/_bootstrap.py:222: RuntimeWarning: numpy.dtype size changed, may indicate binary incompatibility. Expected 96, got 88
+  return f(*args, **kwds)
+Using numpy backend
+INFO:root:start
+2019-10-31 17:02:15,476	INFO resource_spec.py:205 -- Starting Ray with 153.27 GiB memory available for workers and up to 18.63 GiB for objects. You can adjust these settings with ray.init(memory=<bytes>, object_store_memory=<bytes>).
+2019-10-31 17:02:16,451	WARNING logger.py:343 -- Could not instantiate tf2_compat_logger: No module named 'tensorflow'.
+2019-10-31 17:10:35,735	WARNING util.py:133 -- The `save_to_disk` operation took 4.338196516036987 seconds to complete, which may be a performance bottleneck.
+2019-10-31 17:10:35,763	WARNING util.py:133 -- The `process_trial` operation took 4.381950855255127 seconds to complete, which may be a performance bottleneck.
+2019-10-31 17:10:35,791	WARNING logger.py:343 -- Could not instantiate tf2_compat_logger: No module named 'tensorflow'.
+2019-10-31 17:11:41,345	WARNING util.py:133 -- The `save_to_disk` operation took 5.211647987365723 seconds to complete, which may be a performance bottleneck.
+2019-10-31 17:11:41,354	WARNING util.py:133 -- The `process_trial` operation took 5.233145713806152 seconds to complete, which may be a performance bottleneck.
+2019-10-31 17:11:41,384	INFO tune.py:276 -- Returning an analysis object by default. You can call `analysis.trials` to retrieve a list of trials. This message will be removed in future versions of Tune.
