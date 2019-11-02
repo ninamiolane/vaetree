@@ -13,7 +13,7 @@ import torch
 import geomstats.visualization as visualization
 from matplotlib import animation
 from scipy.stats import gaussian_kde
-from torchviz import make_dot
+# from torch_viz import make_dot
 
 import analyze
 import nn
@@ -85,7 +85,22 @@ ALGO_COLOR_DICT = {
     'vem': 'blue',
     'vem_02': 'darkblue'}
 CMAPS_DICT = {'vae': 'Reds', 'iwae': 'Oranges', 'vem': 'Blues'}
-VIS_DICT = {'s2': 'S2', 'h2': 'H2_poincare_disk'}
+MANIFOLD_VIS_DICT = {'s2': 'S2', 'h2': 'H2_poincare_disk'}
+
+
+VAE_TYPE_COLOR_DICT = {
+    'vae': 'C0',
+    'vae_proj': 'C1',
+    'pga': 'C3',
+    'gvae': 'C4',
+    'gvae_tgt': 'darkgreen'
+}
+
+N_MARKERS_DICT = {
+    '10k': 's',
+    '100k': 'o'
+}
+
 
 FRAC_VAL = 0.2
 N_SAMPLES = 10000
@@ -236,7 +251,7 @@ def plot_weights(ax, output, algo_name='vae',
 def load_losses(output, algo_name='vae', epoch_id=None,
                 crit_name='neg_elbo', mode='train'):
     ckpt = train_utils.load_checkpoint(
-        output=output, algo_name=algo_name, epoch_id=epoch_id)
+        output=output, epoch_id=epoch_id)
 
     losses = ckpt['%s_losses' % mode]
     losses = [loss[crit_name] for loss in losses]
@@ -581,7 +596,7 @@ def get_recon(output, img, algo_name='vae', epoch_id=None,
     decoder = train_utils.load_module(
         output, algo_name=algo_name, module_name='decoder', epoch_id=epoch_id)
     ckpt = train_utils.load_checkpoint(
-        output=output, algo_name=algo_name, epoch_id=epoch_id)
+        output=output, epoch_id=epoch_id)
 
     if 'spd_feature' in ckpt['nn_architecture']:
         spd_feature = ckpt['nn_architecture']['spd_feature']
@@ -674,7 +689,7 @@ def show_samples_from_prior(output, fig, outer, i,
     x_recon, _ = decoder(z_from_prior)
     x_recon = x_recon.cpu().detach().numpy()
     ckpt = train_utils.load_checkpoint(
-        output=output, algo_name=algo_name, epoch_id=epoch_id)
+        output=output, epoch_id=epoch_id)
     spd_feature = ckpt['nn_architecture']['spd_feature']
     if spd_feature is not None:
         x_recon = train_utils.matrix_from_spd_feature(
@@ -789,7 +804,7 @@ def plot_nn_graph(module_name='encoder', epoch_id=None):
         in_shape[0], in_shape[1], in_shape[2], in_shape[3],
         dtype=torch.float, requires_grad=False)
     out = module(x)
-    make_dot(out)
+    # make_dot(out)
 
 
 def generate_submanifolds(output, algo_name, epoch,
@@ -802,7 +817,7 @@ def generate_submanifolds(output, algo_name, epoch,
         output, algo_name, module_name='decoder', epoch_id=int(epoch))
 
     ckpt = train_utils.load_checkpoint(
-        output, algo_name=algo_name, epoch_id=epoch)
+        output, epoch_id=epoch)
     logvarx_true = ckpt['nn_architecture']['logvarx_true']
 
     if manifold_name == 'r2':
@@ -1001,7 +1016,7 @@ def plot_learned_submanifold(fig, nrows, ncols, row_id, col_id,
         ax.set_xlabel('')
         ax.set_ylabel('')
 
-    return true_x, true_x_novarx, x, x_novarx
+    return ax
 
 
 def plot_submanifolds(ax, epoch,
@@ -1031,7 +1046,7 @@ def plot_submanifolds(ax, epoch,
         ax.set_title('%s at epoch %d' % (ALGO_STRINGS[algo_name], epoch))
         ax.grid(True)
     else:
-        manifold_vis = VIS_DICT[manifold_name]
+        manifold_vis = MANIFOLD_VIS_DICT[manifold_name]
         visualization.plot(
             generated_x, ax=ax, space=manifold_vis,
             color=ALGO_COLOR_DICT[algo_name], alpha=0.3)

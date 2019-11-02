@@ -77,6 +77,7 @@ def init_modules_and_optimizers(nn_architecture, train_params):
             nonlinearity=nn_architecture['nonlinearity'],
             with_biasx=nn_architecture['with_biasx'],
             with_logvarx=nn_architecture['with_logvarx'],
+            logvarx_true=nn_architecture['logvarx_true'],
             with_biasz=nn_architecture['with_biasz'],
             with_logvarz=nn_architecture['with_logvarz'])
         vae.to(DEVICE)
@@ -218,11 +219,10 @@ def save_checkpoint(epoch, modules, optimizers, dir_path,
     torch.save(checkpoint, checkpoint_path)
 
 
-def load_checkpoint(output, algo_name='vae', epoch_id=None):
+def load_checkpoint(output, epoch_id=None):
     if epoch_id is None:
         ckpts = glob.glob(
-            '%s/train_%s/epoch_*_checkpoint.pth' % (
-                output, algo_name))
+            '%s/checkpoint_*/epoch_*_checkpoint.pth' % output)
         if len(ckpts) == 0:
             raise ValueError('No checkpoints found.')
         else:
@@ -231,19 +231,21 @@ def load_checkpoint(output, algo_name='vae', epoch_id=None):
                 ckpts_ids_and_paths, key=lambda item: item[0])
     else:
         # Load module corresponding to epoch_id
-        ckpt_path = '%s/train_%s/epoch_%d_checkpoint.pth' % (
-                output, algo_name, epoch_id)
+        ckpt_path = '%s/checkpoint_%d/epoch_%d_checkpoint.pth' % (
+                output, epoch_id, epoch_id)
         if not os.path.isfile(ckpt_path):
-            raise ValueError('No checkpoints found for epoch %d.' % epoch_id)
+            raise ValueError(
+                'No checkpoints found for epoch %d in output %s.' % (
+                    epoch_id, output))
 
     print('Found checkpoint. Getting: %s.' % ckpt_path)
     ckpt = torch.load(ckpt_path, map_location=DEVICE)
     return ckpt
 
 
-def load_module(output, algo_name='vae', module_name='encoder', epoch_id=None):
+def load_module(output, module_name='encoder', epoch_id=None):
     ckpt = load_checkpoint(
-        output=output, algo_name=algo_name, epoch_id=epoch_id)
+        output=output, epoch_id=epoch_id)
     nn_architecture = ckpt['nn_architecture']
 
     nn_type = nn_architecture['nn_type']
@@ -259,6 +261,7 @@ def load_module(output, algo_name='vae', module_name='encoder', epoch_id=None):
             nonlinearity=nn_architecture['nonlinearity'],
             with_biasx=nn_architecture['with_biasx'],
             with_logvarx=nn_architecture['with_logvarx'],
+            logvarx_true=nn_architecture['logvarx_true'],
             with_biasz=nn_architecture['with_biasz'],
             with_logvarz=nn_architecture['with_logvarz'])
         vae.to(DEVICE)
