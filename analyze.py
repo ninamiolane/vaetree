@@ -1,6 +1,8 @@
 """Tools to analyze the latent space."""
 
 import csv
+import functools
+import importlib
 import os
 
 import numpy as np

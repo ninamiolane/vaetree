@@ -39,10 +39,6 @@ DATASET_NAME = 'cryo_exp'
 CUDA = torch.cuda.is_available()
 DEVICE = torch.device('cuda' if CUDA else 'cpu')
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
-print('DEVICE:')
-print(DEVICE)
-print('enabled')
-print(torch.backends.cudnn.enabled)
 
 # Seed
 SEED = 12345
@@ -203,8 +199,6 @@ class Train(Trainable):
                 continue
 
             batch_data = batch_data.to(DEVICE)
-            print('DEVICE:')
-            print(DEVICE)
             n_batch_data = len(batch_data)
 
             for optimizer in self.optimizers.values():
@@ -442,7 +436,7 @@ class Train(Trainable):
             for batch_idx, batch_data in enumerate(self.val_loader):
                 if DEBUG and batch_idx < n_batches - 3:
                     continue
-                batch_data = batch_data[0].to(DEVICE)
+                batch_data = batch_data.to(DEVICE)
                 n_batch_data = batch_data.shape[0]
 
                 encoder = self.modules['encoder']
@@ -598,6 +592,7 @@ class Train(Trainable):
         train_utils.save_checkpoint(
             dir_path=checkpoint_dir,
             nn_architecture=self.nn_architecture,
+            train_params=self.train_params,
             epoch=epoch,
             modules=self.modules,
             optimizers=self.optimizers,
@@ -675,13 +670,13 @@ if __name__ == "__main__":
         scheduler=sched,
         **{
             'stop': {
-                'training_iteration': N_EPOCHS,
+                'training_iteration': 10,  # N_EPOCHS,
             },
             'resources_per_trial': {
                 'cpu': 4,
                 'gpu': 2  # int(CUDA)
             },
-            'num_samples': 1,
+            'num_samples': 2,
             'checkpoint_at_end': True,
             'config': {
                 'batch_size': TRAIN_PARAMS['batch_size'],
