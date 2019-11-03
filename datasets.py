@@ -111,7 +111,8 @@ def get_datasets(dataset_name, frac_val=FRAC_VAL, batch_size=8,
     return train_dataset, val_dataset
 
 
-def split_dataset(dataset, frac_val=FRAC_VAL):
+def split_dataset(dataset, frac_val=FRAC_VAL,
+                  labels_path=None, save=False, data_dir=None):
     length = len(dataset)
     train_length = int((1 - frac_val) * length)
     train_dataset = dataset[:train_length]

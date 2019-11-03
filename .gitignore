@@ -5,6 +5,6 @@
 plots/
 __pycache__/
 simgs/
-run.err
-run.out
+*run.err
+*run.out
 .ipynb_checkpoints/

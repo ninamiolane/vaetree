@@ -393,17 +393,6 @@ class Train(Trainable):
 
         self.train_losses_all_epochs.append(train_losses)
 
-        if epoch % CKPT_PERIOD == 0:
-            train_utils.save_checkpoint(
-                epoch=epoch,
-                modules=self.modules,
-                optimizers=self.optimizers,
-                dir_path=self.logdir,
-                train_losses_all_epochs=self.train_losses_all_epochs,
-                val_losses_all_epochs=self.val_losses_all_epochs,
-                nn_architecture=nn_architecture,
-                train_params=train_params)
-
     def _train(self):
         self._train_iteration()
         return self._test()
@@ -667,22 +656,25 @@ if __name__ == "__main__":
         mode='min')
     analysis = tune.run(
         Train,
+        local_dir='/gpfs/slac/cryo/fs1/u/nmiolane/results',
+        name='output_cryo_exp',
         scheduler=sched,
         **{
             'stop': {
-                'training_iteration': 10,  # N_EPOCHS,
+                'training_iteration': N_EPOCHS,
             },
             'resources_per_trial': {
                 'cpu': 4,
-                'gpu': 2  # int(CUDA)
+                'gpu': 1  # int(CUDA)
             },
-            'num_samples': 2,
+            'num_samples': 5,
+            'checkpoint_freq': CKPT_PERIOD,
             'checkpoint_at_end': True,
             'config': {
                 'batch_size': TRAIN_PARAMS['batch_size'],
-                'lr': TRAIN_PARAMS['lr'],
+                'lr': grid_search([0.0001, 0.0005, 0.001, 0.002, 0.003, 0.005, 0.01]),  # TRAIN_PARAMS['lr'],
                 'latent_dim': NN_ARCHITECTURE['latent_dim'],
-                'beta1': TRAIN_PARAMS['beta1'],
-                'beta2': TRAIN_PARAMS['beta2']  # tune.uniform(0.1, 0.9),
+                'beta1': tune.uniform(0.2, 0.8),
+                'beta2': tune.uniform(0.9, 0.999),
             }
         })

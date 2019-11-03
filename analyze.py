@@ -28,6 +28,21 @@ TOY_STD_TRUE = np.sqrt(np.exp(TOY_LOGVARX_TRUE))
 TOY_N = [10000, 100000]
 
 
+def reload_libs():
+    import analyze
+    importlib.reload(analyze)
+    import datasets
+    importlib.reload(datasets)
+    import vis
+    importlib.reload(vis)
+    import toylosses
+    importlib.reload(toylosses)
+    import nn
+    importlib.reload(nn)
+    import train_utils
+    importlib.reload(train_utils)
+
+
 def latent_projection(output, dataset_path, algo_name='vae', epoch_id=None):
     ckpt = train_utils.load_checkpoint(
         output=output, epoch_id=epoch_id)
@@ -128,6 +143,17 @@ def get_subset_fmri(output, metadata_csv, ses_ids=None, task_names=None,
         'task': tasks_subset, 'ses': ses_subset, 'time': times_subset}
 
     return projected_mus, labels_subset
+
+
+def load_losses(output, algo_name='vae', epoch_id=None,
+                crit_name='neg_elbo', mode='train'):
+    ckpt = train_utils.load_checkpoint(
+        output=output, epoch_id=epoch_id)
+
+    losses = ckpt['%s_losses' % mode]
+    losses = [loss[crit_name] for loss in losses]
+
+    return losses
 
 
 def submanifold_from_t_and_decoder_in_euclidean(
@@ -538,3 +564,35 @@ def squared_w2_between_submanifolds(manifold_name,
 
             w2_dists[i_n, i_logvarx_true] = d_emd2
     return w2_dists
+
+
+def get_cryo_labels(labels_path=None, from_id=1, to_id=None):
+    labels = {}
+    labels['focus'] = []
+    labels['theta'] = []
+    if labels_path is not None:
+        with open(labels_path, 'r') as csv_file:
+            reader = csv.reader(csv_file)
+            for i_row, row in enumerate(reader):
+                if i_row < from_id:
+                    continue
+                if to_id is not None and i_row > to_id:
+                    break
+                labels['focus'].append(float(row[0]))
+                labels['theta'].append(float(row[1]))
+
+    return labels
+
+
+def get_cryo(output, dataset_path,
+             labels_path=None, n_pca_components=2, epoch_id=None):
+
+    labels = get_cryo_labels(labels_path)
+    # Note: the test dataset needs to be unshuffled here
+    mus = latent_projection(
+        output=output, dataset_path=dataset_path, epoch_id=epoch_id)
+    print(mus.shape)
+    _, projected_mus = pca_projection(
+        mus=mus, n_pca_components=n_pca_components)
+
+    return projected_mus, labels
