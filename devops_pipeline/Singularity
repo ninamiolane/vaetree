@@ -23,7 +23,7 @@ From: ../../simgs/base.simg
                  luigi \
                  nibabel \
                  nilearn \
-                 numpy==1.15.0 \
+                 numpy==1.15.1 \
                  psutil \
                  ray \
                  scikit-image \
@@ -37,4 +37,4 @@ From: ../../simgs/base.simg
 
 
 %runscript
-    exec /usr/bin/python3 -u toypipeline.py
+    exec /usr/bin/python3 -u ray_pipeline.py

@@ -52,6 +52,7 @@ W_TRUE, B_TRUE, NONLINEARITY = (
 SYNTHETIC_PARAMS = {
     'logvarx_true': -5,
     'n': 10000,
+    'data_dim': 2,
     'manifold_name': 's2',
     'w_true': W_TRUE,
     'b_true': B_TRUE,
@@ -125,6 +126,19 @@ class Train(ray.tune.Trainable):
         train_params['batch_size'] = config.get('batch_size')
         train_params['algo_name'] = config.get('algo_name')
         train_params['vae_type'] = config.get('vae_type')
+
+        if train_params['vae_type'] == 'vae':
+            nn_architecture['data_dim'] = 3
+            # L2 norm in ambient space
+            train_params['reconstruction_type'] = 'l2'
+        elif train_params['vae_type'] == 'gvae_tgt':
+            nn_architecture['data_dim'] = 2
+            # L2 norm on tangent space at base_point
+            train_params['reconstruction_type'] = 'l2'
+        elif train_params['vae_type'] == 'gvae_tgt':
+            nn_architecture['data_dim'] = 2
+            # Riem norm in coords of logs on tangent space at base_point
+            train_params['reconstruction_type'] = 'riem'
 
         train_dataset, val_dataset = datasets.get_datasets(
             dataset_name=DATASET_NAME,
@@ -451,7 +465,7 @@ if __name__ == "__main__":
                 'logvarx_true': ray.tune.grid_search(
                     [-10, -5]),   # , -3.22, -2, -1.02, -0.45, 0]),
                 'manifold_name': ray.tune.grid_search(
-                    ['s2', 'h2']),
+                    ['s2', 'r2']),
                 'algo_name': ray.tune.grid_search(
                     ['vae', 'iwae']),  # , 'vem']),
                 'vae_type': ray.tune.grid_search(['gvae_tgt', 'vae']),

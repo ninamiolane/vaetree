@@ -574,68 +574,33 @@ class EncoderConvPlus(nn.Module):
         # encoder
         self.blocks = torch.nn.ModuleList()
 
-        self.enc1 = nn.Conv2d(
-            in_channels=self.img_shape[0],
-            out_channels=ENC_C,
-            kernel_size=ENC_KS,
-            stride=ENC_STR,
-            padding=ENC_PAD)
-        self.bn1 = nn.BatchNorm2d(self.enc1.out_channels)
+        next_in_channels = self.img_shape[0]
+        next_in_shape = self.img_shape
+        for i in range(self.n_blocks):
+            enc_c_factor = 2 ** i
+            if i == 5:
+                enc_c_factor = 2 ** 4
+            enc = nn.Conv2d(
+                in_channels=next_in_channels,
+                out_channels=ENC_C * enc_c_factor,
+                kernel_size=ENC_KS,
+                stride=ENC_STR,
+                padding=ENC_PAD)
+            bn = nn.BatchNorm2d(enc.out_channels)
 
-        self.enc1_out_shape = self.enc_conv_output_size(
-            in_shape=self.img_shape,
-            out_channels=self.enc1.out_channels)
+            self.blocks.append(enc)
+            self.blocks.append(bn)
 
-        self.enc2 = nn.Conv2d(
-            in_channels=self.enc1.out_channels,
-            out_channels=ENC_C * 2,
-            kernel_size=ENC_KS,
-            stride=ENC_STR,
-            padding=ENC_PAD)
-        self.bn2 = nn.BatchNorm2d(self.enc2.out_channels)
+            enc_out_shape = self.enc_conv_output_size(
+                in_shape=next_in_shape,
+                out_channels=enc.out_channels)
+            next_in_shape = enc_out_shape
+            next_in_channels = enc.out_channels
 
-        self.enc2_out_shape = self.enc_conv_output_size(
-            in_shape=self.enc1_out_shape,
-            out_channels=self.enc2.out_channels)
-
-        self.enc3 = nn.Conv2d(
-            in_channels=self.enc2.out_channels,
-            out_channels=ENC_C * 4,
-            kernel_size=ENC_KS,
-            stride=ENC_STR,
-            padding=ENC_PAD)
-        self.bn3 = nn.BatchNorm2d(self.enc3.out_channels)
-
-        self.enc3_out_shape = self.enc_conv_output_size(
-            in_shape=self.enc2_out_shape,
-            out_channels=self.enc3.out_channels)
-
-        self.enc4 = nn.Conv2d(
-            in_channels=self.enc3.out_channels,
-            out_channels=ENC_C * 8,
-            kernel_size=ENC_KS,
-            stride=ENC_STR,
-            padding=ENC_PAD)
-        self.bn4 = nn.BatchNorm2d(self.enc4.out_channels)
-
-        self.enc4_out_shape = self.enc_conv_output_size(
-            in_shape=self.enc3_out_shape,
-            out_channels=self.enc4.out_channels)
-
-        self.enc5 = nn.Conv2d(
-            in_channels=self.enc4.out_channels,
-            out_channels=ENC_C * 8,
-            kernel_size=ENC_KS,
-            stride=ENC_STR,
-            padding=ENC_PAD)
-        self.bn5 = nn.BatchNorm2d(self.enc5.out_channels)
-
-        self.enc5_out_shape = self.enc_conv_output_size(
-            in_shape=self.enc4_out_shape,
-            out_channels=self.enc5.out_channels)
+        self.last_out_shape = next_in_shape
 
         self.fcs_infeatures = functools.reduce(
-            (lambda x, y: x * y), self.enc5_out_shape)
+            (lambda x, y: x * y), self.last_out_shape)
         self.fc1 = nn.Linear(
             in_features=self.fcs_infeatures, out_features=latent_dim)
 
@@ -644,14 +609,15 @@ class EncoderConvPlus(nn.Module):
 
     def forward(self, x):
         """Forward pass of the encoder is encode."""
-        h1 = self.leakyrelu(self.bn1(self.enc1(x)))
-        h2 = self.leakyrelu(self.bn2(self.enc2(h1)))
-        h3 = self.leakyrelu(self.bn3(self.enc3(h2)))
-        h4 = self.leakyrelu(self.bn4(self.enc4(h3)))
-        h5 = self.leakyrelu(self.bn5(self.enc5(h4)))
-        h5 = h5.view(-1, self.fcs_infeatures)
-        mu = self.fc1(h5)
-        logvar = self.fc2(h5)
+        h = x
+        for i in range(self.n_blocks):
+            h = self.blocks[2*i](h)
+            h = self.blocks[2*i+1](h)
+            h = self.leakyrelu(h)
+
+        h = h.view(-1, self.fcs_infeatures)
+        mu = self.fc1(h)
+        logvar = self.fc2(h)
 
         return mu, logvar
 
@@ -753,10 +719,12 @@ class DecoderConvPlus(nn.Module):
         h6_r = self.conv5_r(self.pd5_r(h5))
         h6_s = self.conv5_s(self.pd5_s(h5))
 
-        recon = F.interpolate(h6_r, scale_factor=2)
+        #recon = F.interpolate(h6_r, scale_factor=2)
+        recon = h6_r
+        scale_b = h6_s
         if self.with_sigmoid:
             recon = self.sigmoid(recon)
-        scale_b = F.interpolate(h6_s, scale_factor=2)
+        #scale_b = F.interpolate(h6_s, scale_factor=2)
         return recon, scale_b
 
 
@@ -776,7 +744,7 @@ class VaeConvPlus(nn.Module):
             latent_dim=self.latent_dim,
             img_shape=self.img_shape,
             with_sigmoid=self.with_sigmoid,
-            in_shape=self.encoder.enc5_out_shape)
+            in_shape=self.encoder.last_out_shape)
 
     def forward(self, x):
         mu, logvar = self.encoder(x)
