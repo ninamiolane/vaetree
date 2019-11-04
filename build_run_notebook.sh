@@ -1,4 +1,10 @@
 #!/bin/bash
 
 nvidia-docker build -f Dockerfile.jupyter . -t vaetree/notebook
-nvidia-docker run -p 80:8888 -it -v/scratch/:/scratch -v/tmp/:/tmp -v/neuro/:/neuro -v/cryo/:/cryo -v/home/nina/:/home/nina vaetree/notebook
+nvidia-docker run -p 80:8888 -it \
+                             -v/neuro/:/data/neuro \
+                             -v/cryo/:/data/cryo \
+                             -v/scratch/users/nmiolane/:/results \
+                             -v/home/nina/code/:/code \
+                             -v/tmp/:/tmp \
+                             vaetree/notebook

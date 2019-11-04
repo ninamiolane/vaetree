@@ -28,7 +28,7 @@ import train_utils
 import warnings
 warnings.filterwarnings("ignore")
 
-SERVER_NAME = 'slacgpu'
+SERVER_NAME = 'gne'
 
 VISDOM = True if SERVER_NAME == 'gne' else False
 
@@ -81,7 +81,7 @@ REGULARIZATIONS = ('kullbackleibler')
 WEIGHTS_INIT = 'xavier'
 REGU_FACTOR = 0.003
 
-N_EPOCHS = 300
+N_EPOCHS = 3
 
 LR = 15e-6
 if 'adversarial' in RECONSTRUCTIONS:
