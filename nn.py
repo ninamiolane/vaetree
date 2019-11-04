@@ -208,7 +208,7 @@ def reparametrize(mu, logvar, n_samples=1):
     eps = torch.autograd.Variable(eps)
 
     z = eps * std_expanded + mu_expanded
-    z_flat = z.resize(n_samples * n_batch_data, latent_dim)
+    z_flat = z.reshape(n_samples * n_batch_data, latent_dim)
     # Case where latent_dim = 1: squeeze last dim
     z_flat = z_flat.squeeze(dim=1)
     return z_flat

@@ -10,6 +10,7 @@ import ray
 from ray import tune
 
 from ray.tune import Trainable, grid_search
+from ray.tune.logger import CSVLogger, JsonLogger
 from ray.tune.schedulers import AsyncHyperBandScheduler
 
 import torch
@@ -214,7 +215,7 @@ class Train(Trainable):
             batch_recon, scale_b = decoder(z)
 
             z_from_prior = nn.sample_from_prior(
-                LATENT_DIM, n_samples=n_batch_data).to(DEVICE)
+                nn_architecture['latent_dim'], n_samples=n_batch_data).to(DEVICE)
             batch_from_prior, scale_b_from_prior = decoder(
                 z_from_prior)
 
@@ -223,8 +224,8 @@ class Train(Trainable):
                 # Autoencoding beyond pixels using a learned similarity metric
                 # arXiv:1512.09300v2
                 discriminator = self.modules['discriminator_reconstruction']
-                real_labels = torch.full((n_batch_data,), 1, device=DEVICE)
-                fake_labels = torch.full((n_batch_data,), 0, device=DEVICE)
+                real_labels = torch.full((n_batch_data, 1), 1, device=DEVICE)
+                fake_labels = torch.full((n_batch_data, 1), 0, device=DEVICE)
 
                 # -- Update DiscriminatorGan
                 labels_data, h_data, _ = discriminator(
@@ -444,8 +445,8 @@ class Train(Trainable):
                 if 'adversarial' in train_params['reconstructions']:
                     discriminator = self.modules[
                         'discriminator_reconstruction']
-                    real_labels = torch.full((n_batch_data,), 1, device=DEVICE)
-                    fake_labels = torch.full((n_batch_data,), 0, device=DEVICE)
+                    real_labels = torch.full((n_batch_data, 1), 1, device=DEVICE)
+                    fake_labels = torch.full((n_batch_data, 1), 0, device=DEVICE)
 
                     # -- Compute DiscriminatorGan Loss
                     labels_data, h_data, _ = discriminator(batch_data)
@@ -595,11 +596,13 @@ class Train(Trainable):
         epoch_id = None  # HACK: restore last one
         train_dir = os.path.dirname(checkpoint_path)
         output = os.path.dirname(train_dir)
-        for module_name in self.modules.keys():
-            self.modules[module_name] = train_utils.load_module(
+        print(train_dir)
+        print(output)
+        for module_name, module in self.modules.items():
+            self.modules[module_name] = train_utils.load_module_state(
                 output=output,
-                algo_name='vae',
                 module_name=module_name,
+                module=module,
                 epoch_id=epoch_id)
 
     def print_train_logs(self,
@@ -648,7 +651,7 @@ def init():
 if __name__ == "__main__":
     init()
 
-    ray.init()  # redis_address=REDIS_ADDRESS, head=True)
+    ray.init()
 
     sched = AsyncHyperBandScheduler(
         time_attr='training_iteration',
@@ -659,6 +662,9 @@ if __name__ == "__main__":
         local_dir='/gpfs/slac/cryo/fs1/u/nmiolane/results',
         name='output_cryo_exp',
         scheduler=sched,
+        loggers=[JsonLogger, CSVLogger],
+        queue_trials=True,
+        reuse_actors=True,
         **{
             'stop': {
                 'training_iteration': N_EPOCHS,
@@ -672,8 +678,8 @@ if __name__ == "__main__":
             'checkpoint_at_end': True,
             'config': {
                 'batch_size': TRAIN_PARAMS['batch_size'],
-                'lr': grid_search([0.0001, 0.0005, 0.001, 0.002, 0.003, 0.005, 0.01]),  # TRAIN_PARAMS['lr'],
-                'latent_dim': NN_ARCHITECTURE['latent_dim'],
+                'lr': grid_search([0.0001, 0.0005]),  #, 0.001, 0.002, 0.003, 0.005, 0.01]),
+                'latent_dim': grid_search([3, 4]),  # , 5, 10, 20]),
                 'beta1': tune.uniform(0.2, 0.8),
                 'beta2': tune.uniform(0.9, 0.999),
             }

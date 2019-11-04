@@ -1152,7 +1152,7 @@ def plot_cryo(ax, output, img_path, labels_path,
 
         colors = COLORS[label_name]
         if n_pc == 2:
-            im = ax.scatter(mu[0], mu[1], c=np.array([colors[color_id]]), s=20)
+            im = ax.scatter(mu[0], mu[1], c=np.array([colors[color_id]]), s=5)
         else:
             im = ax.scatter(mu[0], mu[1], mu[2], c=np.array([colors[color_id]]))
     return im, ax
