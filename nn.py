@@ -208,7 +208,7 @@ def reparametrize(mu, logvar, n_samples=1):
     eps = torch.autograd.Variable(eps)
 
     z = eps * std_expanded + mu_expanded
-    z_flat = z.resize(n_samples * n_batch_data, latent_dim)
+    z_flat = z.reshape(n_samples * n_batch_data, latent_dim)
     # Case where latent_dim = 1: squeeze last dim
     z_flat = z_flat.squeeze(dim=1)
     return z_flat
@@ -564,6 +564,7 @@ class EncoderConvPlus(nn.Module):
 
         self.latent_dim = latent_dim
         self.img_shape = img_shape
+        self.n_blocks = 5
 
         # activation functions
         self.leakyrelu = nn.LeakyReLU(0.2)
@@ -571,6 +572,8 @@ class EncoderConvPlus(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
         # encoder
+        self.blocks = torch.nn.ModuleList()
+
         self.enc1 = nn.Conv2d(
             in_channels=self.img_shape[0],
             out_channels=ENC_C,
@@ -668,7 +671,6 @@ class DecoderConvPlus(nn.Module):
         nn_conv = NN_CONV[conv_dim]
         in_channels = in_shape[0]
 
-        up = nn.UpsamplingNearest2d(scale_factor=scale_factor)
         pd = nn.ReplicationPad2d(pad)
         conv = nn_conv(
             in_channels=in_channels,
@@ -682,19 +684,16 @@ class DecoderConvPlus(nn.Module):
                       scale_factor*self.in_shape[1] + 2*pad,
                       scale_factor*self.in_shape[2] + 2*pad),
             out_channels=conv.out_channels)
-        return up, pd, conv, bn, out_shape
+        return pd, conv, bn, out_shape
 
-    def end_block(self, block_id, in_shape, scale_factor=2, pad=1):
-        up = nn.UpsamplingNearest2d(scale_factor=scale_factor)
+    def end_block(self, block_id, in_shape, pad=1):
         pd = nn.ReplicationPad2d(pad)
         conv = nn.Conv2d(
             in_channels=in_shape[0],
             out_channels=self.img_shape[0],
             kernel_size=DEC_KS,
             stride=DEC_STR)
-        # TODO(nina): put last resampling at other position?
-        end_up = nn.UpsamplingNearest2d(size=self.img_shape[1:])
-        return up, pd, conv, end_up
+        return pd, conv
 
     def __init__(self, latent_dim, img_shape, with_sigmoid, in_shape=None):
         super(DecoderConvPlus, self).__init__()
@@ -704,6 +703,8 @@ class DecoderConvPlus(nn.Module):
         self.with_sigmoid = with_sigmoid
         # TODO(nina): Remove in_shape by propagating img dimensions
         self.in_shape = in_shape
+
+        self.n_blocks = 4
 
         self.fcs_infeatures = functools.reduce(
             (lambda x, y: x * y), self.in_shape)
@@ -717,40 +718,45 @@ class DecoderConvPlus(nn.Module):
         self.l0 = nn.Linear(
             in_features=latent_dim, out_features=self.fcs_infeatures)
 
-        self.up1, self.pd1, self.conv1, self.bn1, self.out_shape1 = self.block(
-            block_id=1, in_shape=self.in_shape, channels_fact=8)
+        self.blocks = torch.nn.ModuleList()
+        next_in_shape = self.in_shape
+        for i in range(self.n_blocks):
+            pd, conv, bn, out_shape = self.block(
+                block_id=i+1,
+                in_shape=next_in_shape,
+                channels_fact=2**(self.n_blocks-i-1))
+            self.blocks.append(pd)
+            self.blocks.append(conv)
+            self.blocks.append(bn)
 
-        self.up2, self.pd2, self.conv2, self.bn2, self.out_shape2 = self.block(
-            block_id=2, in_shape=self.out_shape1, channels_fact=4)
+            next_in_shape = out_shape
 
-        self.up3, self.pd3, self.conv3, self.bn3, self.out_shape3 = self.block(
-            block_id=3, in_shape=self.out_shape2, channels_fact=2)
+        block5_recon = self.end_block(block_id=5, in_shape=next_in_shape)
+        self.pd5_r, self.conv5_r = block5_recon
 
-        self.up4, self.pd4, self.conv4, self.bn4, self.out_shape4 = self.block(
-            block_id=4, in_shape=self.out_shape3, channels_fact=1)
-
-        block5_recon = self.end_block(block_id=5, in_shape=self.out_shape4)
-        self.up5_r, self.pd5_r, self.conv5_r, self.end_up_r = block5_recon
-
-        block5_scale = self.end_block(block_id=5, in_shape=self.out_shape4)
-        self.up5_s, self.pd5_s, self.conv5_s, self.end_up_s = block5_scale
+        block5_scale = self.end_block(block_id=5, in_shape=next_in_shape)
+        self.pd5_s, self.conv5_s = block5_scale
 
     def forward(self, z):
         """Forward pass of the decoder is to decode."""
         h1 = self.relu(self.l0(z))
-        h1 = h1.view((-1,) + self.in_shape)
-        h2 = self.leakyrelu(self.bn1(self.conv1(self.pd1(self.up1(h1)))))
-        h3 = self.leakyrelu(self.bn2(self.conv2(self.pd2(self.up2(h2)))))
-        h4 = self.leakyrelu(self.bn3(self.conv3(self.pd3(self.up3(h3)))))
-        h5 = self.leakyrelu(self.bn4(self.conv4(self.pd4(self.up4(h4)))))
+        h = h1.view((-1,) + self.in_shape)
 
-        h6_r = self.conv5_r(self.pd5_r(self.up5_r(h5)))
-        h6_s = self.conv5_s(self.pd5_s(self.up5_s(h5)))
+        for i in range(self.n_blocks):
+            h = F.interpolate(h, scale_factor=2)
+            h = self.blocks[3*i](h)
+            h = self.blocks[3*i+1](h)
+            h = self.blocks[3*i+2](h)
+            h = self.leakyrelu(h)
 
-        recon = self.end_up_r(h6_r)
+        h5 = F.interpolate(h, scale_factor=2)
+        h6_r = self.conv5_r(self.pd5_r(h5))
+        h6_s = self.conv5_s(self.pd5_s(h5))
+
+        recon = F.interpolate(h6_r, scale_factor=2)
         if self.with_sigmoid:
             recon = self.sigmoid(recon)
-        scale_b = self.end_up_s(h6_s)
+        scale_b = F.interpolate(h6_s, scale_factor=2)
         return recon, scale_b
 
 

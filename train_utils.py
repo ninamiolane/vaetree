@@ -243,6 +243,16 @@ def load_checkpoint(output, epoch_id=None):
     return ckpt
 
 
+def load_module_state(output, module, module_name, epoch_id=None):
+    ckpt = load_checkpoint(
+        output=output, epoch_id=epoch_id)
+
+    module_ckpt = ckpt[module_name]
+    module.load_state_dict(module_ckpt['module_state_dict'])
+
+    return module
+
+
 def load_module(output, module_name='encoder', epoch_id=None):
     ckpt = load_checkpoint(
         output=output, epoch_id=epoch_id)

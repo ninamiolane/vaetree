@@ -106,6 +106,24 @@ FRAC_VAL = 0.2
 N_SAMPLES = 10000
 N_TRAIN = int((1 - FRAC_VAL) * N_SAMPLES)
 
+FOCUS_MAX = 2.
+start = 0.5
+by = 0.5
+num = int((FOCUS_MAX - start) / by + 1)
+colormap = cm.get_cmap('viridis')
+COLORS_FOCUS = colormap(np.linspace(start=0, stop=1, num=num))
+
+start = -180
+by = 1
+num = 2 * 180 + 1
+colormap = cm.get_cmap('twilight')
+COLORS_THETA = colormap(np.linspace(start=0, stop=1, num=num))
+
+COLORS = {
+    'focus': COLORS_FOCUS,
+    'theta': COLORS_THETA
+}
+
 
 def plot_data(x_data, color='darkgreen', label=None, s=20, alpha=0.3, ax=None):
     print('inplotdata')
@@ -248,7 +266,7 @@ def plot_weights(ax, output, algo_name='vae',
     return ax
 
 
-def load_losses(output, algo_name='vae', epoch_id=None,
+def load_losses(output, epoch_id=None,
                 crit_name='neg_elbo', mode='train'):
     ckpt = train_utils.load_checkpoint(
         output=output, epoch_id=epoch_id)
@@ -259,12 +277,12 @@ def load_losses(output, algo_name='vae', epoch_id=None,
     return losses
 
 
-def plot_criterion(ax, output, algo_name='vae', crit_name='neg_elbo',
+def plot_criterion(ax, output, crit_name='neg_elbo',
                    mode='train', start_epoch_id=0, epoch_id=None,
                    color='blue', dashes=False):
 
     losses_total = load_losses(
-        output=output, algo_name=algo_name,
+        output=output,
         crit_name=crit_name, mode=mode, epoch_id=epoch_id)
 
     n_epochs = len(losses_total)
@@ -382,17 +400,16 @@ def plot_kl_posterior_bis(ax, output, algo_name='vae', mode='train',
     return ax
 
 
-def plot_convergence(ax, output, algo_name, crit_name,
+def plot_convergence(ax, output, crit_name,
                      start_epoch_id=0, epoch_id=None):
     ax = plot_criterion(
-        ax, output, algo_name=algo_name, crit_name=crit_name, mode='train',
+        ax, output, crit_name=crit_name, mode='train',
         start_epoch_id=start_epoch_id, epoch_id=epoch_id,
         color=COLOR_DICT[crit_name])
     ax = plot_criterion(
-        ax, output, algo_name=algo_name, crit_name=crit_name, mode='val',
+        ax, output, crit_name=crit_name, mode='val',
         start_epoch_id=start_epoch_id, epoch_id=epoch_id,
         color=COLOR_DICT[crit_name], dashes=True)
-    ax.set_title('Convergence of %s.' % ALGO_STRINGS[algo_name])
     return ax
 
 
@@ -592,9 +609,9 @@ def get_recon(output, img, algo_name='vae', epoch_id=None,
               cmap=None):
 
     encoder = train_utils.load_module(
-        output, algo_name=algo_name, module_name='encoder', epoch_id=epoch_id)
+        output, module_name='encoder', epoch_id=epoch_id)
     decoder = train_utils.load_module(
-        output, algo_name=algo_name, module_name='decoder', epoch_id=epoch_id)
+        output, module_name='decoder', epoch_id=epoch_id)
     ckpt = train_utils.load_checkpoint(
         output=output, epoch_id=epoch_id)
 
@@ -716,25 +733,25 @@ def plot_losses(output, epoch_id=None):
 
     ax = axes[0]
     ax = plot_convergence(
-        ax, output, algo_name='vae', crit_name='total',
+        ax, output, crit_name='total',
         epoch_id=epoch_id)
 
     ax = axes[1]
     ax = plot_convergence(
-        ax, output, algo_name='vae', crit_name='reconstruction',
+        ax, output, crit_name='reconstruction',
         epoch_id=epoch_id)
 
     ax = axes[2]
     ax = plot_convergence(
-        ax, output, algo_name='vae', crit_name='regularization',
+        ax, output, crit_name='regularization',
         epoch_id=epoch_id)
 
     ax = axes[3]
     ax = plot_convergence(
-        ax, output, algo_name='vae', crit_name='discriminator',
+        ax, output, crit_name='discriminator',
         epoch_id=epoch_id)
     ax = plot_convergence(
-        ax, output, algo_name='vae', crit_name='generator',
+        ax, output, crit_name='generator',
         epoch_id=epoch_id)
 
 
@@ -1112,3 +1129,46 @@ def get_unexplained_variance(output, dataset_path, variance_name='eucl'):
 
     unexplained_var = mean_ssd / variance
     return unexplained_var
+
+
+def plot_cryo(ax, output, img_path, labels_path,
+              n_pc=2, label_name='focus', epoch_id=None):
+    projected_mus, labels = analyze.get_cryo(
+        output, img_path, labels_path, n_pca_components=n_pc, epoch_id=epoch_id)
+    colored_labels = labels[label_name]
+    if label_name == 'focus':
+        colored_labels = [focus / 10000. for focus in colored_labels]
+
+    for mu, colored_label in zip(projected_mus, colored_labels):
+        #if label_name == 'theta' and focus != 2.5:
+        #    continue
+        if label_name == 'focus':##
+            color_id = int(2 * colored_label) - 1
+            if color_id > 3:
+                color_id = 3
+
+        elif label_name == 'theta':
+            color_id = int((colored_label + 180))
+
+        colors = COLORS[label_name]
+        if n_pc == 2:
+            im = ax.scatter(mu[0], mu[1], c=np.array([colors[color_id]]), s=5)
+        else:
+            im = ax.scatter(mu[0], mu[1], mu[2], c=np.array([colors[color_id]]))
+    return im, ax
+
+
+def hist_labels(labels):
+    fig = plt.figure(figsize=(24, 16))
+
+    ax = fig.add_subplot(411)
+    ax = ax.hist(labels['focus'], bins=20)
+
+    ax = fig.add_subplot(412)
+    ax = ax.hist(labels['theta'], bins=45)
+
+    ax = fig.add_subplot(413)
+    ax = ax.hist(labels['theta'], bins=90)
+
+    ax = fig.add_subplot(414)
+    ax = ax.hist(labels['theta'], bins=180)
