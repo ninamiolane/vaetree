@@ -753,10 +753,12 @@ class DecoderConvPlus(nn.Module):
         h6_r = self.conv5_r(self.pd5_r(h5))
         h6_s = self.conv5_s(self.pd5_s(h5))
 
-        recon = F.interpolate(h6_r, scale_factor=2)
+        #recon = F.interpolate(h6_r, scale_factor=2)
+        recon = h6_r
+        scale_b = h6_s
         if self.with_sigmoid:
             recon = self.sigmoid(recon)
-        scale_b = F.interpolate(h6_s, scale_factor=2)
+        #scale_b = F.interpolate(h6_s, scale_factor=2)
         return recon, scale_b
 
 

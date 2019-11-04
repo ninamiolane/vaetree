@@ -78,7 +78,7 @@ AXIS = {'fmri': 3, 'mri': 1, 'seg': 1}
 
 RECONSTRUCTIONS = ('bce_on_intensities', 'adversarial')
 REGULARIZATIONS = ('kullbackleibler')
-WEIGHTS_INIT = 'xavier'  #'custom'
+WEIGHTS_INIT = 'xavier'
 REGU_FACTOR = 0.003
 
 N_EPOCHS = 300
@@ -215,7 +215,8 @@ class Train(Trainable):
             batch_recon, scale_b = decoder(z)
 
             z_from_prior = nn.sample_from_prior(
-                nn_architecture['latent_dim'], n_samples=n_batch_data).to(DEVICE)
+                nn_architecture['latent_dim'],
+                n_samples=n_batch_data).to(DEVICE)
             batch_from_prior, scale_b_from_prior = decoder(
                 z_from_prior)
 
@@ -358,7 +359,8 @@ class Train(Trainable):
                         batch_recon[0],
                         win=recon_win,
                         opts=dict(
-                            title='Train Epoch {}: Reconstruction'.format(epoch),
+                            title='Train Epoch {}: Reconstruction'.format(
+                                epoch),
                             height=height, width=width))
                     from_prior_win = train_vis.image(
                         batch_from_prior[0],
@@ -445,8 +447,10 @@ class Train(Trainable):
                 if 'adversarial' in train_params['reconstructions']:
                     discriminator = self.modules[
                         'discriminator_reconstruction']
-                    real_labels = torch.full((n_batch_data, 1), 1, device=DEVICE)
-                    fake_labels = torch.full((n_batch_data, 1), 0, device=DEVICE)
+                    real_labels = torch.full(
+                        (n_batch_data, 1), 1, device=DEVICE)
+                    fake_labels = torch.full(
+                        (n_batch_data, 1), 0, device=DEVICE)
 
                     # -- Compute DiscriminatorGan Loss
                     labels_data, h_data, _ = discriminator(batch_data)
@@ -659,7 +663,7 @@ if __name__ == "__main__":
         mode='min')
     analysis = tune.run(
         Train,
-        local_dir='/gpfs/slac/cryo/fs1/u/nmiolane/results',
+        local_dir='/results',
         name='output_cryo_exp',
         scheduler=sched,
         loggers=[JsonLogger, CSVLogger],
@@ -678,8 +682,8 @@ if __name__ == "__main__":
             'checkpoint_at_end': True,
             'config': {
                 'batch_size': TRAIN_PARAMS['batch_size'],
-                'lr': grid_search([0.0001, 0.0005]),  #, 0.001, 0.002, 0.003, 0.005, 0.01]),
-                'latent_dim': grid_search([3, 4]),  # , 5, 10, 20]),
+                'lr': grid_search([0.0001]),
+                'latent_dim': grid_search([3, 4]),
                 'beta1': tune.uniform(0.2, 0.8),
                 'beta2': tune.uniform(0.9, 0.999),
             }
