@@ -752,7 +752,20 @@ def make_synthetic_dataset_and_decoder(synthetic_params,
     The dataset is different depending on the
     vae/other submanifold learning method
     that will be used.
+
+    - vae_type == 'gvae' or == 'gvae_tgt'
+        - data generated on tangent space at base_point
+        - data shot on the manifold
+        - riemannian noise on the manifold
+        - data log-projected on tangent space at base_point
+        - data in 2D on the tangent space
+    - vae_type == 'vae':
+        - data generated on tangent space at base_point
+        - data shot on the manifold
+        - riemannian noise on the manifold
+        - data in 3D in the ambient space
     """
+    # TODO(nina): Unfair comparison: vae learning is not like gen model
     synthetic_dir = synthetic_params['dir']
     synthetic_data_path = os.path.join(synthetic_dir, 'dataset.npy')
     decoder_true_path = os.path.join(synthetic_dir, 'decoder_true.pth')
