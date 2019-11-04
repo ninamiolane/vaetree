@@ -664,7 +664,7 @@ if __name__ == "__main__":
         scheduler=sched,
         loggers=[JsonLogger, CSVLogger],
         queue_trials=True,
-        reuse_actors=True,
+        # reuse_actors=True,
         **{
             'stop': {
                 'training_iteration': N_EPOCHS,
@@ -673,7 +673,7 @@ if __name__ == "__main__":
                 'cpu': 4,
                 'gpu': 1  # int(CUDA)
             },
-            'num_samples': 5,
+            'num_samples': 2,
             'checkpoint_freq': CKPT_PERIOD,
             'checkpoint_at_end': True,
             'config': {
