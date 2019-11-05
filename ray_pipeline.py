@@ -29,7 +29,7 @@ import train_utils
 import warnings
 warnings.filterwarnings("ignore")
 
-SERVER_NAME = 'gne'
+SERVER_NAME = 'slacgpu'
 
 VISDOM = True if SERVER_NAME == 'gne' else False
 
@@ -120,6 +120,7 @@ class Train(Trainable):
                 'lambda_regularization')
         train_params['lambda_adversarial'] = config.get(
                 'lambda_adversarial')
+        train_params['dataset_name'] = config.get('dataset_name')
 
         nn_architecture = NN_ARCHITECTURE
         nn_architecture['latent_dim'] = config.get('latent_dim')
@@ -681,7 +682,7 @@ if __name__ == "__main__":
         time_attr='training_iteration',
         metric='average_loss',
         brackets=4,
-        reduction_factor=4,
+        reduction_factor=8,
         mode='min')
     analysis = tune.run(
         Train,
@@ -699,14 +700,15 @@ if __name__ == "__main__":
                 'cpu': 4,
                 'gpu': 1
             },
-            'num_samples': 2,
+            'num_samples': 12,
             'checkpoint_freq': CKPT_PERIOD,
             'checkpoint_at_end': True,
             'config': {
+                'dataset_name': grid_search(['cryo_exp']),
                 'lr': tune.loguniform(
                     min_bound=0.0001, max_bound=10, base=10),
                 'latent_dim': grid_search([3]),
-                'n_blocks': grid_search([7]),
+                'n_blocks': grid_search([5, 6]),
                 'lambda_regularization': tune.loguniform(
                     min_bound=0.0001, max_bound=10, base=10),
                 'lambda_adversarial': tune.loguniform(

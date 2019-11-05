@@ -13,11 +13,12 @@ import pickle
 import numpy as np
 import torch
 import torch.utils
-import skimage
+
 
 import geomstats
 
 from geomstats.geometry.spd_matrices_space import SPDMatricesSpace
+from skimage import transform
 from torchvision import datasets, transforms
 from urllib import request
 
@@ -26,8 +27,9 @@ import toynn
 CUDA = torch.cuda.is_available()
 KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 
-# CRYO_DIR = '/gpfs/slac/cryo/fs1/u/nmiolane/cryo'
 CRYO_DIR = '/data/cryo'
+# CRYO_DIR = '/afs/slac.stanford.edu/u/bd/nmiolane/gpfs_home/data/cryo'
+CRYO_SLAC_DATASETS = '/gpfs/slac/cryo/fs1/g/ML/vaegan/datasets/'
 NEURO_DIR = '/data/neuro'
 
 NEURO_TRAIN_VAL_DIR = os.path.join(NEURO_DIR, 'train_val_datasets')
@@ -51,6 +53,7 @@ def get_datasets(dataset_name, frac_val=FRAC_VAL, batch_size=8,
                  nn_architecture=None,
                  train_params=None,
                  synthetic_params=None,
+                 class_2d=30,
                  kwargs=KWARGS):
 
     img_shape_no_channel = None
@@ -83,6 +86,10 @@ def get_datasets(dataset_name, frac_val=FRAC_VAL, batch_size=8,
         train_dataset, val_dataset = split_dataset(dataset)
     elif dataset_name == 'cryo_exp':
         dataset = get_dataset_cryo_exp(img_shape_no_channel, kwargs)
+        train_dataset, val_dataset = split_dataset(dataset)
+    elif dataset_name == 'cryo_exp_class_2d':
+        dataset = get_dataset_cryo_exp_class_2d(
+            img_shape_no_channel, class_2d, kwargs)
         train_dataset, val_dataset = split_dataset(dataset)
     elif dataset_name == 'cryo_exp_3d':
         dataset = get_dataset_cryo_exp_3d(img_shape_no_channel, kwargs)
@@ -544,7 +551,7 @@ def get_dataset_cryo_sphere(img_shape_no_channel=None, kwargs=KWARGS):
                 n_data = len(dataset)
                 if img_shape_no_channel is not None:
                     img_h, img_w = img_shape_no_channel
-                    dataset = skimage.transform.resize(
+                    dataset = transform.resize(
                         dataset, (n_data, img_h, img_w))
 
                 dataset = normalization_linear(dataset)
@@ -608,7 +615,7 @@ def get_dataset_cryo(
 
             if img_shape_no_channel is not None:
                 img_h, img_w = img_shape_no_channel
-                dataset = skimage.transform.resize(
+                dataset = transform.resize(
                     dataset, (n_data, img_h, img_w))
             dataset = normalization_linear(dataset)
 
@@ -669,7 +676,7 @@ def get_dataset_cryo_exp(img_shape_no_channel=None, kwargs=KWARGS):
 
         if img_shape_no_channel is not None:
             img_h, img_w = img_shape_no_channel
-            dataset = skimage.transform.resize(
+            dataset = transform.resize(
                 dataset, (n_data, img_h, img_w))
         dataset = normalization_linear(dataset)
         dataset = np.expand_dims(dataset, axis=1)
@@ -691,6 +698,61 @@ def get_dataset_cryo_exp(img_shape_no_channel=None, kwargs=KWARGS):
     dataset = torch.Tensor(dataset)
     return dataset
 
+
+def get_dataset_cryo_exp_class_2d(img_shape_no_channel=None, class_2d=30, kwargs=KWARGS):
+    CRYO_TRAIN_VAL_DIR = os.path.join(CRYO_DIR, 'train_val_datasets')
+    shape_str = get_shape_string(img_shape_no_channel)
+    cryo_img_path = os.path.join(
+        CRYO_TRAIN_VAL_DIR,
+        'cryo_exp_class_2d_%d_%s.npy' % (class_2d, shape_str))
+    cryo_labels_path = os.path.join(
+        CRYO_TRAIN_VAL_DIR,
+        'cryo_exp_class_2d_labels_%d_%s.csv' % (class_2d, shape_str))
+
+    if os.path.isfile(cryo_img_path) and os.path.isfile(cryo_labels_path):
+        dataset = np.load(cryo_img_path)
+
+    else:
+        h5_path = os.path.join(
+            CRYO_SLAC_DATASETS,
+            'exp/20181005-rib-TEM4/Sort',
+            'class2D_%d_sort.h5' % class_2d)
+
+        logging.info('Loading dict from %s...' % h5_path)
+        data_dict = load_dict_from_hdf5(h5_path)
+        dataset = data_dict['particles']
+        n_data = len(dataset)
+
+        focus = data_dict['_rlndefocusu']
+        # focus = np.repeat(focus, n_data)
+        theta = data_dict['_rlnanglepsi']
+        z_score = data_dict['_rlnparticleselectzscore']
+        logl_contribution = data_dict['_rlnloglikelicontribution']
+
+        if img_shape_no_channel is not None:
+            img_h, img_w = img_shape_no_channel
+            dataset = transform.resize(
+                dataset, (n_data, img_h, img_w))
+        dataset = normalization_linear(dataset)
+        dataset = np.expand_dims(dataset, axis=1)
+
+        assert focus.shape == (n_data,), focus.shape
+        assert theta.shape == (n_data,), theta.shape
+        assert z_score.shape == (n_data,), z_score.shape
+        assert logl_contribution.shape == (n_data,), logl_contribution.shape
+
+        np.save(cryo_img_path, dataset)
+
+        with open(cryo_labels_path, 'w') as csv_file:
+            writer = csv.writer(csv_file)
+            writer.writerow(['focus', 'theta', 'z_score', 'logl_contribution'])
+            for one_focus, one_theta, one_z_score, one_logl_contribution in zip(
+                    focus, theta, z_score, logl_contribution):
+                writer.writerow([
+                    one_focus, one_theta, one_z_score, one_logl_contribution])
+
+    dataset = torch.Tensor(dataset)
+    return dataset
 
 def get_dataset_cryo_exp_3d(img_shape_no_channel=None, kwargs=KWARGS):
     CRYO_TRAIN_VAL_DIR = os.path.join(CRYO_DIR, 'train_val_datasets')
