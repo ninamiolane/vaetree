@@ -53,9 +53,9 @@ torch.backends.cudnn.benchmark = True
 IMG_SHAPE = (1, 128, 128)
 DATA_DIM = functools.reduce((lambda x, y: x * y), IMG_SHAPE)
 LATENT_DIM = 3
-NN_TYPE = 'conv_plus'
+NN_TYPE = 'conv_orig'
 SPD = False
-assert NN_TYPE in ['toy', 'fc', 'conv', 'conv_plus']
+assert NN_TYPE in ['toy', 'fc', 'conv', 'conv_plus', 'conv_orig']
 assert NN_TYPE == 'fc' if SPD else True
 
 NN_ARCHITECTURE = {
@@ -81,7 +81,7 @@ REGULARIZATIONS = ('kullbackleibler')
 WEIGHTS_INIT = 'xavier'
 REGU_FACTOR = 0.003
 
-N_EPOCHS = 3
+N_EPOCHS = 65
 
 LR = 15e-6
 if 'adversarial' in RECONSTRUCTIONS:
@@ -117,6 +117,8 @@ class Train(Trainable):
 
         nn_architecture = NN_ARCHITECTURE
         nn_architecture['latent_dim'] = config.get('latent_dim')
+        nn_architecture['n_encoder_blocks'] = config.get('n_encoder_blocks')
+        nn_architecture['n_decoder_blocks'] = config.get('n_decoder_blocks')
 
         train_dataset, val_dataset = datasets.get_datasets(
                 dataset_name=train_params['dataset_name'],
@@ -660,6 +662,8 @@ if __name__ == "__main__":
     sched = AsyncHyperBandScheduler(
         time_attr='training_iteration',
         metric='average_loss',
+        brackets=4,
+        reduction_factor=4,
         mode='min')
     analysis = tune.run(
         Train,
@@ -668,7 +672,7 @@ if __name__ == "__main__":
         scheduler=sched,
         loggers=[JsonLogger, CSVLogger],
         queue_trials=True,
-        # reuse_actors=True,
+        reuse_actors=True,
         **{
             'stop': {
                 'training_iteration': N_EPOCHS,
@@ -683,8 +687,10 @@ if __name__ == "__main__":
             'config': {
                 'batch_size': TRAIN_PARAMS['batch_size'],
                 'lr': grid_search([0.0001]),
-                'latent_dim': grid_search([3, 4]),
-                'beta1': tune.uniform(0.2, 0.8),
-                'beta2': tune.uniform(0.9, 0.999),
+                'latent_dim': grid_search([3]),
+                'n_encoder_blocks': grid_search([4]),
+                'n_decoder_blocks': grid_search([5]),
+                'beta1': grid_search([0.5]),
+                'beta2': grid_search([0.999]),
             }
         })
