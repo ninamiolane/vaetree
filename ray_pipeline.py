@@ -28,7 +28,7 @@ import train_utils
 import warnings
 warnings.filterwarnings("ignore")
 
-SERVER_NAME = 'gne'
+SERVER_NAME = 'slacgpu'
 
 VISDOM = True if SERVER_NAME == 'gne' else False
 
@@ -650,7 +650,8 @@ class Train(Trainable):
 
 
 def init():
-    logging.basicConfig(level=logging.INFO)
+    # logging.basicConfig(level=logging.INFO)
+    logging.getLogger().setLevel(logging.INFO)
     logging.info('start')
 
 
@@ -678,10 +679,10 @@ if __name__ == "__main__":
                 'training_iteration': N_EPOCHS,
             },
             'resources_per_trial': {
-                'cpu': 4,
+                'cpu': 8,
                 'gpu': 1  # int(CUDA)
             },
-            'num_samples': 2,
+            'num_samples': 10,
             'checkpoint_freq': CKPT_PERIOD,
             'checkpoint_at_end': True,
             'config': {
