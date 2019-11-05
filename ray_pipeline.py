@@ -29,7 +29,7 @@ import train_utils
 import warnings
 warnings.filterwarnings("ignore")
 
-SERVER_NAME = 'slacgpu'
+SERVER_NAME = 'gne'
 
 VISDOM = True if SERVER_NAME == 'gne' else False
 
@@ -184,7 +184,7 @@ class Train(Trainable):
         train_params = self.train_params
 
         lambda_regu = train_params['lambda_regularization']
-        lambda_adv = train_params['lambda_adv']
+        lambda_adv = train_params['lambda_adversarial']
 
         for module in self.modules.values():
             module.train()
@@ -315,7 +315,8 @@ class Train(Trainable):
                 loss_reconstruction.backward(retain_graph=True)
 
             if 'kullbackleibler' in train_params['regularizations']:
-                loss_regularization = lambda_regu *losses.kullback_leibler(mu, logvar)
+                loss_regularization = lambda_regu * losses.kullback_leibler(
+                    mu, logvar)
                 # Fill gradients on encoder only
                 loss_regularization.backward()
 
@@ -595,7 +596,7 @@ class Train(Trainable):
             val_losses['discriminator'] = average_loss_discriminator
             val_losses['generator'] = average_loss_generator
         val_losses['total'] = average_loss
-        val_losses['total_time'] = end - time
+        val_losses['total_time'] = end - start
 
         self.val_losses_all_epochs.append(val_losses)
         return {'average_loss': average_loss}
@@ -704,8 +705,8 @@ if __name__ == "__main__":
             'config': {
                 'lr': tune.loguniform(
                     min_bound=0.0001, max_bound=10, base=10),
-                'latent_dim': grid_search([3, 4]),
-                'n_blocks': grid_search([5]),
+                'latent_dim': grid_search([3]),
+                'n_blocks': grid_search([7]),
                 'lambda_regularization': tune.loguniform(
                     min_bound=0.0001, max_bound=10, base=10),
                 'lambda_adversarial': tune.loguniform(

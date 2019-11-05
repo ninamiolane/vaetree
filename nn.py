@@ -972,12 +972,12 @@ class VaeConvOrig(nn.Module):
     def __init__(self, latent_dim, img_shape, with_sigmoid,
                  n_blocks=5):
         super(VaeConvOrig, self).__init__()
+        assert n_blocks < 7
 
         self.latent_dim = latent_dim
         self.img_shape = img_shape
         self.with_sigmoid = with_sigmoid
-        self.n_encoder_blocks = n_encoder_blocks
-        self.n_decoder_blocks = n_decoder_blocks
+        self.n_blocks = n_blocks
 
         self.encoder = EncoderConvOrig(
             latent_dim=self.latent_dim,
