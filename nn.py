@@ -563,7 +563,7 @@ class EncoderConvPlus(nn.Module):
                 padding=ENC_PAD,
                 dilation=ENC_DIL)
 
-    def __init__(self, latent_dim, img_shape, n_blocks=5):
+    def __init__(self, latent_dim, img_shape, n_blocks=4):
         super(EncoderConvPlus, self).__init__()
 
         self.conv_dim = len(img_shape[1:])
@@ -675,7 +675,7 @@ class DecoderConvPlus(nn.Module):
             in_channels=in_channels)
         return conv_transpose, in_shape
 
-    def __init__(self, latent_dim, img_shape, with_sigmoid, n_blocks=4):
+    def __init__(self, latent_dim, img_shape, with_sigmoid, n_blocks=3):
         super(DecoderConvPlus, self).__init__()
 
         self.conv_dim = len(img_shape[1:])
@@ -970,7 +970,7 @@ class DecoderConvOrig(nn.Module):
 
 class VaeConvOrig(nn.Module):
     def __init__(self, latent_dim, img_shape, with_sigmoid,
-                 n_encoder_blocks=5, n_decoder_blocks=4):
+                 n_blocks=5):
         super(VaeConvOrig, self).__init__()
 
         self.latent_dim = latent_dim
@@ -982,13 +982,13 @@ class VaeConvOrig(nn.Module):
         self.encoder = EncoderConvOrig(
             latent_dim=self.latent_dim,
             img_shape=self.img_shape,
-            n_blocks=self.n_encoder_blocks)
+            n_blocks=self.n_blocks)
 
         self.decoder = DecoderConvOrig(
             latent_dim=self.latent_dim,
             img_shape=self.img_shape,
             with_sigmoid=self.with_sigmoid,
-            n_blocks=self.n_decoder_blocks,
+            n_blocks=self.n_blocks-1,
             in_shape=self.encoder.last_out_shape)
 
     def forward(self, x):

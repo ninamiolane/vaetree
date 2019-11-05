@@ -123,14 +123,12 @@ def init_modules_and_optimizers(nn_architecture, train_params):
     else:
         img_shape = nn_architecture['img_shape']
         with_sigmoid = nn_architecture['with_sigmoid']
-        n_encoder_blocks = nn_architecture['n_encoder_blocks']
-        n_decoder_blocks = nn_architecture['n_decoder_blocks']
+        n_blocks = nn_architecture['n_blocks']
         vae = nn.VaeConvOrig(
             latent_dim=latent_dim,
             img_shape=img_shape,
             with_sigmoid=with_sigmoid,
-            n_encoder_blocks=n_encoder_blocks,
-            n_decoder_blocks=n_decoder_blocks).to(DEVICE)
+            n_blocks=n_blocks).to(DEVICE)
 
     modules['encoder'] = vae.encoder
     modules['decoder'] = vae.decoder
@@ -276,7 +274,7 @@ def load_module(output, module_name='encoder', epoch_id=None):
     nn_type = nn_architecture['nn_type']
     print('Loading %s from network of architecture: %s...' % (
         module_name, nn_type))
-    assert nn_type in ['toy', 'fc', 'conv', 'conv_plus']
+    assert nn_type in ['toy', 'fc', 'conv', 'conv_plus', 'conv_orig']
 
     if nn_type == 'toy':
         vae = toynn.VAE(
@@ -305,17 +303,26 @@ def load_module(output, module_name='encoder', epoch_id=None):
             latent_dim=nn_architecture['latent_dim'],
             img_shape=nn_architecture['img_shape'],
             with_sigmoid=nn_architecture['with_sigmoid'])
-    else:
+    elif nn_type == 'conv_plus':
         vae = nn.VaeConvPlus(
             latent_dim=nn_architecture['latent_dim'],
             img_shape=nn_architecture['img_shape'],
             with_sigmoid=nn_architecture['with_sigmoid'])
-    vae.to(DEVICE)
+    else:
+        img_shape = nn_architecture['img_shape']
+        latent_dim = nn_architecture['latent_dim']
+        with_sigmoid = nn_architecture['with_sigmoid']
+        n_blocks = nn_architecture['n_blocks']
+        vae = nn.VaeConvOrig(
+            latent_dim=latent_dim,
+            img_shape=img_shape,
+            with_sigmoid=with_sigmoid,
+            n_blocks=n_blocks)
 
     modules = {}
     modules['encoder'] = vae.encoder
     modules['decoder'] = vae.decoder
-    module = modules[module_name]
+    module = modules[module_name].to(DEVICE)
     module_ckpt = ckpt[module_name]
     module.load_state_dict(module_ckpt['module_state_dict'])
 

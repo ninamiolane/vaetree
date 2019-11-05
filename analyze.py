@@ -13,7 +13,7 @@ from scipy.stats import gaussian_kde
 from sklearn.decomposition import PCA
 
 from geomstats.geometry.discretized_curves_space import DiscretizedCurvesSpace
-
+from ray.tune.analysis import Analysis
 
 import geom_utils
 import train_utils
@@ -596,3 +596,34 @@ def get_cryo(output, dataset_path,
         mus=mus, n_pca_components=n_pca_components)
 
     return projected_mus, labels
+
+
+def get_best_logdir(main_dir, select_dict={}, metric='average_loss'):
+    print('Comparing logdirs with parameters:')
+    print(select_dict)
+    analysis = Analysis(main_dir)
+
+    all_dataframes = analysis.trial_dataframes
+
+    best_logdir = 'none'
+    min_metric_value = 1e10
+    for logdir, train_dict in analysis.get_all_configs().items():
+        keep_logdir = True
+        for param_name, param_value in select_dict.items():
+            if param_name not in train_dict.keys():
+                keep_logdir = False
+                break
+            if train_dict[param_name] != param_value:
+                keep_logdir = False
+                break
+
+        if not keep_logdir:
+            continue
+
+        metric_value = all_dataframes[logdir][metric].iloc[-1]
+        if metric_value < min_metric_value:
+            min_metric_value = metric_value
+            best_logdir = logdir
+
+    print("Best logdir with required parameters is", best_logdir)
+    return best_logdir

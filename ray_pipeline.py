@@ -5,6 +5,7 @@ import logging
 import numpy as np
 import os
 import random
+import time
 
 import ray
 from ray import tune
@@ -28,7 +29,7 @@ import train_utils
 import warnings
 warnings.filterwarnings("ignore")
 
-SERVER_NAME = 'gne'
+SERVER_NAME = 'slacgpu'
 
 VISDOM = True if SERVER_NAME == 'gne' else False
 
@@ -92,11 +93,13 @@ TRAIN_PARAMS = {
     'frac_val': FRAC_VAL,
     'lr': LR,
     'batch_size': BATCH_SIZE,
-    'beta1': 0.5,
+    'beta1': 0.9,
     'beta2': 0.999,
     'weights_init': WEIGHTS_INIT,
     'reconstructions': RECONSTRUCTIONS,
-    'regularizations': REGULARIZATIONS
+    'regularizations': REGULARIZATIONS,
+    'lambda_regularization': 1.,
+    'lambda_adversarial': 1.
     }
 
 if DEBUG:
@@ -113,12 +116,14 @@ class Train(Trainable):
     def _setup(self, config):
         train_params = TRAIN_PARAMS
         train_params['lr'] = config.get('lr')
-        train_params['batch_size'] = config.get('batch_size')
+        train_params['lambda_regularization'] = config.get(
+                'lambda_regularization')
+        train_params['lambda_adversarial'] = config.get(
+                'lambda_adversarial')
 
         nn_architecture = NN_ARCHITECTURE
         nn_architecture['latent_dim'] = config.get('latent_dim')
-        nn_architecture['n_encoder_blocks'] = config.get('n_encoder_blocks')
-        nn_architecture['n_decoder_blocks'] = config.get('n_decoder_blocks')
+        nn_architecture['n_blocks'] = config.get('n_blocks')
 
         train_dataset, val_dataset = datasets.get_datasets(
                 dataset_name=train_params['dataset_name'],
@@ -172,9 +177,14 @@ class Train(Trainable):
         eg. encoder, decoder, discriminator, depending on the architecture
         - optimizers: a dict with optimizers corresponding to each module.
         """
+        start = time.time()
+
         epoch = self._iteration
         nn_architecture = self.nn_architecture
         train_params = self.train_params
+
+        lambda_regu = train_params['lambda_regularization']
+        lambda_adv = train_params['lambda_adv']
 
         for module in self.modules.values():
             module.train()
@@ -246,7 +256,7 @@ class Train(Trainable):
                     fake_labels)
 
                 # TODO(nina): add loss_dis_recon
-                loss_discriminator = (
+                loss_discriminator = lambda_adv * (
                     loss_dis_data
                     + loss_dis_from_prior)
 
@@ -276,7 +286,7 @@ class Train(Trainable):
                     real_labels)
 
                 # TODO(nina): add loss_generator_from_prior
-                loss_generator = loss_generator_recon
+                loss_generator = lambda_adv * loss_generator_recon
 
                 # Fill gradients on generator only
                 loss_generator.backward()
@@ -305,7 +315,7 @@ class Train(Trainable):
                 loss_reconstruction.backward(retain_graph=True)
 
             if 'kullbackleibler' in train_params['regularizations']:
-                loss_regularization = losses.kullback_leibler(mu, logvar)
+                loss_regularization = lambda_regu *losses.kullback_leibler(mu, logvar)
                 # Fill gradients on encoder only
                 loss_regularization.backward()
 
@@ -388,6 +398,8 @@ class Train(Trainable):
         logging.info('====> Epoch: {} Average loss: {:.4f}'.format(
             epoch, average_loss))
 
+        end = time.time()
+
         train_losses = {}
         train_losses['reconstruction'] = average_loss_reconstruction
         train_losses['regularization'] = average_loss_regularization
@@ -395,6 +407,7 @@ class Train(Trainable):
             train_losses['discriminator'] = average_loss_discriminator
             train_losses['generator'] = average_loss_generator
         train_losses['total'] = average_loss
+        train_losses['otal_time'] = end - start
 
         self.train_losses_all_epochs.append(train_losses)
 
@@ -403,6 +416,9 @@ class Train(Trainable):
         return self._test()
 
     def _test(self):
+
+        start = time.time()
+
         epoch = self._iteration
         nn_architecture = self.nn_architecture
         train_params = self.train_params
@@ -570,6 +586,8 @@ class Train(Trainable):
         average_loss = total_loss / n_data
         print('====> Val set loss: {:.4f}'.format(average_loss))
 
+        end = time.time()
+
         val_losses = {}
         val_losses['reconstruction'] = average_loss_reconstruction
         val_losses['regularization'] = average_loss_regularization
@@ -577,6 +595,7 @@ class Train(Trainable):
             val_losses['discriminator'] = average_loss_discriminator
             val_losses['generator'] = average_loss_generator
         val_losses['total'] = average_loss
+        val_losses['total_time'] = end - time
 
         self.val_losses_all_epochs.append(val_losses)
         return {'average_loss': average_loss}
@@ -602,8 +621,6 @@ class Train(Trainable):
         epoch_id = None  # HACK: restore last one
         train_dir = os.path.dirname(checkpoint_path)
         output = os.path.dirname(train_dir)
-        print(train_dir)
-        print(output)
         for module_name, module in self.modules.items():
             self.modules[module_name] = train_utils.load_module_state(
                 output=output,
@@ -650,7 +667,7 @@ class Train(Trainable):
 
 
 def init():
-    logging.basicConfig(level=logging.INFO)
+    logging.getLogger().setLevel(logging.INFO)
     logging.info('start')
 
 
@@ -679,18 +696,19 @@ if __name__ == "__main__":
             },
             'resources_per_trial': {
                 'cpu': 4,
-                'gpu': 1  # int(CUDA)
+                'gpu': 1
             },
             'num_samples': 2,
             'checkpoint_freq': CKPT_PERIOD,
             'checkpoint_at_end': True,
             'config': {
-                'batch_size': TRAIN_PARAMS['batch_size'],
-                'lr': grid_search([0.0001]),
-                'latent_dim': grid_search([3]),
-                'n_encoder_blocks': grid_search([4]),
-                'n_decoder_blocks': grid_search([5]),
-                'beta1': grid_search([0.5]),
-                'beta2': grid_search([0.999]),
+                'lr': tune.loguniform(
+                    min_bound=0.0001, max_bound=10, base=10),
+                'latent_dim': grid_search([3, 4]),
+                'n_blocks': grid_search([5]),
+                'lambda_regularization': tune.loguniform(
+                    min_bound=0.0001, max_bound=10, base=10),
+                'lambda_adversarial': tune.loguniform(
+                    min_bound=0.0001, max_bound=10, base=10),
             }
         })

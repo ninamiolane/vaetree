@@ -6,7 +6,7 @@
 #BSUB -P cryoem
 #BSUB -J vaegan-pipeline
 #BSUB -q slacgpu
-#BSUB -n 2
+#BSUB -n 1
 #BSUB -R "span[hosts=1]"
 #BSUB -W 72:00
 #BSUB -e run.err
@@ -26,5 +26,6 @@ cd ~/gpfs_home/code/vaetree/
 # run the command
 singularity run --bind /gpfs,/scratch \
                 --bind /gpfs/slac/cryo/fs1/u/nmiolane/data:/data \
-                --bind ~/gpfs/slac/cryo/fs1/u/nmiolane:/home \
+                --bind /gpfs/slac/cryo/fs1/u/nmiolane:/home \
+                --bind /gpfs/slac/cryo/fs1/u/nmiolane/results:/results \
                 --nv ../simgs/pipeline.simg
