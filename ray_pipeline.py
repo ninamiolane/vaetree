@@ -53,9 +53,9 @@ torch.backends.cudnn.benchmark = True
 IMG_SHAPE = (1, 128, 128)
 DATA_DIM = functools.reduce((lambda x, y: x * y), IMG_SHAPE)
 LATENT_DIM = 3
-NN_TYPE = 'conv_plus'
+NN_TYPE = 'conv_orig'
 SPD = False
-assert NN_TYPE in ['toy', 'fc', 'conv', 'conv_plus']
+assert NN_TYPE in ['toy', 'fc', 'conv', 'conv_plus', 'conv_orig']
 assert NN_TYPE == 'fc' if SPD else True
 
 NN_ARCHITECTURE = {
@@ -689,7 +689,7 @@ if __name__ == "__main__":
                 'lr': grid_search([0.0001]),
                 'latent_dim': grid_search([3]),
                 'n_encoder_blocks': grid_search([4]),
-                'n_decoder_blocks': grid_search([4]),
+                'n_decoder_blocks': grid_search([5]),
                 'beta1': grid_search([0.5]),
                 'beta2': grid_search([0.999]),
             }
