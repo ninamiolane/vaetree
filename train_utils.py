@@ -112,10 +112,14 @@ def init_modules_and_optimizers(nn_architecture, train_params):
     else:
         img_shape = nn_architecture['img_shape']
         with_sigmoid = nn_architecture['with_sigmoid']
+        n_encoder_blocks = nn_architecture['n_encoder_blocks']
+        n_decoder_blocks = nn_architecture['n_decoder_blocks']
         vae = nn.VaeConvPlus(
             latent_dim=latent_dim,
             img_shape=img_shape,
-            with_sigmoid=with_sigmoid).to(DEVICE)
+            with_sigmoid=with_sigmoid,
+            n_encoder_blocks=n_encoder_blocks,
+            n_decoder_blocks=n_decoder_blocks).to(DEVICE)
 
     modules['encoder'] = vae.encoder
     modules['decoder'] = vae.decoder

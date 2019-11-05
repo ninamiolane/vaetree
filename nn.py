@@ -64,6 +64,10 @@ NN_CONV_TRANSPOSE = {
     2: nn.ConvTranspose2d,
     3: nn.ConvTranspose3d}
 
+NN_BATCH_NORM = {
+    2: nn.BatchNorm2d,
+    3: nn.BatchNorm3d}
+
 # TODO(nina): Add Sequential for sequential layers
 # TODO(nina): Use for loops to create layers in modules
 # for a more compact code, use log2(image_size) for #layers.
@@ -559,12 +563,12 @@ class EncoderConvPlus(nn.Module):
                 padding=ENC_PAD,
                 dilation=ENC_DIL)
 
-    def __init__(self, latent_dim, img_shape):
+    def __init__(self, latent_dim, img_shape, n_blocks=5):
         super(EncoderConvPlus, self).__init__()
 
         self.latent_dim = latent_dim
         self.img_shape = img_shape
-        self.n_blocks = 5
+        self.n_blocks = n_blocks
 
         # activation functions
         self.leakyrelu = nn.LeakyReLU(0.2)
@@ -578,8 +582,6 @@ class EncoderConvPlus(nn.Module):
         next_in_shape = self.img_shape
         for i in range(self.n_blocks):
             enc_c_factor = 2 ** i
-            if i == 5:
-                enc_c_factor = 2 ** 4
             enc = nn.Conv2d(
                 in_channels=next_in_channels,
                 out_channels=ENC_C * enc_c_factor,
@@ -623,128 +625,144 @@ class EncoderConvPlus(nn.Module):
 
 
 class DecoderConvPlus(nn.Module):
-    def conv_output_size(self, in_shape, out_channels):
-        return conv_output_size(
-                in_shape, out_channels,
+
+    def dec_conv_transpose_input_size(self, out_shape, in_channels):
+        return conv_transpose_input_size(
+                out_shape=out_shape,
+                in_channels=in_channels,
                 kernel_size=DEC_KS,
                 stride=DEC_STR,
                 padding=DEC_PAD,
                 dilation=DEC_DIL)
 
-    def block(self, block_id, in_shape,
-              channels_fact, scale_factor=2, pad=1):
-        conv_dim = len(in_shape[1:])
-        nn_conv = NN_CONV[conv_dim]
-        in_channels = in_shape[0]
+    def block(self, out_shape, dec_c_factor):
+        """
+        In backward order.
+        """
+        out_channels = out_shape[0]
+        in_channels = DEC_C * dec_c_factor
 
-        pd = nn.ReplicationPad2d(pad)
-        conv = nn_conv(
+        batch_norm = self.nn_batch_norm(
+            num_features=out_channels,
+            eps=1.e-3)
+
+        conv_transpose = self.nn_conv_transpose(
             in_channels=in_channels,
-            out_channels=DEC_C * channels_fact,
+            out_channels=out_channels,
             kernel_size=DEC_KS,
             stride=DEC_STR)
-        bn = nn.BatchNorm2d(conv.out_channels, 1.e-3)
 
-        out_shape = self.conv_output_size(
-            in_shape=(in_channels,
-                      scale_factor*self.in_shape[1] + 2*pad,
-                      scale_factor*self.in_shape[2] + 2*pad),
-            out_channels=conv.out_channels)
-        return pd, conv, bn, out_shape
+        in_shape = self.dec_conv_transpose_input_size(
+            out_shape=out_shape,
+            in_channels=in_channels)
+        return batch_norm, conv_transpose, in_shape
 
-    def end_block(self, block_id, in_shape, pad=1):
-        pd = nn.ReplicationPad2d(pad)
-        conv = nn.Conv2d(
-            in_channels=in_shape[0],
-            out_channels=self.img_shape[0],
+    def end_block(self, out_shape, dec_c_factor):
+        out_channels = out_shape[0]
+        in_channels = DEC_C * dec_c_factor
+
+        conv_transpose = self.nn_conv_transpose(
+            in_channels=in_channels,
+            out_channels=out_channels,
             kernel_size=DEC_KS,
             stride=DEC_STR)
-        return pd, conv
 
-    def __init__(self, latent_dim, img_shape, with_sigmoid, in_shape=None):
+        in_shape = self.dec_conv_transpose_input_size(
+            out_shape=out_shape,
+            in_channels=in_channels)
+        return conv_transpose, in_shape
+
+    def __init__(self, latent_dim, img_shape, with_sigmoid, n_blocks=4):
         super(DecoderConvPlus, self).__init__()
+
+        self.conv_dim = len(img_shape[1:])
+        self.nn_conv_transpose = NN_CONV_TRANSPOSE[self.conv_dim]
+        self.nn_batch_norm = NN_BATCH_NORM[self.conv_dim]
 
         self.latent_dim = latent_dim
         self.img_shape = img_shape
         self.with_sigmoid = with_sigmoid
-        # TODO(nina): Remove in_shape by propagating img dimensions
-        self.in_shape = in_shape
 
-        self.n_blocks = 4
-
-        self.fcs_infeatures = functools.reduce(
-            (lambda x, y: x * y), self.in_shape)
+        self.n_blocks = n_blocks
 
         # activation functions
         self.leakyrelu = nn.LeakyReLU(0.2)
         self.relu = nn.ReLU()
         self.sigmoid = nn.Sigmoid()
 
-        # decoder
+        # decoder - layers in reverse order
+        conv_transpose_recon, required_in_shape_r = self.end_block(
+            out_shape=img_shape, dec_c_factor=2 ** (self.n_blocks-1))
+        conv_transpose_scale, required_in_shape_s = self.end_block(
+            out_shape=img_shape, dec_c_factor=2 ** (self.n_blocks-1))
+
+        self.conv_transpose_recon = conv_transpose_recon
+        self.conv_transpose_scale = conv_transpose_scale
+
+        assert np.all(required_in_shape_r == required_in_shape_s)
+        required_in_shape = required_in_shape_r
+
+        blocks_reverse = torch.nn.ModuleList()
+        for i in reversed(range(self.n_blocks-1)):
+            dec_c_factor = 2 ** i
+
+            batch_norm, conv_tranpose, in_shape = self.block(
+                out_shape=required_in_shape,
+                dec_c_factor=dec_c_factor)
+
+            blocks_reverse.append(batch_norm)
+            blocks_reverse.append(conv_tranpose)
+
+            required_in_shape = in_shape
+
+        self.blocks = blocks_reverse[::-1]
+        self.in_shape = required_in_shape
+
+        self.fcs_infeatures = functools.reduce(
+            (lambda x, y: x * y), self.in_shape)
+
         self.l0 = nn.Linear(
             in_features=latent_dim, out_features=self.fcs_infeatures)
-
-        self.blocks = torch.nn.ModuleList()
-        next_in_shape = self.in_shape
-        for i in range(self.n_blocks):
-            pd, conv, bn, out_shape = self.block(
-                block_id=i+1,
-                in_shape=next_in_shape,
-                channels_fact=2**(self.n_blocks-i-1))
-            self.blocks.append(pd)
-            self.blocks.append(conv)
-            self.blocks.append(bn)
-
-            next_in_shape = out_shape
-
-        block5_recon = self.end_block(block_id=5, in_shape=next_in_shape)
-        self.pd5_r, self.conv5_r = block5_recon
-
-        block5_scale = self.end_block(block_id=5, in_shape=next_in_shape)
-        self.pd5_s, self.conv5_s = block5_scale
 
     def forward(self, z):
         """Forward pass of the decoder is to decode."""
         h1 = self.relu(self.l0(z))
         h = h1.view((-1,) + self.in_shape)
 
-        for i in range(self.n_blocks):
-            h = F.interpolate(h, scale_factor=2)
-            h = self.blocks[3*i](h)
-            h = self.blocks[3*i+1](h)
-            h = self.blocks[3*i+2](h)
+        for i in range(self.n_blocks-1):
+            h = self.blocks[2*i](h)
+            h = self.blocks[2*i+1](h)
             h = self.leakyrelu(h)
 
-        h5 = F.interpolate(h, scale_factor=2)
-        h6_r = self.conv5_r(self.pd5_r(h5))
-        h6_s = self.conv5_s(self.pd5_s(h5))
+        recon = self.conv_transpose_recon(h)
+        scale_b = self.conv_transpose_scale(h)
 
-        #recon = F.interpolate(h6_r, scale_factor=2)
-        recon = h6_r
-        scale_b = h6_s
         if self.with_sigmoid:
             recon = self.sigmoid(recon)
-        #scale_b = F.interpolate(h6_s, scale_factor=2)
         return recon, scale_b
 
 
 class VaeConvPlus(nn.Module):
-    def __init__(self, latent_dim, img_shape, with_sigmoid):
+    def __init__(self, latent_dim, img_shape, with_sigmoid,
+                 n_encoder_blocks=5, n_decoder_blocks=4):
         super(VaeConvPlus, self).__init__()
 
         self.latent_dim = latent_dim
         self.img_shape = img_shape
         self.with_sigmoid = with_sigmoid
+        self.n_encoder_blocks = n_encoder_blocks
+        self.n_decoder_blocks = n_decoder_blocks
 
         self.encoder = EncoderConvPlus(
             latent_dim=self.latent_dim,
-            img_shape=self.img_shape)
+            img_shape=self.img_shape,
+            n_blocks=self.n_encoder_blocks)
 
         self.decoder = DecoderConvPlus(
             latent_dim=self.latent_dim,
             img_shape=self.img_shape,
             with_sigmoid=self.with_sigmoid,
-            in_shape=self.encoder.last_out_shape)
+            n_blocks=self.n_decoder_blocks)
 
     def forward(self, x):
         mu, logvar = self.encoder(x)
