@@ -6,7 +6,7 @@
 #BSUB -P cryoem
 #BSUB -J vaegan-pipeline
 #BSUB -q slacgpu
-#BSUB -n 10
+#BSUB -n 1
 #BSUB -R "span[hosts=1]"
 #BSUB -W 72:00
 #BSUB -e run.err
