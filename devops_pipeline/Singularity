@@ -38,4 +38,4 @@ From: ../../simgs/base.simg
 
 
 %runscript
-    exec /usr/bin/python3 -u ray_pipeline.py
+    exec /usr/bin/python3 -u toypipeline.py

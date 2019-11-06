@@ -314,8 +314,7 @@ def true_submanifold_from_t_and_output(
 
     logvarx_true = None
     if with_noise:
-        ckpt = train_utils.load_checkpoint(
-            output, epoch_id=20)
+        ckpt = train_utils.load_checkpoint(output)
         logvarx_true = ckpt['nn_architecture']['logvarx_true']
 
     true_x_novarx, true_x = true_submanifold_from_t_and_decoder(
@@ -351,7 +350,8 @@ def learned_submanifold_from_t_and_output(
 def learned_submanifold_from_t_and_vae_type(
         t, vae_type, logvarx_true, n,
         algo_name='vae', manifold_name='r2',
-        epoch_id=None, with_noise=False):
+        epoch_id=None, with_noise=False,
+        main_dir='/ray_results/Train/'):
     """
     Generate:
     - true_x_no_var: true submanifold used in the experiment output
@@ -365,14 +365,16 @@ def learned_submanifold_from_t_and_vae_type(
     train_dict['n'] = n
 
     if vae_type in ['gvae', 'gvae_tgt']:
-        output = ray_output_dir(train_dict)
+        output = get_last_logdir(
+            select_dict=train_dict, main_dir=main_dir)
 
         x_novarx, x = learned_submanifold_from_t_and_output(
             t, output=output,
             algo_name=algo_name, manifold_name=manifold_name,
             epoch_id=epoch_id, with_noise=with_noise)
     elif vae_type == 'vae':
-        output = ray_output_dir(train_dict)
+        output = get_last_logdir(
+            select_dict=train_dict, main_dir=main_dir)
 
         x_novarx, x = learned_submanifold_from_t_and_output(
             t, output=output,
@@ -380,7 +382,8 @@ def learned_submanifold_from_t_and_vae_type(
             epoch_id=epoch_id, with_noise=with_noise)
     elif vae_type == 'vae_proj':
         train_dict['vae_type'] = 'vae'
-        output = ray_output_dir(train_dict)
+        output = get_last_logdir(
+            select_dict=train_dict, main_dir=main_dir)
 
         x_novarx, x = learned_submanifold_from_t_and_output(
             t, output=output,
@@ -396,7 +399,8 @@ def learned_submanifold_from_t_and_vae_type(
         x = x / norms
     elif vae_type == 'pga':
         train_dict['vae_type'] = 'gvae_tgt'
-        output = ray_output_dir(train_dict)
+        output = get_last_logdir(
+            select_dict=train_dict, main_dir=main_dir)
 
         synthetic_dataset_in_tgt = np.load(os.path.join(
             output, 'synthetic/dataset.npy'))
@@ -436,7 +440,7 @@ def parse_train_dir(train_dir):
     return train_dict
 
 
-def ray_output_dir(train_dict, main_dir='../../ray_results/Train'):
+def ray_output_dir(train_dict, main_dir='/ray_results/Train'):
     output_dirs = []
     for _, train_dirs, _ in os.walk(main_dir):
         for train_dir in train_dirs:
@@ -516,7 +520,8 @@ def squared_w2_between_submanifolds(manifold_name,
                                     all_n=TOY_N,
                                     extrinsic_or_intrinsic='extrinsic',
                                     n_bins=5,
-                                    sinkhorn=False):
+                                    sinkhorn=False,
+                                    main_dir='/ray_results/Train'):
     manifold, base_point = geom_utils.manifold_and_base_point(
         manifold_name)
 
@@ -536,7 +541,8 @@ def squared_w2_between_submanifolds(manifold_name,
             train_dict['logvarx_true'] = logvarx_true
             train_dict['vae_type'] = 'gvae_tgt'
 
-            output_decoder_true = ray_output_dir(train_dict)
+            output_decoder_true = get_last_logdir(
+                select_dict=train_dict, main_dir=main_dir)
 
             M2 = np.zeros((n_bins, n_bins))
             for i in range(n_bins):
@@ -596,6 +602,47 @@ def get_cryo(output, dataset_path,
         mus=mus, n_pca_components=n_pca_components)
 
     return projected_mus, labels
+
+
+def get_all_logdirs(main_dir, select_dict={}):
+    print('Getting logdirs with parameters:')
+    print(select_dict)
+
+    all_logdirs = []
+    analysis = Analysis(main_dir)
+
+    all_dataframes = analysis.trial_dataframes
+
+    for logdir, train_dict in analysis.get_all_configs().items():
+        keep_logdir = True
+        for param_name, param_value in select_dict.items():
+            if param_name not in train_dict.keys():
+                keep_logdir = False
+                break
+            if train_dict[param_name] != param_value:
+                keep_logdir = False
+                break
+
+        if not keep_logdir:
+            continue
+
+        if logdir not in all_dataframes.keys():
+            # This means this trial errored
+            continue
+
+        all_logdirs.append(logdir)
+
+    return all_logdirs
+
+
+def get_last_logdir(main_dir, select_dict={}):
+    print('Getting last logdir with parameters:')
+    print(select_dict)
+
+    all_logdirs = get_all_logdirs(main_dir, select_dict)
+    last_logdir = all_logdirs[-1]
+
+    return last_logdir
 
 
 def get_best_logdir(main_dir, select_dict={}, metric='average_loss'):

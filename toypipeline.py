@@ -448,6 +448,8 @@ if __name__ == "__main__":
         grace_period=N_EPOCHS-1)
     analysis = ray.tune.run(
         Train,
+        local_dir='/results',
+        name='toyoutput_cvpr',
         scheduler=sched,
         **{
             'stop': {
@@ -458,17 +460,17 @@ if __name__ == "__main__":
                 'gpu': int(CUDA)
             },
             'num_samples': 1,
-            # 'checkpoint_freq': CKPT_PERIOD,
+            'checkpoint_freq': 1,
             'checkpoint_at_end': True,
             'config': {
-                'n': ray.tune.grid_search([1000, 5000]),  # , 10000, 100000]),
+                'n': ray.tune.grid_search([5000]),  # , 10000, 100000]),
                 'logvarx_true': ray.tune.grid_search(
-                    [-10, -5]),   # , -3.22, -2, -1.02, -0.45, 0]),
+                    [-10]),   # , -3.22, -2, -1.02, -0.45, 0]),
                 'manifold_name': ray.tune.grid_search(
-                    ['s2', 'r2']),
+                    ['r2']),
                 'algo_name': ray.tune.grid_search(
-                    ['vae', 'iwae']),  # , 'vem']),
-                'vae_type': ray.tune.grid_search(['gvae_tgt', 'vae']),
+                    ['vae']),  # , 'vem']),
+                'vae_type': ray.tune.grid_search(['gvae_tgt']),
                 'batch_size': TRAIN_PARAMS['batch_size'],
                 'lr': TRAIN_PARAMS['lr'],
                 'latent_dim': NN_ARCHITECTURE['latent_dim']
