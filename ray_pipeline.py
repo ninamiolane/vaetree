@@ -692,28 +692,29 @@ if __name__ == "__main__":
         'lr': hp.loguniform(
             'lr',
             low=np.log(0.0001),
-            high=np.log(10)),
+            high=np.log(0.01)),
         'latent_dim': hp.choice('latent_dim', [3, 4]),
         'n_blocks': hp.choice('n_blocks', [5, 6]),
         'lambda_regu': hp.loguniform(
             'lambda_regu',
-            low=np.log(0.001), high=np.log(100)),
+            low=np.log(0.001), high=np.log(4.)),
         'lambda_adv': hp.loguniform(
             'lambda_adv',
-            low=np.log(0.001), high=np.log(100)),
+            low=np.log(0.001), high=np.log(4.)),
     }
 
     hyperband_sched = AsyncHyperBandScheduler(
         time_attr='training_iteration',
         metric='average_loss',
-        brackets=1,
+        brackets=4,
         reduction_factor=4,
         mode='min')
 
     hyperopt_search = HyperOptSearch(
         search_space,
         metric='average_loss',
-        mode='min')
+        mode='min',
+        max_concurrent=80)
 
     analysis = tune.run(
         Train,
@@ -732,8 +733,8 @@ if __name__ == "__main__":
                 'cpu': 4,
                 'gpu': 1
             },
-            'max_failures': 3,
-            'num_samples': 4,
+            'max_failures': 1,
+            'num_samples': 100,
             'checkpoint_freq': CKPT_PERIOD,
             'checkpoint_at_end': True,
             'config': search_space})
