@@ -29,7 +29,10 @@ KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 
 CRYO_DIR = '/data/cryo'
 # CRYO_DIR = '/afs/slac.stanford.edu/u/bd/nmiolane/gpfs_home/data/cryo'
-CRYO_SLAC_DATASETS = '/gpfs/slac/cryo/fs1/g/ML/vaegan/datasets/'
+CRYO_H5 = CRYO_DIR
+# CRYO_H5 = os.path.join(
+#     '/gpfs/slac/cryo/fs1/g/ML/vaegan/datasets',
+#     'exp/20181005-rib-TEM4/Sort')
 NEURO_DIR = '/data/neuro'
 
 NEURO_TRAIN_VAL_DIR = os.path.join(NEURO_DIR, 'train_val_datasets')
@@ -692,13 +695,13 @@ def get_dataset_cryo_exp(img_shape_no_channel=None, kwargs=KWARGS):
             writer.writerow(['focus', 'theta'])
             for one_focus, one_theta in zip(focus, theta):
                 writer.writerow([one_focus, one_theta])
-        #os.system('rm /cryo/one2dclass.h5')
 
     dataset = torch.Tensor(dataset)
     return dataset
 
 
-def get_dataset_cryo_exp_class_2d(img_shape_no_channel=None, class_2d=30, kwargs=KWARGS):
+def get_dataset_cryo_exp_class_2d(img_shape_no_channel=None,
+                                  class_2d=30, kwargs=KWARGS):
     CRYO_TRAIN_VAL_DIR = os.path.join(CRYO_DIR, 'train_val_datasets')
     shape_str = get_shape_string(img_shape_no_channel)
     cryo_img_path = os.path.join(
@@ -713,8 +716,7 @@ def get_dataset_cryo_exp_class_2d(img_shape_no_channel=None, class_2d=30, kwargs
 
     else:
         h5_path = os.path.join(
-            CRYO_SLAC_DATASETS,
-            'exp/20181005-rib-TEM4/Sort',
+            CRYO_H5,
             'class2D_%d_sort.h5' % class_2d)
 
         logging.info('Loading dict from %s...' % h5_path)
@@ -744,13 +746,14 @@ def get_dataset_cryo_exp_class_2d(img_shape_no_channel=None, class_2d=30, kwargs
         with open(cryo_labels_path, 'w') as csv_file:
             writer = csv.writer(csv_file)
             writer.writerow(['focus', 'theta', 'z_score', 'logl_contribution'])
-            for one_focus, one_theta, one_z_score, one_logl_contribution in zip(
+            for one_focus, one_theta, one_z_score, one_logl_contrib in zip(
                     focus, theta, z_score, logl_contribution):
                 writer.writerow([
-                    one_focus, one_theta, one_z_score, one_logl_contribution])
+                    one_focus, one_theta, one_z_score, one_logl_contrib])
 
     dataset = torch.Tensor(dataset)
     return dataset
+
 
 def get_dataset_cryo_exp_3d(img_shape_no_channel=None, kwargs=KWARGS):
     CRYO_TRAIN_VAL_DIR = os.path.join(CRYO_DIR, 'train_val_datasets')

@@ -8,9 +8,10 @@ import random
 import time
 
 import ray
-from ray import tune
 
-from ray.tune import Trainable, grid_search
+from hyperopt import hp
+from ray import tune
+from ray.tune import Trainable
 from ray.tune.logger import CSVLogger, JsonLogger
 from ray.tune.schedulers import AsyncHyperBandScheduler
 from ray.tune.suggest.hyperopt import HyperOptSearch
@@ -30,7 +31,7 @@ import train_utils
 import warnings
 warnings.filterwarnings("ignore")
 
-SERVER_NAME = 'slacgpu'
+SERVER_NAME = 'gne'
 
 VISDOM = True if SERVER_NAME == 'gne' else False
 
@@ -99,8 +100,8 @@ TRAIN_PARAMS = {
     'weights_init': WEIGHTS_INIT,
     'reconstructions': RECONSTRUCTIONS,
     'regularizations': REGULARIZATIONS,
-    'lambda_regularization': 1.,
-    'lambda_adversarial': 1.
+    'lambda_regu': 1.,
+    'lambda_adv': 1.
     }
 
 if DEBUG:
@@ -117,11 +118,12 @@ class Train(Trainable):
     def _setup(self, config):
         train_params = TRAIN_PARAMS
         train_params['lr'] = config.get('lr')
-        train_params['lambda_regularization'] = config.get(
-                'lambda_regularization')
-        train_params['lambda_adversarial'] = config.get(
-                'lambda_adversarial')
+        train_params['lambda_regu'] = config.get(
+                'lambda_regu')
+        train_params['lambda_adv'] = config.get(
+                'lambda_adv')
         train_params['dataset_name'] = config.get('dataset_name')
+        train_params['class_2d'] = config.get('class_2d')
 
         nn_architecture = NN_ARCHITECTURE
         nn_architecture['latent_dim'] = config.get('latent_dim')
@@ -131,7 +133,9 @@ class Train(Trainable):
                 dataset_name=train_params['dataset_name'],
                 frac_val=train_params['frac_val'],
                 batch_size=train_params['batch_size'],
-                img_shape=nn_architecture['img_shape'])
+                img_shape=nn_architecture['img_shape'],
+                class_2d=train_params['class_2d']
+                )
 
         logging.info(
             'Train: %s' % train_utils.get_logging_shape(
@@ -185,8 +189,8 @@ class Train(Trainable):
         nn_architecture = self.nn_architecture
         train_params = self.train_params
 
-        lambda_regu = train_params['lambda_regularization']
-        lambda_adv = train_params['lambda_adversarial']
+        lambda_regu = train_params['lambda_regu']
+        lambda_adv = train_params['lambda_adv']
 
         for module in self.modules.values():
             module.train()
@@ -683,28 +687,34 @@ if __name__ == "__main__":
     #     redis_password=os.environ['redis_password'])
 
     search_space = {
-        'dataset_name': grid_search(['cryo_exp_class_2d']),
-        'lr': tune.loguniform(
-            min_bound=0.0001, max_bound=10, base=10),
-        'latent_dim': grid_search([3, 4]),
-        'n_blocks': grid_search([5, 6]),
-        'lambda_regularization': tune.loguniform(
-            min_bound=0.0001, max_bound=10, base=10),
-        'lambda_adversarial': tune.loguniform(
-            min_bound=0.0001, max_bound=10, base=10),
+        'dataset_name': 'cryo_exp_class_2d',
+        'class_2d': 39,
+        'lr': hp.loguniform(
+            'lr',
+            low=np.log(0.0001),
+            high=np.log(0.01)),
+        'latent_dim': hp.choice('latent_dim', [3, 4]),
+        'n_blocks': hp.choice('n_blocks', [5, 6]),
+        'lambda_regu': hp.loguniform(
+            'lambda_regu',
+            low=np.log(0.001), high=np.log(4.)),
+        'lambda_adv': hp.loguniform(
+            'lambda_adv',
+            low=np.log(0.001), high=np.log(4.)),
     }
-
 
     hyperband_sched = AsyncHyperBandScheduler(
         time_attr='training_iteration',
         metric='average_loss',
         brackets=4,
-        reduction_factor=8,
+        reduction_factor=4,
         mode='min')
 
     hyperopt_search = HyperOptSearch(
-        search_space, reward_attr="mean_accuracy")
-
+        search_space,
+        metric='average_loss',
+        mode='min',
+        max_concurrent=80)
 
     analysis = tune.run(
         Train,
@@ -723,8 +733,8 @@ if __name__ == "__main__":
                 'cpu': 4,
                 'gpu': 1
             },
-            'max_failures': -1,
-            'num_samples': 20,
+            'max_failures': 1,
+            'num_samples': 100,
             'checkpoint_freq': CKPT_PERIOD,
             'checkpoint_at_end': True,
             'config': search_space})

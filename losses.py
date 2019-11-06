@@ -23,6 +23,10 @@ def mse_on_intensities(x, recon_x, scale_b):
     MSE summed over the voxels intensities.
     scale_b: plays role of loss' weighting factor.
     """
+    print(min(recon_x))
+    print(max(recon_x))
+    print(min(x))
+    print(max(x))
     mse = F.mse_loss(recon_x, x, reduction='sum') / scale_b
     return mse
 
