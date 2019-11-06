@@ -18,6 +18,7 @@ From: ../../simgs/base.simg
     apt-get update
     pip3 install --upgrade setuptools
     pip3 install git+git://github.com/geomstats/geomstats.git@nina-s2-pytorch
+    pip3 install --upgrade git+git://github.com/hyperopt/hyperopt.git
     pip3 install jinja2 \
                  joblib \
                  luigi \
