@@ -13,6 +13,7 @@ from ray import tune
 from ray.tune import Trainable, grid_search
 from ray.tune.logger import CSVLogger, JsonLogger
 from ray.tune.schedulers import AsyncHyperBandScheduler
+from ray.tune.suggest.hyperopt import HyperOptSearch
 
 import torch
 import torch.autograd
@@ -35,7 +36,7 @@ VISDOM = True if SERVER_NAME == 'gne' else False
 
 DEBUG = False
 
-DATASET_NAME = 'cryo_exp'
+DATASET_NAME = 'cryo_exp_class_2d'
 
 # Hardware
 CUDA = torch.cuda.is_available()
@@ -82,7 +83,7 @@ REGULARIZATIONS = ('kullbackleibler')
 WEIGHTS_INIT = 'xavier'
 REGU_FACTOR = 0.003
 
-N_EPOCHS = 65
+N_EPOCHS = 257
 
 LR = 15e-6
 if 'adversarial' in RECONSTRUCTIONS:
@@ -677,18 +678,40 @@ if __name__ == "__main__":
     init()
 
     ray.init()
+    # ray.init(
+    #     address=os.environ['ip_head'],
+    #     redis_password=os.environ['redis_password'])
 
-    sched = AsyncHyperBandScheduler(
+    search_space = {
+        'dataset_name': grid_search(['cryo_exp_class_2d']),
+        'lr': tune.loguniform(
+            min_bound=0.0001, max_bound=10, base=10),
+        'latent_dim': grid_search([3, 4]),
+        'n_blocks': grid_search([5, 6]),
+        'lambda_regularization': tune.loguniform(
+            min_bound=0.0001, max_bound=10, base=10),
+        'lambda_adversarial': tune.loguniform(
+            min_bound=0.0001, max_bound=10, base=10),
+    }
+
+
+    hyperband_sched = AsyncHyperBandScheduler(
         time_attr='training_iteration',
         metric='average_loss',
         brackets=4,
         reduction_factor=8,
         mode='min')
+
+    hyperopt_search = HyperOptSearch(
+        search_space, reward_attr="mean_accuracy")
+
+
     analysis = tune.run(
         Train,
         local_dir='/results',
-        name='output_cryo_exp',
-        scheduler=sched,
+        name='output_cryo_exp_class_2d',
+        scheduler=hyperband_sched,
+        search_alg=hyperopt_search,
         loggers=[JsonLogger, CSVLogger],
         queue_trials=True,
         reuse_actors=True,
@@ -700,18 +723,8 @@ if __name__ == "__main__":
                 'cpu': 4,
                 'gpu': 1
             },
-            'num_samples': 12,
+            'max_failures': -1,
+            'num_samples': 20,
             'checkpoint_freq': CKPT_PERIOD,
             'checkpoint_at_end': True,
-            'config': {
-                'dataset_name': grid_search(['cryo_exp']),
-                'lr': tune.loguniform(
-                    min_bound=0.0001, max_bound=10, base=10),
-                'latent_dim': grid_search([3]),
-                'n_blocks': grid_search([5, 6]),
-                'lambda_regularization': tune.loguniform(
-                    min_bound=0.0001, max_bound=10, base=10),
-                'lambda_adversarial': tune.loguniform(
-                    min_bound=0.0001, max_bound=10, base=10),
-            }
-        })
+            'config': search_space})

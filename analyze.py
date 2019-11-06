@@ -620,6 +620,10 @@ def get_best_logdir(main_dir, select_dict={}, metric='average_loss'):
         if not keep_logdir:
             continue
 
+        if logdir not in all_dataframes.keys():
+            # This means this trial errored
+            continue
+
         metric_value = all_dataframes[logdir][metric].iloc[-1]
         if metric_value < min_metric_value:
             min_metric_value = metric_value

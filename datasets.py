@@ -671,7 +671,6 @@ def get_dataset_cryo_exp(img_shape_no_channel=None, kwargs=KWARGS):
         n_data = len(dataset)
 
         focus = data_dict['_rlndefocusu']
-        # focus = np.repeat(focus, n_data)
         theta = data_dict['_rlnanglepsi']
 
         if img_shape_no_channel is not None:
@@ -707,7 +706,7 @@ def get_dataset_cryo_exp_class_2d(img_shape_no_channel=None, class_2d=30, kwargs
         'cryo_exp_class_2d_%d_%s.npy' % (class_2d, shape_str))
     cryo_labels_path = os.path.join(
         CRYO_TRAIN_VAL_DIR,
-        'cryo_exp_class_2d_labels_%d_%s.csv' % (class_2d, shape_str))
+        'cryo_exp_class_2d_%d_%s_labels.csv' % (class_2d, shape_str))
 
     if os.path.isfile(cryo_img_path) and os.path.isfile(cryo_labels_path):
         dataset = np.load(cryo_img_path)
@@ -724,7 +723,6 @@ def get_dataset_cryo_exp_class_2d(img_shape_no_channel=None, class_2d=30, kwargs
         n_data = len(dataset)
 
         focus = data_dict['_rlndefocusu']
-        # focus = np.repeat(focus, n_data)
         theta = data_dict['_rlnanglepsi']
         z_score = data_dict['_rlnparticleselectzscore']
         logl_contribution = data_dict['_rlnloglikelicontribution']
