@@ -40,7 +40,7 @@ torch.manual_seed(SEED)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = True
 
-# NN architecture
+# Parameters untouched by config
 
 W_TRUE, B_TRUE, NONLINEARITY = (
  {0: [[3.0], [-2.0]],
@@ -50,10 +50,7 @@ W_TRUE, B_TRUE, NONLINEARITY = (
  'softplus')
 
 SYNTHETIC_PARAMS = {
-    'logvarx_true': -5,
-    'n': 10000,
     'data_dim': 2,
-    'manifold_name': 's2',
     'w_true': W_TRUE,
     'b_true': B_TRUE,
     'nonlinearity': NONLINEARITY
@@ -61,13 +58,11 @@ SYNTHETIC_PARAMS = {
 
 NN_ARCHITECTURE = {
     'nn_type': 'toy',
-    'data_dim': 2,
     'latent_dim': 1,
     'n_decoder_layers': 2,
     'nonlinearity': NONLINEARITY,
     'with_biasx': True,
     'with_logvarx': False,
-    'lovarx_true': SYNTHETIC_PARAMS['logvarx_true'],
     'with_biasz': True,
     'with_logvarz': True}
 
@@ -83,14 +78,12 @@ TRAIN_PARAMS = {
     'weights_init': 'xavier',
     'lr': 5e-3,
     'batch_size': BATCH_SIZE,
-    'beta1': 0.5,
+    'beta1': 0.9,
     'beta2': 0.999,
     'n_mc_tot': N_MC_TOT,
     'reconstruction_type': 'riem',
     'reconstructions': [],
-    'regularizations': [],
-    'algo_name': 'vae',
-    'vae_type': 'gvae'}
+    'regularizations': []}
 
 
 if NN_ARCHITECTURE['with_logvarx']:
@@ -102,7 +95,7 @@ else:
 FRAC_VAL = 0.2
 
 PRINT_PERIOD = 16
-N_EPOCHS = 31
+N_EPOCHS = 250
 
 
 class Train(ray.tune.Trainable):
@@ -116,14 +109,11 @@ class Train(ray.tune.Trainable):
         synthetic_params['manifold_name'] = config.get('manifold_name')
 
         nn_architecture = NN_ARCHITECTURE
-        nn_architecture['latent_dim'] = config.get('latent_dim')
-        nn_architecture['logvarx_true'] = synthetic_params['logvarx_true']
+        nn_architecture['logvarx_true'] = config.get('logvarx_true')
         if not nn_architecture['with_logvarx']:
             assert nn_architecture['logvarx_true'] is not None
 
         train_params = TRAIN_PARAMS
-        train_params['lr'] = config.get('lr')
-        train_params['batch_size'] = config.get('batch_size')
         train_params['algo_name'] = config.get('algo_name')
         train_params['vae_type'] = config.get('vae_type')
 
@@ -131,11 +121,13 @@ class Train(ray.tune.Trainable):
             nn_architecture['data_dim'] = 3
             # L2 norm in ambient space
             train_params['reconstruction_type'] = 'l2'
+
         elif train_params['vae_type'] == 'gvae_tgt':
             nn_architecture['data_dim'] = 2
             # L2 norm on tangent space at base_point
             train_params['reconstruction_type'] = 'l2'
-        elif train_params['vae_type'] == 'gvae_tgt':
+
+        elif train_params['vae_type'] == 'gvae':
             nn_architecture['data_dim'] = 2
             # Riem norm in coords of logs on tangent space at base_point
             train_params['reconstruction_type'] = 'riem'
@@ -445,9 +437,12 @@ if __name__ == "__main__":
         time_attr='training_iteration',
         metric='average_neg_elbo',
         mode='min',
+        max_t=N_EPOCHS,
         grace_period=N_EPOCHS-1)
     analysis = ray.tune.run(
         Train,
+        local_dir='/results',
+        name='toyoutput_cvpr',
         scheduler=sched,
         **{
             'stop': {
@@ -458,19 +453,21 @@ if __name__ == "__main__":
                 'gpu': int(CUDA)
             },
             'num_samples': 1,
-            # 'checkpoint_freq': CKPT_PERIOD,
+            'checkpoint_freq': 1,
             'checkpoint_at_end': True,
             'config': {
-                'n': ray.tune.grid_search([1000, 5000]),  # , 10000, 100000]),
+                'n': ray.tune.grid_search(
+                    [100000]),
+                # [100, 1000, 10000, 100000]),
                 'logvarx_true': ray.tune.grid_search(
-                    [-10, -5]),   # , -3.22, -2, -1.02, -0.45, 0]),
+                    [-10]),
+                # [10 , -3.22, -2, -1.02, -0.45, 0]),
                 'manifold_name': ray.tune.grid_search(
-                    ['s2', 'r2']),
+                    ['r2']),
+                # ['r2', 's2', 'h2']),
                 'algo_name': ray.tune.grid_search(
-                    ['vae', 'iwae']),  # , 'vem']),
-                'vae_type': ray.tune.grid_search(['gvae_tgt', 'vae']),
-                'batch_size': TRAIN_PARAMS['batch_size'],
-                'lr': TRAIN_PARAMS['lr'],
-                'latent_dim': NN_ARCHITECTURE['latent_dim']
+                    ['vae']),  # , 'vem']),
+                'vae_type': ray.tune.grid_search(
+                    ['gvae_tgt']),
             }
         })

@@ -19,6 +19,14 @@ DEVICE = torch.device("cuda" if CUDA else "cpu")
 CKPT_PERIOD = 1
 
 
+W_INIT, B_INIT, NONLINEARITY_INIT = (
+    {0: [[1.0], [0.0]],
+     1: [[1.0, 0.0], [0.0, 1.0]]},
+    {0: [0.0, 0.0],
+     1: [0.01935, -0.02904]},
+    'softplus')
+
+
 def init_xavier_normal(m):
     if type(m) == tnn.Linear:
         tnn.init.xavier_normal_(m.weight)
@@ -181,7 +189,11 @@ def init_training(train_dir, nn_architecture, train_params):
         weights_init = train_params['weights_init']
         logging.info(
             'No checkpoints found. Initializing with %s.' % weights_init)
-        for module in modules.values():
+
+        for module_name, module in modules.items():
+            if nn_architecture['nn_type'] == 'toy':
+                if module_name == 'decoder':
+                    continue
             module.apply(init_function(weights_init))
 
     else:
