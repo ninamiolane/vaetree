@@ -476,14 +476,14 @@ if __name__ == "__main__":
             'checkpoint_at_end': True,
             'config': {
                 'n': ray.tune.grid_search(
-                    [10000]),
-                # [100, 1000, 10000, 100000]),
+                #    [100000]),
+                [5000, 7500, 10000, 12500, 15000]),
                 'logvarx_true': ray.tune.grid_search(
-                    [-10]),
-                # [-10 , -5, -3.22, -2, -1.02, -0.45, 0]),
+                #    [-10]),
+                [-10 , -8, -6, -4, -2]),
                 'manifold_name': ray.tune.grid_search(
-                    ['h2']),
-                # ['r2', 's2', 'h2']),
+                #    ['r2']),
+                ['r2', 's2', 'h2']),
                 'algo_name': ray.tune.grid_search(
                     ['vae']),  # , 'vem']),
                 'vae_type': ray.tune.grid_search(

@@ -28,4 +28,4 @@ singularity run --bind /gpfs,/scratch \
                 --bind /gpfs/slac/cryo/fs1/u/nmiolane/data:/data \
                 --bind /gpfs/slac/cryo/fs1/u/nmiolane:/home \
                 --bind /gpfs/slac/cryo/fs1/u/nmiolane/results:/results \
-                --nv ../simgs/pipeline.simg
+                --nv ../simgs/toypipeline.simg
