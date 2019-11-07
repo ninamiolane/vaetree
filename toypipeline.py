@@ -16,6 +16,7 @@ import torch.autograd
 import torch.optim
 import torch.utils.data
 
+import analyze
 import datasets
 import toylosses
 import toynn
@@ -26,7 +27,7 @@ warnings.filterwarnings("ignore")
 
 DATASET_NAME = 'synthetic'
 
-DEBUG = True
+DEBUG = False
 
 CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if CUDA else "cpu")
@@ -95,7 +96,13 @@ else:
 FRAC_VAL = 0.2
 
 PRINT_PERIOD = 16
-N_EPOCHS = 250
+N_EPOCHS = 100
+
+# Ray / Tune parameters
+
+METRIC = 'average_neg_elbo'
+LOCAL_DIR = '/results'
+OUTPUT = 'toyoutput_cvpr'
 
 
 class Train(ray.tune.Trainable):
@@ -107,6 +114,18 @@ class Train(ray.tune.Trainable):
         synthetic_params['n'] = config.get('n')
         synthetic_params['logvarx_true'] = config.get('logvarx_true')
         synthetic_params['manifold_name'] = config.get('manifold_name')
+
+        train_dict = {}
+        train_dict['vae_type'] = config.get('vae_type')
+        train_dict['algo_name'] = config.get('algo_name')
+        train_dict['n'] = config.get('n')
+        train_dict['logvarx_true'] = config.get('logvarx_true')
+        train_dict['manifold_name'] = config.get('manifold_name')
+        best_logdir = analyze.get_best_logdir(
+            main_dir=LOCAL_DIR, select_dict=train_dict, metric=METRIC)
+
+        if best_logdir != 'none':
+            raise ValueError('This trial has been run already.')
 
         nn_architecture = NN_ARCHITECTURE
         nn_architecture['logvarx_true'] = config.get('logvarx_true')
@@ -435,14 +454,14 @@ if __name__ == "__main__":
 
     sched = ray.tune.schedulers.AsyncHyperBandScheduler(
         time_attr='training_iteration',
-        metric='average_neg_elbo',
+        metric=METRIC,
         mode='min',
         max_t=N_EPOCHS,
         grace_period=N_EPOCHS-1)
     analysis = ray.tune.run(
         Train,
-        local_dir='/results',
-        name='toyoutput_cvpr',
+        local_dir=LOCAL_DIR,
+        name=OUTPUT,
         scheduler=sched,
         **{
             'stop': {
@@ -457,13 +476,13 @@ if __name__ == "__main__":
             'checkpoint_at_end': True,
             'config': {
                 'n': ray.tune.grid_search(
-                    [100000]),
+                    [10000]),
                 # [100, 1000, 10000, 100000]),
                 'logvarx_true': ray.tune.grid_search(
                     [-10]),
-                # [10 , -3.22, -2, -1.02, -0.45, 0]),
+                # [-10 , -5, -3.22, -2, -1.02, -0.45, 0]),
                 'manifold_name': ray.tune.grid_search(
-                    ['r2']),
+                    ['h2']),
                 # ['r2', 's2', 'h2']),
                 'algo_name': ray.tune.grid_search(
                     ['vae']),  # , 'vem']),
