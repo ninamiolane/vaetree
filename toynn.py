@@ -307,6 +307,11 @@ class Decoder(nn.Module):
         """
         super(Decoder, self).__init__()
 
+        if not with_logvarx:
+            # logvarx is not predicted
+            assert (logvarx_true is not None)
+            # use the true value
+
         self.latent_dim = latent_dim
         self.data_dim = data_dim
         self.n_layers = n_layers

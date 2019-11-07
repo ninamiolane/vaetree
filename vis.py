@@ -132,7 +132,7 @@ def plot_data(x_data, color='darkgreen', label=None, s=20, alpha=0.3, ax=None):
         ax.hist(
             x_data, bins=BINS, alpha=ALPHA,
             color=color, label=label, density=True)
-    elif data_dim == 2:
+    elif data_dim == 3:
         sns.scatterplot(
             x_data[:, 0], x_data[:, 1], x_data[:, 2],
             ax=ax, label=label, color=color, alpha=alpha, s=s)
@@ -931,7 +931,7 @@ def plot_true_submanifold(fig, nrows, ncols, row_id, col_id,
         if with_noise:
             _ = ax.scatter(
                     true_x[:, 0], true_x[:, 1],
-                    color='green', alpha=1, s=30,
+                    color='green', alpha=0.1, s=30,
                     label='Data')
 
     elif manifold_name in ['s2', 'h2']:
@@ -944,7 +944,7 @@ def plot_true_submanifold(fig, nrows, ncols, row_id, col_id,
             ax = visualization.plot(
                     true_x, ax=ax,
                     space=MANIFOLD_VIS_DICT[manifold_name],
-                    color='green', alpha=1, s=20,
+                    color='green', alpha=0.1, s=20,
                     label='Data')
 
     if manifold_name != 'r2':
@@ -968,12 +968,12 @@ def plot_learned_submanifold(fig, nrows, ncols, row_id, col_id,
                              manifold_name='r2', vae_type='gvae_tgt',
                              epoch_id=None, with_noise=False,
                              ax=None,
-                             color='black', s=20, label=''):
+                             color='black', s=20, label='', main_dir=''):
     t = np.random.normal(size=(n_samples,))
     x_novarx, x = analyze.learned_submanifold_from_t_and_vae_type(
         t, vae_type, logvarx_true, n,
         algo_name=algo_name, manifold_name=manifold_name,
-        epoch_id=epoch_id, with_noise=with_noise)
+        epoch_id=epoch_id, with_noise=with_noise, main_dir=main_dir)
 
     if ax is None:
         ax = get_ax(
@@ -988,7 +988,7 @@ def plot_learned_submanifold(fig, nrows, ncols, row_id, col_id,
         if with_noise:
             _ = ax.scatter(
                     x[:, 0], x[:, 1],
-                    color=color, alpha=1, s=s,
+                    color=ALGO_COLOR_DICT[algo_name], alpha=0.1, s=s,
                     label='Data')
 
     elif manifold_name in ['s2', 'h2'] and vae_type != 'vae':
@@ -1001,7 +1001,7 @@ def plot_learned_submanifold(fig, nrows, ncols, row_id, col_id,
             ax = visualization.plot(
                     x, ax=ax,
                     space=MANIFOLD_VIS_DICT[manifold_name],
-                    color=color, alpha=1, s=s,
+                    color=ALGO_COLOR_DICT[algo_name], alpha=0.1, s=s,
                     label='Data')
 
     elif manifold_name == 'r3' or vae_type == 'vae':
@@ -1013,7 +1013,7 @@ def plot_learned_submanifold(fig, nrows, ncols, row_id, col_id,
         if with_noise:
             _ = ax.scatter(
                 x[:, 0], x[:, 1], x[:, 2],
-                color=color, alpha=1, s=s,
+                color=ALGO_COLOR_DICT[algo_name], alpha=0.1, s=s,
                 label=label)
 
     else:
@@ -1134,7 +1134,8 @@ def get_unexplained_variance(output, dataset_path, variance_name='eucl'):
 def plot_cryo(ax, output, img_path, labels_path,
               n_pc=2, label_name='focus', epoch_id=None):
     projected_mus, labels = analyze.get_cryo(
-        output, img_path, labels_path, n_pca_components=n_pc, epoch_id=epoch_id)
+        output, img_path, labels_path, n_pca_components=n_pc,
+        epoch_id=epoch_id)
     colored_labels = labels[label_name]
     if label_name == 'focus':
         colored_labels = [focus / 10000. for focus in colored_labels]
@@ -1172,3 +1173,39 @@ def hist_labels(labels):
 
     ax = fig.add_subplot(414)
     ax = ax.hist(labels['theta'], bins=180)
+
+
+def load_and_plot_criterion(fig, nrows, ncols, row_id, col_id, output, epoch,
+                            algo_name='vae', crit_name='neg_elbo', ax=None):
+    if ax is None:
+        ax = fig.add_subplot(
+            nrows, ncols, get_ax_id(ncols, row_id=row_id, col_id=col_id))
+
+    ax = plot_criterion(
+            ax, output, crit_name=crit_name,
+            color=ALGO_COLOR_DICT[algo_name], mode='train', dashes=False)
+    ax = plot_criterion(
+            ax, output, crit_name=crit_name,
+            color=ALGO_COLOR_DICT[algo_name], mode='val', dashes=True)
+
+    train_losses = analyze.load_losses(
+            output, crit_name=crit_name,
+            epoch_id=int(epoch), mode='train')
+
+    ax.plot(epoch-1, train_losses[epoch-1], 'bo', markersize=10,
+            color=ALGO_COLOR_DICT[algo_name])
+    return ax
+
+
+def load_and_plot_criterion_all(fig, nrows, ncols, row_id, col_id,
+                                output, epoch,
+                                algo_names=['vae'], crit_name='neg_elbo'):
+    ax = fig.add_subplot(
+        nrows, ncols, get_ax_id(ncols, row_id=row_id, col_id=col_id))
+
+    for algo_name in algo_names:
+        ax = load_and_plot_criterion(
+            fig, nrows, ncols, row_id, col_id,
+            output, epoch,
+            algo_name, crit_name)
+    return ax

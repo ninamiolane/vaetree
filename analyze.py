@@ -145,7 +145,7 @@ def get_subset_fmri(output, metadata_csv, ses_ids=None, task_names=None,
     return projected_mus, labels_subset
 
 
-def load_losses(output, algo_name='vae', epoch_id=None,
+def load_losses(output, epoch_id=None,
                 crit_name='neg_elbo', mode='train'):
     ckpt = train_utils.load_checkpoint(
         output=output, epoch_id=epoch_id)
@@ -281,19 +281,17 @@ def learned_submanifold_from_t_and_decoder(
         t, decoder, vae_type='gvae_tgt',
         manifold_name='r2', with_noise=False):
     """
-    Logvarx is fixed to -5, as opposed to using logvarx generated
+    Logvarx is fixed to be the true logvarx,
+    as opposed to using logvarx generated
     from z by decoder.
-
-    This is because decoders are trained with logvarx =-5.
     """
-    logvarx = -5
     if manifold_name in ['r2', 'r3']:
         x_novarx, x = submanifold_from_t_and_decoder_in_euclidean(
-            t, decoder, logvarx=logvarx, with_noise=with_noise)
+            t, decoder, logvarx=decoder.logvarx_true, with_noise=with_noise)
 
     elif manifold_name in ['s2', 'h2']:
         x_novarx, x = submanifold_from_t_and_decoder_on_manifold(
-            t, decoder, logvarx=logvarx,
+            t, decoder, logvarx=decoder.logvarx_true,
             manifold_name=manifold_name, with_noise=with_noise)
     else:
         raise ValueError('Manifold not supported.')
@@ -614,6 +612,7 @@ def get_all_logdirs(main_dir, select_dict={}):
     all_dataframes = analysis.trial_dataframes
 
     for logdir, train_dict in analysis.get_all_configs().items():
+
         keep_logdir = True
         for param_name, param_value in select_dict.items():
             if param_name not in train_dict.keys():
@@ -631,6 +630,7 @@ def get_all_logdirs(main_dir, select_dict={}):
             continue
 
         all_logdirs.append(logdir)
+    print(all_logdirs)
 
     return all_logdirs
 
