@@ -31,7 +31,7 @@ import train_utils
 import warnings
 warnings.filterwarnings("ignore")
 
-SERVER_NAME = 'gne'
+SERVER_NAME = 'slacgpu'
 
 VISDOM = True if SERVER_NAME == 'gne' else False
 
@@ -604,6 +604,9 @@ class Train(Trainable):
         val_losses['total'] = average_loss
         val_losses['total_time'] = end - start
 
+        if np.isnan(average_loss) or np.isinf(average_loss):
+            raise ValueError('Val loss is too large.')
+
         self.val_losses_all_epochs.append(val_losses)
         return {'average_loss': average_loss}
 
@@ -706,15 +709,15 @@ if __name__ == "__main__":
     hyperband_sched = AsyncHyperBandScheduler(
         time_attr='training_iteration',
         metric='average_loss',
-        brackets=4,
-        reduction_factor=4,
+        brackets=1,
+        reduction_factor=8,
         mode='min')
 
     hyperopt_search = HyperOptSearch(
         search_space,
         metric='average_loss',
         mode='min',
-        max_concurrent=80)
+        max_concurrent=257)
 
     analysis = tune.run(
         Train,
@@ -734,7 +737,7 @@ if __name__ == "__main__":
                 'gpu': 1
             },
             'max_failures': 1,
-            'num_samples': 100,
+            'num_samples': 257,
             'checkpoint_freq': CKPT_PERIOD,
             'checkpoint_at_end': True,
             'config': search_space})

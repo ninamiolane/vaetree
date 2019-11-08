@@ -29,10 +29,10 @@ KWARGS = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
 
 CRYO_DIR = '/data/cryo'
 # CRYO_DIR = '/afs/slac.stanford.edu/u/bd/nmiolane/gpfs_home/data/cryo'
-CRYO_H5 = CRYO_DIR
-# CRYO_H5 = os.path.join(
-#     '/gpfs/slac/cryo/fs1/g/ML/vaegan/datasets',
-#     'exp/20181005-rib-TEM4/Sort')
+# CRYO_H5 = CRYO_DIR
+CRYO_H5 = os.path.join(
+    '/gpfs/slac/cryo/fs1/g/ML/vaegan/datasets',
+    'exp/20181005-rib-TEM4/Sort')
 NEURO_DIR = '/data/neuro'
 
 NEURO_TRAIN_VAL_DIR = os.path.join(NEURO_DIR, 'train_val_datasets')
@@ -56,7 +56,7 @@ def get_datasets(dataset_name, frac_val=FRAC_VAL, batch_size=8,
                  nn_architecture=None,
                  train_params=None,
                  synthetic_params=None,
-                 class_2d=30,
+                 class_2d=None,
                  kwargs=KWARGS):
 
     img_shape_no_channel = None
@@ -701,7 +701,7 @@ def get_dataset_cryo_exp(img_shape_no_channel=None, kwargs=KWARGS):
 
 
 def get_dataset_cryo_exp_class_2d(img_shape_no_channel=None,
-                                  class_2d=30, kwargs=KWARGS):
+                                  class_2d=None, kwargs=KWARGS):
     CRYO_TRAIN_VAL_DIR = os.path.join(CRYO_DIR, 'train_val_datasets')
     shape_str = get_shape_string(img_shape_no_channel)
     cryo_img_path = os.path.join(
