@@ -115,6 +115,7 @@ class Train(ray.tune.Trainable):
         synthetic_params['logvarx_true'] = config.get('logvarx_true')
         synthetic_params['manifold_name'] = config.get('manifold_name')
 
+        # Avoid re-running an existing trial
         train_dict = {}
         train_dict['vae_type'] = config.get('vae_type')
         train_dict['algo_name'] = config.get('algo_name')
@@ -123,6 +124,7 @@ class Train(ray.tune.Trainable):
         train_dict['manifold_name'] = config.get('manifold_name')
         best_logdir = analyze.get_best_logdir(
             main_dir=LOCAL_DIR, select_dict=train_dict, metric=METRIC)
+        # Done.
 
         if best_logdir != 'none':
             raise ValueError('This trial has been run already.')
@@ -471,16 +473,17 @@ if __name__ == "__main__":
                 'cpu': 4,
                 'gpu': int(CUDA)
             },
+            'max_failures': 1,
             'num_samples': 1,
-            'checkpoint_freq': 1,
+            'checkpoint_freq': 100,
             'checkpoint_at_end': True,
             'config': {
                 'n': ray.tune.grid_search(
                 #    [100000]),
                 [5000, 7500, 10000, 12500, 15000]),
                 'logvarx_true': ray.tune.grid_search(
-                #    [-10]),
-                [-10 , -8, -6, -4, -2]),
+                [-5, -3]),
+                # [-10 , -8, -6, -4, -2]),
                 'manifold_name': ray.tune.grid_search(
                 #    ['r2']),
                 ['r2', 's2', 'h2']),

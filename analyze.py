@@ -6,7 +6,7 @@ import importlib
 import os
 
 import numpy as np
-import ot
+# import ot
 import torch
 
 from scipy.stats import gaussian_kde
@@ -630,7 +630,6 @@ def get_all_logdirs(main_dir, select_dict={}):
             continue
 
         all_logdirs.append(logdir)
-    print(all_logdirs)
 
     return all_logdirs
 
