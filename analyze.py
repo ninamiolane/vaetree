@@ -512,10 +512,9 @@ def make_gauss_hist(n_bins, m=0, s=1):
 
 
 def squared_w2_between_submanifolds(manifold_name,
-                                    vae_type='gvae_tgt',
-                                    epoch_id=100,
-                                    all_logvarx_true=TOY_LOGVARX_TRUE,
-                                    all_n=TOY_N,
+                                    vae_type,
+                                    all_logvarx_true,
+                                    all_n,
                                     extrinsic_or_intrinsic='extrinsic',
                                     n_bins=5,
                                     sinkhorn=False,
@@ -553,7 +552,7 @@ def squared_w2_between_submanifolds(manifold_name,
                     zj = np.expand_dims(np.expand_dims(x[j], axis=0), axis=1)
                     xj, _ = learned_submanifold_from_t_and_vae_type(
                         t=zj, manifold_name=manifold_name, vae_type=vae_type,
-                        logvarx_true=logvarx_true, n=n)
+                        logvarx_true=logvarx_true, n=n, main_dir=main_dir)
 
                     if extrinsic_or_intrinsic == 'intrinsic':
                         sq_dist = manifold.metric.squared_dist(xi, xj)
@@ -603,8 +602,6 @@ def get_cryo(output, dataset_path,
 
 
 def get_all_logdirs(main_dir, select_dict={}):
-    print('Getting logdirs with parameters:')
-    print(select_dict)
 
     all_logdirs = []
     analysis = Analysis(main_dir)
@@ -630,23 +627,24 @@ def get_all_logdirs(main_dir, select_dict={}):
             continue
 
         all_logdirs.append(logdir)
+    print('Found %d logdirs.' % len(all_logdirs))
 
     return all_logdirs
 
 
 def get_last_logdir(main_dir, select_dict={}):
-    print('Getting last logdir with parameters:')
-    print(select_dict)
-
     all_logdirs = get_all_logdirs(main_dir, select_dict)
-    last_logdir = all_logdirs[-1]
+    if len(all_logdirs) > 0:
+        last_logdir = all_logdirs[-1]
+    else:
+        last_logdir = None
 
+    print("Last logdir with required parameters is", last_logdir)
+    print(select_dict)
     return last_logdir
 
 
 def get_best_logdir(main_dir, select_dict={}, metric='average_loss'):
-    print('Comparing logdirs with parameters:')
-    print(select_dict)
     analysis = Analysis(main_dir)
 
     all_dataframes = analysis.trial_dataframes
@@ -675,5 +673,32 @@ def get_best_logdir(main_dir, select_dict={}, metric='average_loss'):
             min_metric_value = metric_value
             best_logdir = logdir
 
-    print("Best logdir with required parameters is", best_logdir)
+    print("Best logdir (%s) with required parameters is" % metric, best_logdir)
+    print(select_dict)
     return best_logdir
+
+
+def crit_between_manifolds(train_dict,
+                           all_logvarx_true,
+                           all_n,
+                           crit_name='neg_elbo',
+                           main_dir=''):
+    """
+    Returns a table of the crit, where:
+    - Lines are different values of n
+    - Columns are different values of logvarx_true
+    """
+    crit = np.zeros((len(all_n), len(all_logvarx_true)))
+
+    for i_logvarx_true, logvarx_true in enumerate(all_logvarx_true):
+        for i_n, n in enumerate(all_n):
+            train_dict['logvarx_true'] = logvarx_true
+            train_dict['n'] = n
+            output = get_last_logdir(
+                select_dict=train_dict, main_dir=main_dir)
+
+            val_losses = load_losses(
+                output, 'vae', crit_name=crit_name,
+                epoch_id=int(100), mode='val')
+            crit[i_n, i_logvarx_true] = val_losses[100]
+    return crit

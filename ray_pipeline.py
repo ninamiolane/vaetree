@@ -37,7 +37,7 @@ VISDOM = True if SERVER_NAME == 'gne' else False
 
 DEBUG = False
 
-DATASET_NAME = 'cryo_exp_class_2d'
+DATASET_NAME = 'cryo_exp_3d'
 
 # Hardware
 CUDA = torch.cuda.is_available()
