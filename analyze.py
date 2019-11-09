@@ -677,3 +677,26 @@ def get_best_logdir(main_dir, select_dict={}, metric='average_loss'):
 
     print("Best logdir with required parameters is", best_logdir)
     return best_logdir
+
+
+def crit_between_manifolds(manifold_name,
+                           all_logvarx_true,
+                           all_n,
+                           crit_name='neg_elbo'):
+    """
+    Returns a table of the crit, where:
+    - Lines are different values of n
+    - Columns are different values of logvarx_true
+    """
+    crit = np.zeros((len(all_n), len(all_logvarx_true)))
+
+    for i_logvarx_true, logvarx_true in enumerate(all_logvarx_true):
+        for i_n, n in enumerate(all_n):
+            output = analyze.toyoutput_dir(
+                manifold_name, logvarx_true, n, vae_type='gvae_tgt')
+
+            val_losses = vis.load_losses(
+                output, 'vae', crit_name=crit_name,
+                epoch_id=int(100), mode='val')
+            crit[i_n, i_logvarx_true] = val_losses[100]
+    return crit

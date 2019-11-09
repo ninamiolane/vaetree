@@ -934,7 +934,7 @@ def plot_true_submanifold(fig, nrows, ncols, row_id, col_id,
                     color='green', alpha=0.1, s=30,
                     label='Data')
 
-    elif manifold_name in ['s2', 'h2']:
+    elif manifold_name == 'h2':
         ax = visualization.plot(
                 true_x_novarx, ax=ax,
                 space=MANIFOLD_VIS_DICT[manifold_name],
@@ -946,6 +946,22 @@ def plot_true_submanifold(fig, nrows, ncols, row_id, col_id,
                     space=MANIFOLD_VIS_DICT[manifold_name],
                     color='green', alpha=0.1, s=20,
                     label='Data')
+    elif manifold_name == 's2':
+        sphere = visualization.Sphere()
+        sphere.draw(ax=ax)
+        _ = ax.scatter(
+                true_x_novarx[:, 0],
+                true_x_novarx[:, 1],
+                true_x_novarx[:, 2],
+                color='lime', alpha=1, s=30,
+                label=label)
+        if with_noise:
+            _ = ax.scatter(
+                true_x[:, 0],
+                true_x[:, 1],
+                true_x[:, 2],
+                color='green', alpha=0.1, s=30,
+                label='Data')
 
     if manifold_name != 'r2':
         ax.set_xticks([])
@@ -991,7 +1007,7 @@ def plot_learned_submanifold(fig, nrows, ncols, row_id, col_id,
                     color=ALGO_COLOR_DICT[algo_name], alpha=0.1, s=s,
                     label='Data')
 
-    elif manifold_name in ['s2', 'h2'] and vae_type != 'vae':
+    elif manifold_name == 'h2' and vae_type != 'vae':
         ax = visualization.plot(
                 x_novarx, ax=ax,
                 space=MANIFOLD_VIS_DICT[manifold_name],
@@ -1003,6 +1019,22 @@ def plot_learned_submanifold(fig, nrows, ncols, row_id, col_id,
                     space=MANIFOLD_VIS_DICT[manifold_name],
                     color=ALGO_COLOR_DICT[algo_name], alpha=0.1, s=s,
                     label='Data')
+    elif manifold_name == 's2' and vae_type != 'vae':
+        sphere = visualization.Sphere()
+        sphere.draw(ax=ax)
+        _ = ax.scatter(
+                x_novarx[:, 0],
+                x_novarx[:, 1],
+                x_novarx[:, 2],
+                color=color, alpha=1, s=30,
+                label=label)
+        if with_noise:
+            _ = ax.scatter(
+                x[:, 0],
+                x[:, 1],
+                x[:, 2],
+                color=ALGO_COLOR_DICT[algo_name], alpha=0.1, s=30,
+                label='Data')
 
     elif manifold_name == 'r3' or vae_type == 'vae':
         _ = ax.scatter(
